@@ -645,7 +645,27 @@ pub(crate) fn set_program_capability_state(
     Ok(())
 }
 
-pub(crate) fn run_active_source(resolution: &ActiveSourceResolution) -> Result<Value, String> {
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub(crate) struct ButtonModifiers {
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+    meta: bool,
+}
+
+fn button_bridge_data(record: &ActiveSourceRecord, modifiers: Option<ButtonModifiers>) -> Value {
+    let mut data = record.bridge_data.clone().unwrap_or_else(|| json!({}));
+    if let (Some(object), Some(modifiers)) = (data.as_object_mut(), modifiers) {
+        object.insert("modifiers".to_string(), json!(modifiers));
+    }
+    data
+}
+
+pub(crate) fn run_active_source(
+    resolution: &ActiveSourceResolution,
+    modifiers: Option<ButtonModifiers>,
+) -> Result<Value, String> {
     let record = &resolution.record;
     if !record.children.is_empty() {
         return Ok(json!({ "message": format!("Loaded {}.", record.label) }));
@@ -702,7 +722,7 @@ pub(crate) fn run_active_source(resolution: &ActiveSourceResolution) -> Result<V
             run_managed_bridge_action(
                 &record.runner,
                 record.bridge_action.trim(),
-                record.bridge_data.clone().unwrap_or_else(|| json!({})),
+                button_bridge_data(record, modifiers),
             )
         }
         "fusion-bridge" => {
@@ -935,6 +955,23 @@ mod tests {
             bundled_source_id: None,
             bundled_source_version: None,
         }
+    }
+
+    #[test]
+    fn button_modifiers_preserve_installed_bridge_data() {
+        let mut record = illustrator_record(None);
+        record.bridge_data = Some(json!({"action": "create", "sides": 6}));
+        assert_eq!(super::button_bridge_data(&record, None), record.bridge_data.clone().unwrap());
+        for key in ["shift", "ctrl", "alt", "meta"] {
+            let mut value = json!({});
+            value[key] = json!(true);
+            let modifiers = serde_json::from_value(value).unwrap();
+            let data = super::button_bridge_data(&record, Some(modifiers));
+            assert_eq!(data["action"], "create");
+            assert_eq!(data["sides"], 6);
+            assert_eq!(data["modifiers"][key], true);
+        }
+        assert!(serde_json::from_value::<super::ButtonModifiers>(json!({"shift": "yes"})).is_err());
     }
 
     #[test]

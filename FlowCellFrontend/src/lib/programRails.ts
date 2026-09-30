@@ -408,7 +408,8 @@ export async function listPanelScriptFiles(
 export async function runPanelScript(
   programName: string,
   panelName: string,
-  fileName: string
+  fileName: string,
+  modifiers?: unknown
 ): Promise<string> {
   if (!isTauriWindowHost()) {
     throw new Error("Panel scripts can only be run from the desktop host.");
@@ -417,7 +418,8 @@ export async function runPanelScript(
   const response = await invokeProgramRailCommand<unknown>("run_panel_script_response", {
     programName,
     panelName,
-    fileName
+    fileName,
+    modifiers
   });
   await emitProgramDataInvalidated(programName, panelName, fileName);
 

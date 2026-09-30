@@ -212,7 +212,7 @@ async function dispatchTarget(
     return runPanelButtonEvent(target.programName, target.panelName, target.ownerFileName, eventName!);
   }
   if (target.kind === "panel-script") {
-    return runPanelScript(target.programName, target.panelName, target.fileName);
+    return runPanelScript(target.programName, target.panelName, target.fileName, payload.modifiers);
   }
   if (target.kind === "tool-set-action") {
     return runToolsetAction({

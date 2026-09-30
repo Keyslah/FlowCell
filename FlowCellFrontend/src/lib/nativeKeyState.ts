@@ -9,6 +9,7 @@ export interface NativeInputSnapshot {
   y: number;
   spaceDown: boolean;
   primaryButtonDown: boolean;
+  coveredButtonWindows?: string[];
 }
 
 function normalizeNativeInputSnapshot(value: NativeInputSnapshot): NativeInputSnapshot | null {

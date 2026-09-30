@@ -387,12 +387,14 @@ export function ButtonFanRenderer({
         onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
         onPlacementVisualStateChange={onPlacementVisualStateChange}
         onExecutionResult={onExecutionResult}
-        onActivate={async (_placementId: string, button: ButtonRecord) => {
+        onActivate={async (_placementId: string, button: ButtonRecord, event) => {
           if (button.id === setup.panelOwnerButtonId) {
             await onOwnerActivate(button);
             return;
           }
-          await executeButtonRecord(button, "click");
+          await executeButtonRecord(button, "click", {
+            payloadOverride: { modifiers: { shift: event.shiftKey, ctrl: event.ctrlKey, alt: event.altKey, meta: event.metaKey } }
+          });
         }}
         onHoverStart={() => onHoverStart?.()}
         onHoverEnd={() => onHoverEnd?.()}

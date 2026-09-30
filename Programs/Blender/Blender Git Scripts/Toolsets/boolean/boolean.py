@@ -367,6 +367,10 @@ class OBJECT_OT_qb_run_auto(bpy.types.Operator):
         if s.qb_use_remesh:
             _apply_boolean_remesh(context, active, s)
 
+        for obj in context.view_layer.objects:
+            obj.select_set(obj == active)
+        context.view_layer.objects.active = active
+
         applied_count = int(apply_result.get("appliedCount", len(cutters)))
         message = f"{s.qb_operation} Boolean applied to {applied_count} cutter object(s)."
         if snapshot_message:
@@ -464,6 +468,10 @@ def _run_boolean_operator(context):
 
     if s.qb_use_remesh:
         _apply_boolean_remesh(context, active, s)
+
+    for obj in context.view_layer.objects:
+        obj.select_set(obj == active)
+    context.view_layer.objects.active = active
 
     applied_count = int(apply_result.get("appliedCount", len(cutters)))
     message = f"{s.qb_operation} Boolean applied to {applied_count} cutter object(s)."

@@ -7,13 +7,14 @@ pub(crate) struct ForegroundProcessInfo {
     pub(crate) process_path: String,
 }
 
-#[derive(Serialize, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Serialize, Clone, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeInputSnapshot {
     pub(crate) x: i32,
     pub(crate) y: i32,
     pub(crate) space_down: bool,
     pub(crate) primary_button_down: bool,
+    pub(crate) covered_button_windows: Vec<String>,
 }
 
 #[cfg(windows)]
@@ -34,8 +35,10 @@ pub(crate) struct ScopedTopmostRegistry {
     apply_lock: Arc<Mutex<()>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct ScopedTopmostEntry {
+    native_hwnd: isize,
+    fan_open_order: u64,
     process_names: Vec<String>,
     bind_owner: bool,
     selective_input: bool,
@@ -109,31 +112,53 @@ pub(crate) fn normalize_configured_process_names(process_names: &[String]) -> Ve
 }
 
 #[cfg(windows)]
-fn read_native_input_snapshot() -> Result<NativeInputSnapshot, String> {
+fn covered_button_windows_below(cursor_hwnd: isize, buttons: &HashMap<isize, String>) -> Vec<String> {
+    let mut covered = Vec::new();
+    if buttons.contains_key(&cursor_hwnd) {
+        let mut below = cursor_hwnd;
+        for _ in 0..250 {
+            below = unsafe { GetWindow(below as _, GW_HWNDNEXT as u32) } as isize;
+            if below == 0 { break; }
+            if let Some(label) = buttons.get(&below) { covered.push(label.clone()); }
+        }
+    }
+    covered.sort();
+    covered
+}
+
+#[cfg(windows)]
+fn read_native_input_snapshot(registry: &ScopedTopmostRegistry) -> Result<NativeInputSnapshot, String> {
     let mut cursor = POINT { x: 0, y: 0 };
     if unsafe { GetCursorPos(&mut cursor) } == 0 {
         return Err("Could not read the native cursor position.".to_string());
     }
     let swapped = unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0;
     let primary_button = if swapped { VK_RBUTTON } else { VK_LBUTTON };
+    let buttons = registry.entries.lock().map_err(|_| "Scoped window registry lock failed.")?
+        .iter().filter(|(_, entry)| entry.selective_input && entry.native_hwnd != 0)
+        .map(|(label, entry)| (entry.native_hwnd, label.clone())).collect::<HashMap<_, _>>();
+    let cursor_hwnd = unsafe { GetAncestor(WindowFromPoint(cursor), GA_ROOT) } as isize;
+    let covered_button_windows = covered_button_windows_below(cursor_hwnd, &buttons);
     Ok(NativeInputSnapshot {
         x: cursor.x,
         y: cursor.y,
         space_down: (unsafe { GetAsyncKeyState(VK_SPACE as i32) } as u16 & 0x8000) != 0,
         primary_button_down: (unsafe { GetAsyncKeyState(primary_button as i32) } as u16 & 0x8000)
             != 0,
+        covered_button_windows,
     })
 }
 
 #[tauri::command]
-pub(crate) fn get_native_input_snapshot() -> Result<NativeInputSnapshot, String> {
+pub(crate) fn get_native_input_snapshot(registry: State<'_, ScopedTopmostRegistry>) -> Result<NativeInputSnapshot, String> {
     #[cfg(windows)]
     {
-        return read_native_input_snapshot();
+        return read_native_input_snapshot(&registry);
     }
 
     #[cfg(not(windows))]
     {
+        let _ = registry;
         Err("Native input snapshots are available only on Windows.".to_string())
     }
 }
@@ -141,11 +166,12 @@ pub(crate) fn get_native_input_snapshot() -> Result<NativeInputSnapshot, String>
 #[cfg(windows)]
 pub(crate) fn start_native_input_worker(app: AppHandle) {
     thread::spawn(move || {
+        let registry = app.state::<ScopedTopmostRegistry>().inner().clone();
         let mut previous_snapshot = None;
         loop {
-            if let Ok(snapshot) = read_native_input_snapshot() {
-                if previous_snapshot != Some(snapshot) {
-                    let _ = app.emit(NATIVE_INPUT_SNAPSHOT_EVENT, snapshot);
+            if let Ok(snapshot) = read_native_input_snapshot(&registry) {
+                if previous_snapshot.as_ref() != Some(&snapshot) {
+                    let _ = app.emit(NATIVE_INPUT_SNAPSHOT_EVENT, snapshot.clone());
                     previous_snapshot = Some(snapshot);
                 }
             }
@@ -748,6 +774,65 @@ fn set_scoped_native_window_placement<R: tauri::Runtime>(
     set_scoped_native_hwnd_placement(hwnd, placement, promote)
 }
 
+fn update_fan_open_order(entries: &mut HashMap<String, ScopedTopmostEntry>, label: &str, expanded: bool) {
+    let order = if expanded { entries.values().map(|entry| entry.fan_open_order).max().unwrap_or(0) + 1 } else { 0 };
+    if let Some(entry) = entries.get_mut(label) { entry.fan_open_order = order; }
+}
+
+fn expanded_fan_stack(entries: &HashMap<String, ScopedTopmostEntry>) -> Vec<String> {
+    let mut fans = entries.iter().filter(|(_, entry)| entry.fan_open_order > 0).collect::<Vec<_>>();
+    fans.sort_by_key(|(_, entry)| entry.fan_open_order);
+    fans.into_iter().map(|(label, _)| label.clone()).collect()
+}
+
+fn expanded_fan_placement(placement: ScopedWindowPlacement) -> Option<ScopedWindowPlacement> {
+    match placement {
+        ScopedWindowPlacement::Topmost => Some(ScopedWindowPlacement::Topmost),
+        ScopedWindowPlacement::Normal | ScopedWindowPlacement::Behind(_) => Some(ScopedWindowPlacement::Normal),
+        ScopedWindowPlacement::Bottom => None,
+    }
+}
+
+#[cfg(windows)]
+fn raise_expanded_fan_hwnd(hwnd: Win32Hwnd, placement: ScopedWindowPlacement) -> Result<(), String> {
+    set_scoped_native_hwnd_placement(hwnd, placement, false)?;
+    if placement == ScopedWindowPlacement::Normal {
+        // HWND_NOTOPMOST does not raise a window already in the normal band.
+        unsafe {
+            SetWindowPos(hwnd, Some(windows::Win32::UI::WindowsAndMessaging::HWND_TOP), 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn raise_expanded_fans(
+    app: &AppHandle, entries: &HashMap<String, ScopedTopmostEntry>, foreground: &ForegroundWindowState,
+    last_external: Option<&ForegroundWindowState>, preview_suppressed: bool,
+) -> Result<(), String> {
+    let foreground_group = resolve_foreground_scoped_process_names(app, entries, foreground);
+    // Oldest first: the latest hover-open or owner pin click wins, including over pinned fans.
+    for label in expanded_fan_stack(entries) {
+        let entry = &entries[&label];
+        let Some(window) = app.get_webview_window(&label) else { continue; };
+        let hwnd = window.hwnd().map_err(|error| error.to_string())?.0 as isize;
+        let (placement, _) = resolve_scoped_window_placement(
+            is_valid_external_foreground(foreground) && matches_foreground_process(&entry.process_names, &foreground.process_info),
+            foreground_group.is_some(),
+            foreground_group.as_ref().is_some_and(|group| process_groups_overlap(&entry.process_names, group)),
+            last_external.is_some_and(|external| matches_foreground_process(&entry.process_names, &external.process_info)),
+            continues_explicit_open_reveal(entry.initial_reveal, foreground.process_id == std::process::id(), foreground.hwnd, hwnd, entry.last_observed_foreground_hwnd),
+            preview_suppressed, foreground.hwnd, hwnd,
+        );
+        if let Some(placement) = expanded_fan_placement(placement) {
+            raise_expanded_fan_hwnd(Win32Hwnd(hwnd as _), placement)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 fn set_scoped_native_hwnd_placement(
     hwnd: Win32Hwnd,
@@ -1200,12 +1285,17 @@ pub(crate) fn set_host_window_topmost(
 // thread; a synchronous IPC command would otherwise block that same thread
 // while waiting for the worker, deadlocking re-entrant WebView focus events.
 pub(crate) async fn register_scoped_window_topmost(
+    app: AppHandle,
     label: String,
     program_name: String,
     _bind_owner: Option<bool>,
     selective_input: Option<bool>,
     registry: State<'_, ScopedTopmostRegistry>,
 ) -> Result<Vec<String>, String> {
+    #[cfg(windows)]
+    let native_hwnd = app.get_webview_window(&label).and_then(|window| window.hwnd().ok()).map_or(0, |hwnd| hwnd.0 as isize);
+    #[cfg(not(windows))]
+    let native_hwnd = { let _ = app; 0 };
     let window_scope_result = resolve_program_window_scope(&program_name);
     #[cfg(windows)]
     let _apply_guard = registry
@@ -1240,6 +1330,8 @@ pub(crate) async fn register_scoped_window_topmost(
     entries.insert(
         label,
         ScopedTopmostEntry {
+            native_hwnd,
+            fan_open_order: previous_entry.as_ref().map_or(0, |entry| entry.fan_open_order),
             process_names,
             bind_owner,
             selective_input,
@@ -1317,6 +1409,34 @@ pub(crate) async fn get_scoped_window_input_state(
 }
 
 #[tauri::command]
+pub(crate) async fn set_button_fan_expanded(
+    app: AppHandle,
+    window: WebviewWindow,
+    expanded: bool,
+    registry: State<'_, ScopedTopmostRegistry>,
+) -> Result<(), String> {
+    let label = window.label();
+    if !label.starts_with("button-fan-") { return Err("Only a Button Fan can set fan stacking.".to_string()); }
+    #[cfg(windows)]
+    let _apply_guard = registry.apply_lock.lock().map_err(|_| "Scoped topmost apply lock failed.")?;
+    let snapshot = {
+        let mut entries = registry.entries.lock().map_err(|_| "Scoped topmost registry lock failed.")?;
+        if !entries.contains_key(label) { return Err("Button Fan has not registered its program scope.".to_string()); }
+        update_fan_open_order(&mut entries, label, expanded);
+        entries.clone()
+    };
+    #[cfg(windows)]
+    {
+        let foreground = get_foreground_window_state_impl();
+        let last_external = resolve_last_external_foreground(&registry, &foreground);
+        raise_expanded_fans(&app, &snapshot, &foreground, last_external.as_ref(), is_cursor_over_taskbar_or_preview_surface())?;
+    }
+    #[cfg(not(windows))]
+    let _ = (app, snapshot);
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) async fn refresh_scoped_window_topmost(
     app: AppHandle,
     label: String,
@@ -1388,6 +1508,8 @@ pub(crate) async fn refresh_scoped_window_topmost(
                 entry.last_owner_hwnd = update.remembered_owner_hwnd;
             }
         }
+        let stack = registry.entries.lock().map_err(|_| "Scoped topmost registry lock failed.")?.clone();
+        raise_expanded_fans(&app, &stack, &foreground, last_external_foreground.as_ref(), cursor_over_taskbar_or_preview)?;
         app.emit(
             SCOPED_WINDOW_INPUT_STATE_EVENT,
             ScopedWindowInputState {
@@ -1506,6 +1628,7 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
             }
         }
 
+        let stack_changed = !missing_labels.is_empty() || !applied_updates.is_empty();
         let mut registry_became_empty = false;
         if !missing_labels.is_empty() || !applied_updates.is_empty() {
             if let Ok(mut entries) = registry.entries.lock() {
@@ -1529,6 +1652,13 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
         if registry_became_empty {
             let _ = clear_last_external_foreground(&registry);
         }
+        if stack_changed {
+            if let Ok(entries) = registry.entries.lock() {
+                let stack = entries.clone();
+                drop(entries);
+                let _ = raise_expanded_fans(&app, &stack, &foreground, last_external_foreground.as_ref(), cursor_over_taskbar_or_preview);
+            }
+        }
 
         for (label, active) in input_state_updates {
             let _ = app.emit(
@@ -1544,6 +1674,80 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn native_new_fan_covers_pinned_fan_and_masks_underlying_hover_without_focus() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, GetForegroundWindow, SetLayeredWindowAttributes, ShowWindow, LWA_ALPHA, SW_SHOWNOACTIVATE, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP};
+        struct HiddenWindow(super::HWND);
+        impl Drop for HiddenWindow {
+            fn drop(&mut self) { unsafe { DestroyWindow(self.0); } }
+        }
+        let foreground = unsafe { GetForegroundWindow() };
+        let mut windows = Vec::new();
+        let mut entries = std::collections::HashMap::new();
+        let mut labels = std::collections::HashMap::new();
+        for label in ["first", "second", "pop"] {
+            let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+            // Windows does not raise hidden HWNDs. Use fully transparent,
+            // offscreen disposable windows without activating any of them.
+            let hwnd = unsafe { CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW, class.as_ptr(), class.as_ptr(), WS_POPUP,
+                -30000, -30000, 64, 64, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()) };
+            assert!(!hwnd.is_null());
+            windows.push(HiddenWindow(hwnd));
+            assert_ne!(unsafe { SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA) }, 0);
+            unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE); }
+            labels.insert(hwnd as isize, label.to_string());
+            entries.insert(label.to_string(), super::ScopedTopmostEntry { native_hwnd: hwnd as isize, ..Default::default() });
+        }
+        let apply = |entries: &std::collections::HashMap<String, super::ScopedTopmostEntry>| {
+            for label in super::expanded_fan_stack(entries) {
+                super::raise_expanded_fan_hwnd(super::Win32Hwnd(entries[&label].native_hwnd as _), super::ScopedWindowPlacement::Normal).unwrap();
+            }
+        };
+        super::update_fan_open_order(&mut entries, "first", true);
+        super::update_fan_open_order(&mut entries, "first", true); // Pinned.
+        apply(&entries);
+        assert!(super::covered_button_windows_below(entries["first"].native_hwnd, &labels).contains(&"pop".to_string()));
+        super::update_fan_open_order(&mut entries, "second", true); // Hover or click new fan.
+        apply(&entries);
+        assert_eq!(super::covered_button_windows_below(entries["second"].native_hwnd, &labels), vec!["first", "pop"]);
+        assert!(!super::covered_button_windows_below(entries["first"].native_hwnd, &labels).contains(&"second".to_string()));
+        super::update_fan_open_order(&mut entries, "second", false);
+        apply(&entries);
+        assert!(super::covered_button_windows_below(entries["first"].native_hwnd, &labels).contains(&"second".to_string()));
+        assert_eq!(unsafe { GetForegroundWindow() }, foreground);
+    }
+
+    #[test]
+    fn expanded_fans_follow_hover_and_pin_order_without_permanent_pin_priority() {
+        let mut entries = std::collections::HashMap::new();
+        for label in ["first", "second", "third", "pop"] {
+            entries.insert(label.to_string(), super::ScopedTopmostEntry::default());
+        }
+        super::update_fan_open_order(&mut entries, "first", true); // Hover.
+        super::update_fan_open_order(&mut entries, "first", true); // Pin click.
+        super::update_fan_open_order(&mut entries, "second", true); // Later hover wins.
+        assert_eq!(super::expanded_fan_stack(&entries), vec!["first", "second"]);
+        super::update_fan_open_order(&mut entries, "second", false);
+        assert_eq!(super::expanded_fan_stack(&entries), vec!["first"]);
+        super::update_fan_open_order(&mut entries, "third", true); // Click-open and pin.
+        assert_eq!(super::expanded_fan_stack(&entries), vec!["first", "third"]);
+        super::update_fan_open_order(&mut entries, "third", false);
+        assert_eq!(super::expanded_fan_stack(&entries), vec!["first"]);
+    }
+
+    #[test]
+    fn expanded_fan_stacking_cannot_promote_an_inactive_or_preview_suppressed_group() {
+        use super::ScopedWindowPlacement as Placement;
+        for preview in [false, true] {
+            let (placement, _) = super::resolve_scoped_window_placement(false, false, false, false, false, preview, 99, 22);
+            assert_eq!(super::expanded_fan_placement(placement), None);
+        }
+        assert_eq!(super::expanded_fan_placement(Placement::Topmost), Some(Placement::Topmost));
+        assert_eq!(super::expanded_fan_placement(Placement::Behind(99)), Some(Placement::Normal));
+        assert_eq!(super::expanded_fan_placement(Placement::Normal), Some(Placement::Normal));
+    }
+
     #[cfg(windows)]
     use super::{
         clear_last_external_foreground, ForegroundProcessInfo, ForegroundWindowState,
@@ -1625,6 +1829,7 @@ mod tests {
             y: 24,
             space_down: true,
             primary_button_down: false,
+            covered_button_windows: vec!["button-fan-covered".to_string()],
         })
         .expect("native input snapshot should serialize");
 
@@ -1634,7 +1839,8 @@ mod tests {
                 "x": -1920,
                 "y": 24,
                 "spaceDown": true,
-                "primaryButtonDown": false
+                "primaryButtonDown": false,
+                "coveredButtonWindows": ["button-fan-covered"]
             })
         );
     }

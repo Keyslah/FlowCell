@@ -89,6 +89,7 @@ def main() -> None:
     if not target.is_file():
         raise FileNotFoundError(f"Align source not found: {target}")
     alignment = _load_alignment_module(target)
+    _probe_origin_center(alignment)
 
     _clear_scene()
     active = _new_box("Active Reference", (10.0, 20.0, 30.0), (4.0, 8.0, 6.0))
@@ -211,6 +212,52 @@ def main() -> None:
     status = alignment.run_flowcell_action(bpy.context, {"command": "status"})
     assert status["message"] == "Alignment tools ready."
     print(f"FLOWCELL_ALIGN_PROBE_OK target={target}", flush=True)
+
+
+def _probe_origin_center(alignment) -> None:
+    # Offset both meshes from their origins so bounds-based alignment cannot pass.
+    cases = 0
+    for grouped in (False, True):
+        for command, axes in [("x_center", (0,)), ("y_center", (1,)), ("z_center", (2,)),
+                              ("center_everything", (0, 1, 2)), ("center_xy", (0, 1))]:
+            for extra_modifiers in ({}, {"shift": True}, {"ctrl": True}, {"shift": True, "ctrl": True}):
+                _clear_scene()
+                active = _new_box("Offset Anchor", (10, 20, 30), (4, 8, 6))
+                mover = _new_box("Offset Mover", (100, 70, 70), (2, 4, 8))
+                other = _new_box("Other Mover", (106, 80, 90), (6, 2, 4))
+                for obj, offset in [(active, (11, 12, 13)), (mover, (3, 4, 5))]:
+                    for vertex in obj.data.vertices:
+                        vertex.co += Vector(offset)
+                    obj.data.update()
+                bpy.context.view_layer.objects.active = active
+                bpy.context.scene.cursor.location = (7, 8, 9)
+                bpy.context.view_layer.update()
+                moving = [active, mover, other] if extra_modifiers else [mover, other]
+                target = Vector((7, 8, 9) if extra_modifiers.get("ctrl") else
+                                (0, 0, 0) if extra_modifiers else (10, 20, 30))
+                before = {obj.name: obj.matrix_world.translation.copy() for obj in moving}
+                active_before = _matrix_values(active)
+                mesh_before = {obj.name: tuple(tuple(v.co) for v in obj.data.vertices) for obj in moving}
+                lo, hi = alignment._combined_bounds(moving)
+                group_center = (lo + hi) / 2
+                selected_before = sorted(obj.name for obj in bpy.context.selected_objects)
+                result = alignment.run_flowcell_action(bpy.context, {
+                    "command": command, "group": grouped, "modifiers": {"alt": True, **extra_modifiers},
+                })
+                bpy.context.view_layer.update()
+                for obj in moving:
+                    expected = before[obj.name].copy()
+                    for index in axes:
+                        expected[index] += target[index] - (group_center[index] if grouped else before[obj.name][index])
+                    _assert_vector(obj.matrix_world.translation, expected)
+                    assert tuple(tuple(v.co) for v in obj.data.vertices) == mesh_before[obj.name]
+                if not extra_modifiers:
+                    assert _matrix_values(active) == active_before
+                assert bpy.context.view_layer.objects.active is active
+                assert sorted(obj.name for obj in bpy.context.selected_objects) == selected_before
+                assert result["changed"] == len(moving)
+                cases += 1
+    print(f"FLOWCELL_ALIGN_ALT_PROBE_OK cases={cases}", flush=True)
 
 
 if __name__ == "__main__":

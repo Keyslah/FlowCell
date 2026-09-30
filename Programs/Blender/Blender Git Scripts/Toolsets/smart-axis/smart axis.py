@@ -83,24 +83,11 @@ def ensure_baseline(obj, axes=AXES):
 
 
 def set_baseline(obj, axes=AXES):
-    lo, hi = world_bounds(obj)
-    for axis in axes:
-        i = AXES.index(axis)
-        obj[f"_{axis}_min_ref"] = float(lo[i])
-        obj[f"_{axis}_max_ref"] = float(hi[i])
+    live_bridge._smart_axis_set_baseline(obj, _ctx(), axes)
 
 
 def lock_to_stored(obj, axis, side):
-    lo, hi = world_bounds(obj)
-    i = AXES.index(axis)
-    ref = obj.get(f"_{axis}_{'min' if side == 'MIN' else 'max'}_ref")
-    if ref is None or side not in {"MIN", "MAX"}:
-        return False
-    delta = ref - (lo[i] if side == "MIN" else hi[i])
-    if abs(delta) < EPS:
-        return False
-    obj.location[i] += delta
-    return True
+    return live_bridge._smart_axis_lock_to_stored(obj, _ctx(), axis, side)
 
 
 def set_last_scale(obj):
@@ -231,34 +218,7 @@ def _live_disable(context=None, entry=None):
 
 
 def _live_tick(context=None, entry=None):
-    ctx = _ctx(context)
-    active_entry = entry or {}
-    current_token = _selection_token(ctx)
-    previous_token = tuple(active_entry.get("selection_token", ()) or ())
-    axes = active_axes(ctx)
-    objs = selected_target_objects(ctx)
-
-    if current_token != previous_token:
-        for obj in objs:
-            if axes:
-                ensure_baseline(obj, axes)
-        remember_current_scales(objs)
-        active_entry["selection_token"] = current_token
-
-    if not axes:
-        for obj in objs:
-            if scale_changed(obj):
-                set_last_scale(obj)
-        return
-
-    modes = active_modes(ctx)
-    for obj in objs:
-        if not scale_changed(obj):
-            continue
-        ensure_baseline(obj, axes)
-        for axis in axes:
-            lock_to_stored(obj, axis, modes[axis])
-        set_last_scale(obj)
+    return live_bridge._smart_axis_tick(_ctx(context), entry)
 
 
 def _ensure_live_tool_registered():

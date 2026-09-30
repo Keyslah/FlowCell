@@ -1442,7 +1442,7 @@ def perform_save_selected_stl_to_assets_result(
     view_layer = context.view_layer
     previous_active = view_layer.objects.active
     previous_selected = list(selected_objects)
-    previous_mode = str(getattr(context, "mode", "OBJECT") or "OBJECT")
+    previous_mode = str(getattr(previous_active, "mode", "OBJECT") or "OBJECT")
     exported_paths: list[Path] = []
     reserved_export_paths: set[str] = set()
 
@@ -1477,12 +1477,18 @@ def perform_save_selected_stl_to_assets_result(
                 check_existing=False,
                 export_selected_objects=True,
                 apply_modifiers=True,
+                evaluation_mode="DAG_EVAL_VIEWPORT",
                 ascii_format=False,
                 use_scene_unit=False,
                 global_scale=export_scale,
             )
             if result is None or "FINISHED" not in result:
                 raise ValueError(f"STL export did not finish for '{obj.name}'.")
+
+            with export_path.open("rb") as exported:
+                header = exported.read(84)
+            if len(header) < 84 or int.from_bytes(header[80:84], "little") == 0:
+                raise ValueError(f"STL export for '{obj.name}' contains no triangles; nothing was sent to the slicer.")
 
             exported_paths.append(export_path)
     finally:
@@ -3357,6 +3363,26 @@ def _execute_bridge_operator_direct(action: str, data: dict) -> dict[str, object
             "display": LAST_BRIDGE_DISPLAY,
         }
 
+    message_actions = {
+        "sort_live": perform_sort_live,
+        "baseline_visibility": perform_baseline_visibility,
+        "restore_visibility": perform_restore_visibility,
+        "cycle_collection_hover_save_visibility": perform_cycle_collection_hover_save_visibility,
+        "cycle_collection_hover_clear_visibility": perform_cycle_collection_hover_clear_visibility,
+        "cycle_collection_hover_restore_visibility": perform_cycle_collection_hover_restore_visibility,
+        "cursor_center_hole": perform_cursor_center_hole,
+    }
+    if normalized in message_actions:
+        message = message_actions[normalized](bpy.context)
+        set_bridge_result(message)
+        bpy.context.view_layer.update()
+        return {"message": LAST_BRIDGE_MESSAGE, "display": LAST_BRIDGE_DISPLAY}
+
+    if normalized == "render_active_object_png_to_images":
+        result = perform_render_active_object_png_to_images_result(bpy.context)
+        set_bridge_result(str(result.get("message", "")))
+        return {**result, "message": LAST_BRIDGE_MESSAGE, "display": LAST_BRIDGE_DISPLAY}
+
     if normalized == "make_layers":
         result = bpy.ops.object.flowcell_live_snapshot_make_layers("EXEC_DEFAULT")
     elif normalized == "sort":
@@ -3390,17 +3416,18 @@ def _execute_bridge_operator_direct(action: str, data: dict) -> dict[str, object
             direction=str(data.get("direction", "forward") or "forward"),
         )
     elif normalized == "save_selected_stl_to_assets":
-        message = perform_save_selected_stl_to_assets(
+        result = perform_save_selected_stl_to_assets_result(
             bpy.context,
             str(data.get("file_name", "") or ""),
         )
-        set_bridge_result(message)
+        set_bridge_result(str(result.get("message", "")))
         try:
             bpy.context.view_layer.update()
         except Exception:
             pass
         return {
-            "message": LAST_BRIDGE_MESSAGE or message,
+            **result,
+            "message": LAST_BRIDGE_MESSAGE,
             "display": LAST_BRIDGE_DISPLAY,
         }
     elif normalized == "import_obj_into_scene":
@@ -4107,6 +4134,24 @@ def _load_flowcell_live_bridge_module():
     return flowcell_live_bridge
 
 
+def _stop_bridge_request_timers():
+    # Reloading a module replaces its function attributes, but Blender retains
+    # the previously registered function objects. Remove those exact callbacks.
+    import gc
+
+    for callback in gc.get_objects():
+        if (inspect.isfunction(callback)
+                and callback.__name__ == "poll_bridge_requests"
+                and callback.__module__ in {"flowcell_actions", "flowcell_bridge"}
+                and bpy.app.timers.is_registered(callback)):
+            bpy.app.timers.unregister(callback)
+
+
+def _start_bridge_request_timer():
+    _stop_bridge_request_timers()
+    bpy.app.timers.register(poll_bridge_requests, first_interval=POLL_INTERVAL_SECONDS, persistent=True)
+
+
 def register():
     flowcell_live_bridge = _load_flowcell_live_bridge_module()
 
@@ -4136,8 +4181,7 @@ def register():
     get_bridge_directory()
     disable_outliner_alpha_sort()
 
-    if not bpy.app.timers.is_registered(poll_bridge_requests):
-        bpy.app.timers.register(poll_bridge_requests, first_interval=POLL_INTERVAL_SECONDS, persistent=True)
+    _start_bridge_request_timer()
 
 
 def unregister():
@@ -4153,8 +4197,7 @@ def unregister():
     )
     if callable(cleanup_lifecycles):
         cleanup_lifecycles(reason="bridge-shutdown")
-    if bpy.app.timers.is_registered(poll_bridge_requests):
-        bpy.app.timers.unregister(poll_bridge_requests)
+    _stop_bridge_request_timers()
 
     for cls in reversed(CLASSES):
         _safe_unregister_class(cls)

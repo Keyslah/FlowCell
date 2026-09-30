@@ -124,6 +124,14 @@ def perform_boolsafe_triangle(context=None, data=None):
     remove_ghost_mods(obj)
     boolean_cleanup_ops_bmesh(obj, ctx)
 
+    used_names = {other.name for other in bpy.data.objects if other != obj}
+    name = "Triangle"
+    suffix = 1
+    while name in used_names:
+        name = f"Triangle{suffix}"
+        suffix += 1
+    obj.name = name
+
     return _result(
         "FINISHED",
         f"Added Boolean-safe triangular prism '{obj.name}'.",

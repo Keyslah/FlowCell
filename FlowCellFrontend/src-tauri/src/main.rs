@@ -164,6 +164,7 @@ fn main() {
             set_host_window_topmost,
             register_scoped_window_topmost,
             refresh_scoped_window_topmost,
+            set_button_fan_expanded,
             unregister_scoped_window_topmost,
             get_scoped_window_input_state,
             refresh_frontend_host,

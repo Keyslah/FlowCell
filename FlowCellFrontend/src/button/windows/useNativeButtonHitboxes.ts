@@ -347,10 +347,11 @@ export function useNativeButtonHitboxes(args: {
         );
         return;
       }
-      const hovered = connectedHitboxes.some((hitbox) =>
+      const covered = !pointerPressActive && snapshot.coveredButtonWindows?.includes(currentWindow.label) === true;
+      const hovered = !covered && connectedHitboxes.some((hitbox) =>
         pointHitsInteractiveElement(hitbox, clientX, clientY)
       );
-      const hoveredButton = currentInventory.buttonHosts.find((hitbox) =>
+      const hoveredButton = covered ? undefined : currentInventory.buttonHosts.find((hitbox) =>
         pointHitsInteractiveElement(hitbox, clientX, clientY)
       );
       onButtonHoverChangeRef.current?.(hoveredButton?.buttonHost ?? null);
@@ -358,7 +359,7 @@ export function useNativeButtonHitboxes(args: {
       // While the window ignores cursor events the webview receives no pointer
       // events. Drive hover from each authored target's live bounds so native
       // gating and the browser's authored core/inner-shape target stay aligned.
-      dispatchSyntheticButtonHover(currentInventory.buttonHosts, clientX, clientY, true);
+      dispatchSyntheticButtonHover(currentInventory.buttonHosts, clientX, clientY, !covered);
 
       if (currentHoverState !== hovered) {
         currentHoverState = hovered;

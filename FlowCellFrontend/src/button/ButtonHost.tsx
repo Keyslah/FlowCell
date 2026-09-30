@@ -703,7 +703,7 @@ export function ButtonHost({
       const result = await executeButtonRecord(button, eventName, {
         fields,
         fieldValues,
-        payloadOverride: activationEvent && button.executionTarget?.kind === "tool-set-action"
+        payloadOverride: activationEvent
           ? { modifiers: { shift: activationEvent.shiftKey, ctrl: activationEvent.ctrlKey, alt: activationEvent.altKey, meta: activationEvent.metaKey } }
           : undefined,
         onFieldActivate,

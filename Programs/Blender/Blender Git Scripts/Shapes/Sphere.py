@@ -134,6 +134,14 @@ def perform_boolsafe_sphere(context=None, data=None):
     except Exception:
         pass
 
+    used_names = {other.name for other in bpy.data.objects if other != obj}
+    name = "Sphere"
+    suffix = 1
+    while name in used_names:
+        name = f"Sphere{suffix}"
+        suffix += 1
+    obj.name = name
+
     return _result(
         "FINISHED",
         f"Added Boolean-safe sphere '{obj.name}'.",

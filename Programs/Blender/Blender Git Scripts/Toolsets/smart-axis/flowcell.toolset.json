@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
     "id":  "blender.smart-axis",
-    "version":  "1.0.0",
+    "version":  "1.1.0",
     "label":  "smart axis",
     "tooltip":  "Smart Axis Lock stores selected object bounds, cycles pinned axis sides, and can run live while scaling.",
     "kind":  "toolset",

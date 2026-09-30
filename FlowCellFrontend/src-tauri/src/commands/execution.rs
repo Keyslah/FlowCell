@@ -2305,6 +2305,7 @@ pub(crate) fn run_panel_script_response_impl(
     program_name: String,
     panel_name: String,
     file_name: String,
+    modifiers: Option<program_sources::execute::ButtonModifiers>,
 ) -> Result<Value, String> {
     let validated_file_name = validate_panel_script_file_name(&file_name)?;
     if let Some(resolution) = program_sources::execute::resolve_active_source_record(
@@ -2312,7 +2313,7 @@ pub(crate) fn run_panel_script_response_impl(
         &panel_name,
         &validated_file_name,
     )? {
-        return program_sources::execute::run_active_source(&resolution);
+        return program_sources::execute::run_active_source(&resolution, modifiers);
     }
     Err(format!(
         "Button source '{}' is not installed in the active Button system. Complete migration before running it.",
@@ -2326,9 +2327,10 @@ pub(crate) async fn run_panel_script_response(
     program_name: String,
     panel_name: String,
     file_name: String,
+    modifiers: Option<program_sources::execute::ButtonModifiers>,
 ) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        run_panel_script_response_impl(&app, program_name, panel_name, file_name)
+        run_panel_script_response_impl(&app, program_name, panel_name, file_name, modifiers)
     })
     .await
     .map_err(|error| format!("Panel script task failed: {error}"))?

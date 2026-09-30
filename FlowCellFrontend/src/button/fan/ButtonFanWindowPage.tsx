@@ -8,6 +8,7 @@ import {
 } from "react";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import type { ButtonFanWindowContext } from "../../lib/windowContext";
+import { setButtonFanExpanded } from "../../lib/tauri";
 import {
   writeRegisteredLayoutWindowButtonDisplayMode,
   writeRegisteredLayoutWindowSnapshotBounds
@@ -1260,6 +1261,13 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       getCurrentWindow().label, renderedExpanded ? "expanded" : "collapsed"
     );
   }, [renderedExpanded]);
+
+  useEffect(() => {
+    // Pinning an already hovered fan is a new raise; an older pinned fan does
+    // not outrank a different fan opened afterward.
+    if (!geometryInitialized || (renderedExpanded && !expanded)) return;
+    void setButtonFanExpanded(renderedExpanded).catch((error) => setRuntimeError(String(error)));
+  }, [geometryInitialized, renderedExpanded, expanded, pinned]);
 
   const closeControl = useButtonWindowCloseControl({
     enabled: geometryInitialized && !dragging,

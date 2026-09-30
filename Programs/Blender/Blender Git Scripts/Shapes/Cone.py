@@ -133,6 +133,14 @@ def perform_boolsafe_cone(context=None, data=None):
     except Exception:
         pass
 
+    used_names = {other.name for other in bpy.data.objects if other != obj}
+    name = "Cone"
+    suffix = 1
+    while name in used_names:
+        name = f"Cone{suffix}"
+        suffix += 1
+    obj.name = name
+
     return _result(
         "FINISHED",
         f"Added Boolean-safe cone '{obj.name}'.",

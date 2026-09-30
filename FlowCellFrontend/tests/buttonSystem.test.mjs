@@ -2711,7 +2711,7 @@ test("Main Button single clicks select, double clicks execute, and Pop or Fan st
   );
   assert.match(buttonHost, /selectionOnlyRef\.current && trigger !== "hover" && !allowSelectionOnlyTrigger/);
   assert.match(buttonHost, /if \(selectionOnlyRef\.current\) \{\s*pressActivationInteractionIdRef\.current = null;\s*\} else \{/);
-  assert.match(mainPage, /const handleButtonDoubleActivate = async \([\s\S]{0,500}button\.disabled[\s\S]{0,500}handlePerformPanelScriptPrimaryAction\(button\.scriptFileName, matchedRecord\)/);
+  assert.match(mainPage, /const handleButtonDoubleActivate = async \([\s\S]{0,500}button\.disabled[\s\S]{0,500}handlePerformPanelScriptPrimaryAction\(button\.scriptFileName, matchedRecord, event\)/);
   assert.match(mainPage, /const pressPlan = resolveButtonPressEventPlan\(canonical\);[\s\S]{0,900}executeLifecycleEvent\("hoverEnter"\)[\s\S]{0,900}executeLifecycleEvent\("pressDown"\)[\s\S]{0,900}executeLifecycleEvent\("click"\)[\s\S]{0,900}executeLifecycleEvent\("pressUp"\)[\s\S]{0,900}executeLifecycleEvent\("hoverLeave"\)/);
   assert.equal(mainPage.match(/onDoubleActivate=\{handleButtonDoubleActivate\}/g)?.length, 1);
   assert.doesNotMatch(mainPage, /PANEL_SCRIPT_REACTIVATION_GUARD_MS|DOUBLE_CLICK/);
@@ -7250,6 +7250,32 @@ test("core-action registry IDs use the same case-insensitive contract as catalog
     assert.equal(calls, 1);
   } finally {
     unregister();
+  }
+});
+
+test("panel-script dispatch preserves click modifiers across asynchronous execution", async () => {
+  const originalWindow = globalThis.window;
+  const calls = [];
+  globalThis.window = {
+    __TAURI_INTERNALS__: {
+      invoke: async (command, args) => {
+        calls.push({ command, args });
+        return { message: "Done" };
+      }
+    }
+  };
+  try {
+    const target = button("hex", "single-script", source("Blender", "Shapes", "hex.flowcell-source.json"));
+    for (const shift of [false, true]) {
+      const modifiers = { shift, ctrl: false, alt: false, meta: false };
+      await executeButtonRecord(target, "click", { payloadOverride: { modifiers } });
+      const call = calls.filter((item) => item.command === "run_panel_script_response").at(-1);
+      assert.deepEqual(call.args.modifiers, modifiers);
+      assert.equal(call.args.programName, "Blender");
+    }
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
   }
 });
 

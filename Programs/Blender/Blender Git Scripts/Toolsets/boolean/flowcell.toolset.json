@@ -1,7 +1,7 @@
 {
     "schemaVersion": 1,
     "id": "blender.boolean",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "label": "boolean",
     "tooltip": "Quick Boolean with I/U/D operation buttons, one cycling solver button, SI/HT/HC/S toggles, and Run.",
     "kind": "toolset",

@@ -45,6 +45,10 @@ export function unregisterScopedWindowTopmost(label: string): Promise<void> {
   return invoke("unregister_scoped_window_topmost", { label });
 }
 
+export function setButtonFanExpanded(expanded: boolean): Promise<void> {
+  return invoke("set_button_fan_expanded", { expanded });
+}
+
 export function getScopedWindowInputState(label: string): Promise<boolean> {
   return invoke("get_scoped_window_input_state", { label });
 }

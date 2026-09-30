@@ -132,6 +132,14 @@ def perform_boolsafe_cylinder(context=None, data=None):
     except Exception:
         pass
 
+    used_names = {other.name for other in bpy.data.objects if other != obj}
+    name = "Cylinder"
+    suffix = 1
+    while name in used_names:
+        name = f"Cylinder{suffix}"
+        suffix += 1
+    obj.name = name
+
     return _result(
         "FINISHED",
         f"Added Boolean-safe cylinder '{obj.name}'.",

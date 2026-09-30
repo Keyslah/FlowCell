@@ -240,6 +240,7 @@ def register_live_tool(
     existing_entry = LIVE_TOOL_REGISTRY.get(normalized_tool_id, {})
     resolved_status_fn = status_fn if callable(status_fn) else _resolve_live_tool_status_fn(tick_fn, enable_fn, disable_fn)
     LIVE_TOOL_REGISTRY[normalized_tool_id] = {
+        **existing_entry,
         "tool_id": normalized_tool_id,
         "enabled": bool(existing_entry.get("enabled", False)),
         "interval": _normalize_live_tool_interval(interval),
@@ -481,6 +482,9 @@ def _smart_axis_set_baseline(
         axis_index = SMART_AXIS_AXES.index(axis)
         obj[f"_{axis}_min_ref"] = float(minimum[axis_index])
         obj[f"_{axis}_max_ref"] = float(maximum[axis_index])
+        stretch_key = _smart_axis_key(f"stretch_{axis.lower()}")
+        if stretch_key in obj:
+            del obj[stretch_key]
 
 
 def _smart_axis_set_last_scale(obj: bpy.types.Object) -> None:
@@ -509,6 +513,26 @@ def _smart_axis_scale_changed(obj: bpy.types.Object) -> bool:
     return previous is None or any(abs(previous[index] - current[index]) > SMART_AXIS_EPS for index in range(3))
 
 
+def _smart_axis_stretch_state(obj, axis, side):
+    """A saved nonzero world row retains the material sides through zero scale."""
+    state = obj.get(_smart_axis_key(f"stretch_{axis.lower()}"))
+    ref = obj.get(f"_{axis}_{side.lower()}_ref")
+    if (state is None or ref is None or state.get("side") != side
+            or abs(float(state.get("ref", float("inf"))) - float(ref)) > SMART_AXIS_EPS
+            or len(state.get("row", ())) != 4):
+        return None
+    return state
+
+
+def _smart_axis_pin_uses_min(obj, axis, side):
+    state = _smart_axis_stretch_state(obj, axis, side)
+    flipped = False
+    if state is not None:
+        row = obj.matrix_world[SMART_AXIS_AXES.index(axis)]
+        flipped = sum(row[i] * state["row"][i] for i in range(3)) < 0.0
+    return (side == "MIN") != flipped
+
+
 def _smart_axis_lock_to_stored(
     obj: bpy.types.Object,
     context: bpy.types.Context,
@@ -520,10 +544,17 @@ def _smart_axis_lock_to_stored(
     ref = obj.get(f"_{axis}_{'min' if side == 'MIN' else 'max'}_ref")
     if ref is None or side not in {"MIN", "MAX"}:
         return False
-    delta = float(ref) - (minimum[axis_index] if side == "MIN" else maximum[axis_index])
+    use_min = _smart_axis_pin_uses_min(obj, axis, side)
+    delta = float(ref) - (minimum[axis_index] if use_min else maximum[axis_index])
     if abs(delta) < SMART_AXIS_EPS:
         return False
-    obj.location[axis_index] += delta
+    offset = Vector((0.0, 0.0, 0.0))
+    offset[axis_index] = delta
+    if obj.parent is not None:
+        parent_space = obj.parent.matrix_world @ obj.matrix_parent_inverse
+        offset = parent_space.inverted_safe().to_3x3() @ offset
+    obj.location += offset
+    context.view_layer.update()
     return True
 
 
@@ -600,7 +631,8 @@ def _smart_axis_tick(context: bpy.types.Context | None = None, entry: dict[str, 
         for obj in selected:
             if axes:
                 _smart_axis_ensure_baseline(obj, active_context, axes)
-        _smart_axis_remember_current_scales(selected)
+            if str(obj.name_full or obj.name) not in previous_token:
+                _smart_axis_set_last_scale(obj)
         active_entry["selection_token"] = selection_token
 
     if not axes:
@@ -772,176 +804,10 @@ def perform_batch_rename_selected_objects(
 
 
 def execute_bridge_operator(action: str, data: dict) -> dict[str, object]:
-    set_bridge_result("", "")
-    normalized = str(action or "").strip().lower()
-    result: dict[str, object] = {}
-
-    custom_result = execute_custom_action(normalized, data)
-    if custom_result is not None:
-        result = custom_result
-        set_bridge_result(
-            str(custom_result.get("message", "")),
-            str(custom_result.get("display", "")),
-        )
-        try:
-            bpy.context.view_layer.update()
-        except Exception:
-            pass
-        return {
-            **result,
-            "message": LAST_BRIDGE_MESSAGE or str(result.get("message", "") or f"Completed {normalized}."),
-            "display": LAST_BRIDGE_DISPLAY,
-        }
-
-    if normalized == "make_layers":
-        message = actions.perform_make_layers(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "sort":
-        message = actions.perform_sort(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "sort_live":
-        message = actions.perform_sort_live(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "snapshot":
-        message = actions.perform_snapshot(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "back":
-        message = actions.perform_back(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "restore":
-        message = actions.perform_restore(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "baseline_visibility":
-        message = actions.perform_baseline_visibility(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "restore_visibility":
-        message = actions.perform_restore_visibility(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "trash":
-        message = actions.perform_trash(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "archive":
-        message = actions.perform_archive(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "empty_trash":
-        message = actions.perform_empty_trash(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "add_to_live":
-        message = actions.perform_add_to_live(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "new_collection":
-        message = actions.perform_new_collection(
-            bpy.context,
-            str(data.get("name", "") or "Collection"),
-        )
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "empty_collections":
-        message = actions.perform_empty_collections(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "cycle_collection":
-        message = actions.perform_cycle_collection(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "cycle_collection_hover_save_visibility":
-        message = actions.perform_cycle_collection_hover_save_visibility(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "cycle_collection_hover_clear_visibility":
-        message = actions.perform_cycle_collection_hover_clear_visibility(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "cycle_collection_hover_restore_visibility":
-        message = actions.perform_cycle_collection_hover_restore_visibility(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "cycle_live_versions":
-        result = actions.perform_cycle_live_versions(
-            bpy.context,
-            str(data.get("direction", "forward") or "forward"),
-        )
-        set_bridge_result(str(result.get("message", "")), str(result.get("display", "")))
-    elif normalized == "save_selected_stl_to_assets":
-        result = actions.perform_save_selected_stl_to_assets_result(
-            bpy.context,
-            str(data.get("file_name", "") or ""),
-        )
-        set_bridge_result(str(result.get("message", "")))
-    elif normalized == "import_obj_into_scene":
-        result = actions.perform_import_obj_into_scene_result(
-            bpy.context,
-            str(data.get("filepath", "") or ""),
-        )
-        set_bridge_result(str(result.get("message", "")))
-    elif normalized == "import_png_as_lithophane":
-        result = actions.perform_import_png_as_lithophane_result(
-            bpy.context,
-            str(data.get("filepath", "") or ""),
-            float(data.get("dpi", 300.0) or 300.0),
-        )
-        set_bridge_result(str(result.get("message", "")))
-    elif normalized == "render_active_object_png_to_images":
-        result = actions.perform_render_active_object_png_to_images_result(
-            bpy.context,
-        )
-        set_bridge_result(str(result.get("message", "")))
-    elif normalized == "alignment_tools":
-        result = actions.perform_flowcell_alignment_tool(
-            bpy.context,
-            data,
-        )
-        set_bridge_result(str(result.get("message", "")))
-    elif normalized == "flatten_revolve_tools":
-        result = actions.perform_flowcell_flatten_revolve_tool(
-            bpy.context,
-            data,
-        )
-        set_bridge_result(str(result.get("message", "")))
-    elif normalized == "cursor_center_hole":
-        message = actions.perform_cursor_center_hole(bpy.context)
-        set_bridge_result(message)
-        result["message"] = message
-    elif normalized == "smart_axis_lock":
-        result = execute_smart_axis_lock_command(
-            bpy.context,
-            data,
-        )
-        set_bridge_result(str(result.get("message", "")))
-    else:
-        custom_result = execute_custom_action(normalized, data)
-        if custom_result is None:
-            raise ValueError(f"Unsupported action: {action or '[blank]'}")
-        result = custom_result
-        set_bridge_result(
-            str(custom_result.get("message", "")),
-            str(custom_result.get("display", "")),
-        )
-
-    try:
-        bpy.context.view_layer.update()
-    except Exception:
-        pass
-
-    return {
-        **result,
-        "message": LAST_BRIDGE_MESSAGE or str(result.get("message", "") or f"Completed {normalized}."),
-        "display": LAST_BRIDGE_DISPLAY,
-        **({"exported_paths": result.get("exported_paths", [])} if normalized == "save_selected_stl_to_assets" else {}),
-        **({"imported_objects": result.get("imported_objects", [])} if normalized in {"import_obj_into_scene", "import_png_as_lithophane"} else {}),
-    }
+    # Legacy callers use the same undo-aware dispatcher as the request timer.
+    result = actions.execute_bridge_operator(action, data)
+    set_bridge_result(str(result.get("message", "")), str(result.get("display", "")))
+    return result
 
 
 def get_bridge_directory() -> Path:
@@ -1289,101 +1155,5 @@ def write_bridge_response(payload: dict) -> None:
 
 
 def poll_bridge_requests() -> float:
-    global LAST_REQUEST_ID
-
-    sync_custom_action_lifecycles()
-
-    request_path = get_request_path()
-    if not request_path.exists():
-        return POLL_INTERVAL_SECONDS
-
-    try:
-        payload = json.loads(request_path.read_text(encoding="utf-8-sig"))
-    except Exception:
-        write_bridge_response(
-            {
-                "id": "",
-                "status": "error",
-                "message": "The request file is not valid JSON.",
-            }
-        )
-        try:
-            request_path.unlink()
-        except OSError:
-            pass
-        return POLL_INTERVAL_SECONDS
-
-    request_id = str(payload.get("id", "")).strip()
-    action = str(payload.get("action", "")).strip().lower()
-    data = payload.get("data", {}) or {}
-
-    if not request_id:
-        write_bridge_response(
-            {
-                "id": "",
-                "status": "error",
-                "message": "The request is missing an id.",
-            }
-        )
-        try:
-            request_path.unlink()
-        except OSError:
-            pass
-        return POLL_INTERVAL_SECONDS
-
-    if request_id == LAST_REQUEST_ID:
-        return POLL_INTERVAL_SECONDS
-
-    LAST_REQUEST_ID = request_id
-
-    try:
-        display = ""
-        response_data = {}
-        if action == "get_selected_objects":
-            selected_objects = get_selected_object_entries(bpy.context)
-            if not selected_objects:
-                raise ValueError("Select at least one object.")
-            message = f"Loaded {len(selected_objects)} selected object(s)."
-            response_data["selected_objects"] = selected_objects
-        elif action == "rename_selected_objects":
-            rename_items = data.get("items", []) or []
-            message = perform_batch_rename_selected_objects(bpy.context, rename_items)
-            response_data["selected_objects"] = get_selected_object_entries(bpy.context)
-        else:
-            result = execute_bridge_operator(action, data)
-            message = str(result.get("message", ""))
-            display = str(result.get("display", ""))
-            response_data.update(
-                {
-                    key: value
-                    for key, value in result.items()
-                    if key not in {"message", "display", "status"}
-                }
-            )
-
-        response_payload = {
-            "id": request_id,
-            "status": "ok",
-            "message": message,
-        }
-        if display:
-            response_payload["display"] = display
-        if response_data:
-            response_payload.update(response_data)
-        write_bridge_response(response_payload)
-    except Exception as exc:
-        write_bridge_response(
-            {
-                "id": request_id,
-                "status": "error",
-                "message": str(exc),
-                "traceback": traceback.format_exc(),
-            }
-        )
-    finally:
-        try:
-            request_path.unlink()
-        except OSError:
-            pass
-
-    return POLL_INTERVAL_SECONDS
+    # Compatibility entry point; flowcell_actions owns requests and undo state.
+    return actions.poll_bridge_requests()

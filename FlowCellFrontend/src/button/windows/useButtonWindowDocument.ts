@@ -10,6 +10,7 @@ import {
 } from "../state/ButtonDraftBus";
 import { loadButtonStateDocument } from "../state/ButtonStateRepository";
 import { withCanonicalProgramPopoutThemes } from "./buttonWindowThemeDocument";
+import { withAddedCanonicalPanelButtons } from "../state/panelPopoutReconciliation";
 
 export interface ButtonWindowDocumentState {
   document: ButtonStateDocument | null;
@@ -57,7 +58,9 @@ export function useButtonWindowDocument(
     };
 
     const acceptDraft = (document: ButtonStateDocument) => {
-      acceptDocument(withCanonicalProgramPopoutThemes(document, canonicalDocument));
+      acceptDocument(withCanonicalProgramPopoutThemes(
+        withAddedCanonicalPanelButtons(document, canonicalDocument), canonicalDocument
+      ));
     };
 
     const loadSavedDocument = async () => {

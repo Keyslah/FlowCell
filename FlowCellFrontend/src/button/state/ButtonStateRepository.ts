@@ -27,6 +27,9 @@ import {
 } from "./buttonStateValidation.js";
 import { createButtonSourceIdentity } from "./sourceIdentity.js";
 import { applyInstalledSourceUpdate } from "./sourceUpdateOperations.js";
+import { prepareLastLayoutPanelUpdates } from "./lastLayoutPanelUpdates.js";
+import { readLastLayoutPath } from "../../lib/startupSettings.js";
+import type { LayoutSnapshot } from "../../types.js";
 import { validateInstalledButtonLayout } from "./installedButtonLayoutValidation.js";
 import {
   validateButtonPlacementFile,
@@ -343,6 +346,18 @@ export async function saveButtonStateDocument(
   programRenameToken?: string
 ): Promise<ButtonStateDocument> {
   const next = cloneButtonDocument(document);
+  let saveLayoutUpdates = async () => {};
+  if (isTauriWindowHost()) {
+    const previous = await loadButtonStateDocument();
+    if (previous.revision === expectedRevision) {
+      saveLayoutUpdates = await prepareLastLayoutPanelUpdates(previous, next, readLastLayoutPath(), {
+        loadLayout: (path) => invoke<LayoutSnapshot>("load_layout_snapshot", { path }),
+        loadSettings: loadButtonSettingsFile,
+        resolveSettingsPath: (path, program, panel) => resolveButtonSettingsFilePath(path, "pop-out", program, panel),
+        saveSettings: saveButtonSettingsFile
+      });
+    }
+  }
   next.revision = expectedRevision + 1;
   const validation = validateButtonStateDocument(next);
   if (!validation.valid) {
@@ -366,6 +381,7 @@ export async function saveButtonStateDocument(
     // state was already persisted, so every attempt invalidates snapshot reads.
     buttonStateSnapshotGeneration += 1;
   }
+  await saveLayoutUpdates();
   if (response === null || response === undefined) return next;
   if (typeof response === "number") return { ...next, revision: response };
   return parseLoadedDocument(response);
@@ -756,7 +772,7 @@ function addMigratedPlacement(
     minimumFontSize: document.settings.defaultMinimumFontSize,
     textSizeOverride: null,
     allowLabelResize: false,
-    matchHitboxToSkin: true,
+    matchHitboxToSkin: !surface.uniformButtonSize,
     allowStretching: false,
     highlightOnHover: false,
     activationCycle: null,
@@ -801,16 +817,18 @@ function nextMigrationPanelRect(
   document: ButtonStateDocument,
   panelSurface: ButtonSurface
 ): ButtonRect {
+  const width = panelSurface.uniformButtonSize?.width ?? 160;
+  const height = panelSurface.uniformButtonSize?.height ?? 44;
   const occupied = panelSurface.placementIds.flatMap((placementId) => {
     const placement = document.placements[placementId];
     return placement ? [placement] : [];
   });
   for (let index = 0; index < occupied.length + 10_000; index += 1) {
     const candidate = {
-      x: 8 + (index % 5) * 168,
-      y: 8 + Math.floor(index / 5) * 52,
-      width: 160,
-      height: 44
+      x: 8 + (index % 5) * (width + 8),
+      y: 8 + Math.floor(index / 5) * (height + 8),
+      width,
+      height
     };
     if (!occupied.some((placement) => buttonRectsOverlap(candidate, placement))) {
       return candidate;

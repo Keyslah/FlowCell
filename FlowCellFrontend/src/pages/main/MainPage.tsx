@@ -2095,7 +2095,8 @@ export default function MainPage() {
 
   const handlePerformPanelScriptPrimaryAction = async (
     fileName: string,
-    record: PanelScriptFileRecord | null = null
+    record: PanelScriptFileRecord | null = null,
+    activationEvent?: MouseEvent | KeyboardEvent
   ) => {
     const matchedRecord =
       record ?? resolvedPanelScriptsByFileName.get(fileName) ?? null;
@@ -2137,7 +2138,11 @@ export default function MainPage() {
     let firstExecutionError: unknown;
     const executeLifecycleEvent = async (eventName: string) => {
       try {
-        await executeButtonRecord(canonical, eventName);
+        await executeButtonRecord(canonical, eventName, {
+          payloadOverride: activationEvent
+            ? { modifiers: { shift: activationEvent.shiftKey, ctrl: activationEvent.ctrlKey, alt: activationEvent.altKey, meta: activationEvent.metaKey } }
+            : undefined
+        });
       } catch (error) {
         firstExecutionError ??= error;
       }
@@ -3451,7 +3456,7 @@ export default function MainPage() {
     const matchedRecord =
       resolvedPanelScriptsByFileName.get(button.scriptFileName) ?? null;
     try {
-      await handlePerformPanelScriptPrimaryAction(button.scriptFileName, matchedRecord);
+      await handlePerformPanelScriptPrimaryAction(button.scriptFileName, matchedRecord, event);
     } catch (error) {
       console.error(`Button '${button.label}' could not run.`, error);
       window.alert(`Button '${button.label}' could not run.\n\n${formatErrorMessage(error)}`);
