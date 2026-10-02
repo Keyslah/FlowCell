@@ -201,83 +201,6 @@
   font-weight: 600;
 }
 
-.button-editor-sidebar__selection {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  padding: 9px;
-  border: 1px solid #41627e;
-  border-radius: 7px;
-  background: #1d2a35;
-}
-
-.button-editor-sidebar__selection-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.button-editor-sidebar__selection-heading > span {
-  min-width: 24px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  color: #081018;
-  background: #8cc8ff;
-  font-weight: 700;
-  text-align: center;
-}
-
-.button-editor-sidebar__selection ul {
-  display: grid;
-  gap: 3px;
-  max-height: 112px;
-  margin: 0;
-  padding: 0;
-  overflow: auto;
-  list-style: none;
-}
-
-.button-editor-sidebar__selection li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-  padding: 3px 5px;
-  border-left: 2px solid #649bc4;
-  color: #d9e8f5;
-  background: rgba(140, 200, 255, .06);
-}
-
-.button-editor-sidebar__selection li > span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.button-editor-sidebar__selection li.is-focused {
-  border-left-color: #e8f6ff;
-  color: #fff;
-  background: rgba(140, 200, 255, .14);
-}
-
-.button-editor-sidebar__selection li em {
-  flex: 0 0 auto;
-  color: #9ed5ff;
-  font-size: 10px;
-  font-style: normal;
-  text-transform: uppercase;
-}
-
-.button-editor-sidebar__selection p,
-.button-editor-sidebar__selection small {
-  margin: 0;
-  color: #9eabb9;
-  font-size: 11px;
-  line-height: 1.35;
-}
-
 .button-editor-sidebar__fan,
 .button-editor-sidebar__fan-animation {
   margin: 0 !important;
@@ -306,34 +229,6 @@
   font-weight: 700;
   letter-spacing: .08em;
   text-transform: uppercase;
-}
-
-.button-editor-sidebar__mode {
-  display: flex !important;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 34px;
-  margin: 0 !important;
-  padding: 6px 10px;
-  border: 1px solid #3e4754;
-  border-radius: 7px;
-  color: #c7d0da;
-  background: #252b33;
-}
-
-.button-editor-sidebar__mode input {
-  width: auto;
-  margin: 0;
-  accent-color: #6da5cf;
-}
-
-.button-editor-sidebar__same-size {
-  margin: 2px 0 0 !important;
-  padding: 8px 9px;
-  border: 1px solid #39434f;
-  border-radius: 7px;
-  background: #20262d;
 }
 
 .button-editor-sidebar__sizing {

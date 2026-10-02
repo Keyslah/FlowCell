@@ -13,12 +13,7 @@ function Resolve-FlowCellRepoRoot {
     if ($env:FLOWCELL_RESOURCE_ROOT -and (Test-Path -LiteralPath (Join-Path $env:FLOWCELL_RESOURCE_ROOT 'flowcellbackend/FlowCellBackend.ahk'))) { return $env:FLOWCELL_RESOURCE_ROOT }
     $current = [System.IO.Path]::GetFullPath($PSScriptRoot)
     while (-not [string]::IsNullOrWhiteSpace($current)) {
-        $summaryPath = Join-Path $current 'PROGRAM_SUMMARY.txt'
-        $frontendPath = Join-Path $current 'FlowCellFrontend'
-        $backendPath = Join-Path $current 'flowcellbackend'
-        if ((Test-Path -LiteralPath $summaryPath -PathType Leaf) -and
-            (Test-Path -LiteralPath $frontendPath -PathType Container) -and
-            (Test-Path -LiteralPath $backendPath -PathType Container)) {
+        if (Test-Path -LiteralPath (Join-Path $current 'flowcellbackend/FlowCellBackend.ahk') -PathType Leaf) {
             return $current
         }
 
@@ -29,11 +24,24 @@ function Resolve-FlowCellRepoRoot {
         $current = $parent
     }
 
-    throw 'FlowCell repository root could not be resolved.'
+    $installedRoot = Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\FlowCell' -Name InstalledResourceRoot -ErrorAction SilentlyContinue
+    if ($installedRoot -and (Test-Path -LiteralPath (Join-Path $installedRoot 'flowcell-installed.json') -PathType Leaf)) {
+        return $installedRoot
+    }
+    throw 'The installed FlowCell capture backend could not be located.'
 }
 
 $script:RepoRoot = Resolve-FlowCellRepoRoot
-$script:FlowCellLocalRoot = if ($env:FLOWCELL_LOCAL_ROOT) { $env:FLOWCELL_LOCAL_ROOT } else { Join-Path $script:RepoRoot 'flowcellbackend\local' }
+. (Join-Path $script:RepoRoot 'flowcellbackend/helpers/FlowCellPaths.ps1')
+$script:FlowCellLocalRoot = $FlowCellLocalRoot
+$script:BackendRole = if ($FlowCellInstalled) { 'installed' } else { 'development' }
+$script:ReceiverTitle = 'FlowCellBackendDirectScriptReceiver:' + $script:BackendRole
+if ($script:BackendRole -eq 'development') {
+    $receiverRoot = $script:RepoRoot.Replace('/', '\').TrimEnd('\')
+    if ($receiverRoot.StartsWith('\\?\UNC\', [StringComparison]::OrdinalIgnoreCase)) { $receiverRoot = '\\' + $receiverRoot.Substring(8) }
+    elseif ($receiverRoot.StartsWith('\\?\')) { $receiverRoot = $receiverRoot.Substring(4) }
+    $script:ReceiverTitle += ':' + $receiverRoot.ToLowerInvariant()
+}
 $script:StatusPath = Join-Path $script:FlowCellLocalRoot 'logs\last_action_status.txt'
 $script:ConfigDirectory = Join-Path $script:FlowCellLocalRoot 'windows\temp-shots'
 $script:ConfigPath = Join-Path $script:ConfigDirectory 'temp-shots.config.json'
@@ -167,9 +175,15 @@ public static extern System.IntPtr SendMessageTimeout(System.IntPtr hwnd, uint m
 
 function Invoke-TempShotsBackend {
     Add-TempShotsBackendBridge
-    $receiver = [FlowCell.TempShots.BackendBridge]::FindWindow('AutoHotkeyGUI', 'FlowCellBackendDirectScriptReceiver')
+    & (Join-Path $script:RepoRoot 'flowcellbackend/helpers/Start-FlowCellBackend.ps1')
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        $receiver = [FlowCell.TempShots.BackendBridge]::FindWindow('AutoHotkeyGUI', $script:ReceiverTitle)
+        if ($receiver -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 50
+    } while ([DateTime]::UtcNow -lt $deadline)
     if ($receiver -eq [IntPtr]::Zero) {
-        throw 'The FlowCell capture backend is not running. Restart FlowCell and try Temp Shots again.'
+        throw 'The FlowCell capture backend did not become ready.'
     }
     # Both the panel button and hotkey use the same resident, in-memory capture.
     # Do not fall back to Windows Snipping Tool: it independently auto-saves.
@@ -178,6 +192,8 @@ function Invoke-TempShotsBackend {
         scriptPath = if ($LauncherPath) { [IO.Path]::GetFullPath($LauncherPath) } else { Join-Path $PSScriptRoot 'Temp_Shots.vbs' }
         programKey = 'windows_generic'
         requestId = 'temp-shots-' + [guid]::NewGuid().ToString('N')
+        backendRole = $script:BackendRole
+        programsRoot = $FlowCellProgramsRoot
     } | ConvertTo-Json -Compress
     $dataPointer = [Runtime.InteropServices.Marshal]::StringToHGlobalUni($payload)
     try {

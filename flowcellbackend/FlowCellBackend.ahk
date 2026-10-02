@@ -8,12 +8,33 @@ Persistent
 
 #Include vendor\UIA-v2\Lib\UIA.ahk
 #Include helpers\TempShotsCapture.ahk
+#Include helpers\BackendIdentity.ahk
 
 ; Syntax-only validation must not initialize UI Automation, hotkeys, or capture.
 if HasCliFlag("--validate-only")
     ExitApp(0)
 
-flowCellLocalRoot := EnsureFlowCellDir(EnvGet("FLOWCELL_LOCAL_ROOT") != "" ? EnvGet("FLOWCELL_LOCAL_ROOT") : A_ScriptDir "\local")
+SplitPath A_ScriptDir, , &flowCellResourceRoot
+flowCellBackendRole := FileExist(flowCellResourceRoot "\flowcell-installed.json") ? "installed" : "development"
+requestedBackendRole := GetCliValue("--backend-role", flowCellBackendRole)
+if requestedBackendRole != flowCellBackendRole
+    throw Error("FlowCell backend role does not match its installation.")
+if flowCellBackendRole = "installed" {
+    runtimeConfig := flowCellResourceRoot "\flowcell.runtime.json"
+    configuredLocalRoot := FileExist(runtimeConfig) ? JsonStringValue(FileRead(runtimeConfig, "UTF-8"), "localRoot") : A_AppData "\FlowCell\local"
+    configuredLocalRoot := FlowCellBackendIdentity.NormalizeRoot(configuredLocalRoot)
+    if !RegExMatch(configuredLocalRoot, "i)^(?:[A-Z]:\\|\\\\)")
+        throw Error("Installed FlowCell requires an absolute localRoot.")
+    flowCellLocalRoot := EnsureFlowCellDir(FlowCellBackendIdentity.LocalRoot(configuredLocalRoot))
+    flowCellProgramsRoot := flowCellLocalRoot "\Programs"
+} else {
+    flowCellLocalRoot := EnsureFlowCellDir(A_ScriptDir "\local")
+    flowCellProgramsRoot := flowCellResourceRoot "\Programs"
+}
+EnvSet "FLOWCELL_RESOURCE_ROOT", flowCellResourceRoot
+EnvSet "FLOWCELL_LOCAL_ROOT", flowCellLocalRoot
+EnvSet "FLOWCELL_PROGRAMS_ROOT", flowCellProgramsRoot
+EnvSet "FLOWCELL_BACKEND_ROLE", flowCellBackendRole
 flowCellLogsDir := EnsureFlowCellDir(flowCellLocalRoot "\logs")
 flowCellBindingsPath := flowCellLocalRoot "\bindings.ini"
 flowCellScanStatePath := flowCellLocalRoot "\scan_state.ini"
@@ -21,7 +42,7 @@ flowCellRecordedActionsDir := EnsureFlowCellDir(flowCellLocalRoot "\recorded_act
 flowCellCommandTempDir := EnsureFlowCellDir(flowCellLocalRoot "\temp\command_host_ahk")
 flowCellLastActionStatusPath := flowCellLogsDir "\last_action_status.txt"
 flowCellCommandBackendPath := A_ScriptDir "\FlowCellCommandBackend.ps1"
-flowCellDirectScriptReceiverTitle := "FlowCellBackendDirectScriptReceiver"
+flowCellDirectScriptReceiverTitle := FlowCellBackendIdentity.ReceiverTitle(flowCellBackendRole, flowCellResourceRoot)
 flowCellDirectScriptCopyDataId := 0x46435344
 flowCellDirectScriptAccepted := 1
 flowCellDirectScriptBusy := 2
@@ -189,10 +210,11 @@ GetFlowCellWorkspaceRoot() {
 }
 
 NormalizeFlowCellProgramPath(path) {
+    global flowCellBackendRole, flowCellProgramsRoot
     path := Trim(path "")
     if path = ""
         return path
-    return StrReplace(path, "/", "\")
+    return flowCellBackendRole = "installed" ? FlowCellBackendIdentity.RebaseProgramPath(path, flowCellProgramsRoot) : StrReplace(path, "/", "\")
 }
 
 GetFlowCellIllustratorPrewarmScriptPath() {
@@ -347,6 +369,7 @@ IsFlowCellProgramRegistered(programLabel) {
 class FlowCellApp {
     __New(logger, showUi := true) {
         global flowCellScanStatePath, flowCellBindingsPath, flowCellRecordedActionsDir
+        global flowCellBackendRole
         this.projectRoot := A_ScriptDir
         this.logger := logger
         this.isVisualHost := !!showUi
@@ -386,13 +409,13 @@ class FlowCellApp {
             "Use Record Action in the macro window, then bind the saved macro here if you want a hotkey.",
             "Emergency stop hotkey: Pause"
         ]))
-        if this.isVisualHost {
+        if this.isVisualHost && flowCellBackendRole = "installed" {
             this.LoadBindings()
             this.RegisterSnippingOverlayEscapeFallback()
             Hotkey "Pause", ObjBindMethod(this, "HandleEmergencyMacroStop"), "On"
             this.logger.Info("Application started.")
         } else {
-            this.logger.Info("Controller CLI runner started without UI.")
+            this.logger.Info("Backend started without global shortcuts. Role=" flowCellBackendRole)
         }
     }
 
@@ -948,6 +971,11 @@ class FlowCellApp {
     }
 
     LoadBindings(isReload := false) {
+        global flowCellBackendRole
+        if flowCellBackendRole != "installed" {
+            this.logger.Info("Development backend skipped global shortcut registration.")
+            return
+        }
         this.shortcutManager.LoadFromDisk()
         this.actionHotkeyManager.LoadFromDisk()
         this.shortcutManager.ApplyHotkeys()
@@ -1939,6 +1967,7 @@ class FlowCellApp {
         global flowCellDirectScriptCopyDataId
         global flowCellDirectScriptAccepted, flowCellDirectScriptBusy
         global flowCellDirectScriptBadPayload, flowCellDirectScriptBadScript
+        global flowCellBackendRole, flowCellProgramsRoot
 
         if !this.HasProp("directScriptReceiverGui") || hwnd != this.directScriptReceiverGui.Hwnd
             return 0
@@ -1958,6 +1987,9 @@ class FlowCellApp {
             scriptPath := JsonStringValue(payload, "scriptPath")
             programKey := JsonStringValue(payload, "programKey")
             requestId := JsonStringValue(payload, "requestId")
+            if JsonStringValue(payload, "backendRole") != flowCellBackendRole
+                || StrLower(FlowCellBackendIdentity.NormalizeRoot(JsonStringValue(payload, "programsRoot"))) != StrLower(FlowCellBackendIdentity.NormalizeRoot(flowCellProgramsRoot))
+                return flowCellDirectScriptBadPayload
             if command != "run_script_now" || scriptPath = ""
                 return flowCellDirectScriptBadPayload
             if programKey = ""
@@ -4087,6 +4119,9 @@ class ScriptShortcutManager {
     }
 
     ApplyHotkeys() {
+        global flowCellBackendRole
+        if flowCellBackendRole != "installed"
+            return
         this.UnregisterHotkeys()
         for binding in this.bindings
             binding.status := this.TryRegisterBinding(binding)
@@ -4387,6 +4422,9 @@ class ActionHotkeyManager {
     }
 
     ApplyHotkey() {
+        global flowCellBackendRole
+        if flowCellBackendRole != "installed"
+            return
         this.UnregisterHotkeys()
         for actionId, shortcut in this.shortcuts
             this.statuses[actionId] := this.TryRegisterHotkey(actionId, shortcut)
@@ -5348,6 +5386,14 @@ WriteTextFile(path, text) {
 }
 
 cliOneShotMode := runActionId != "" || runScriptPath != ""
+if !cliOneShotMode {
+    flowCellBackendLease := FlowCellBackendIdentity.Acquire(flowCellBackendRole, flowCellResourceRoot)
+    if !flowCellBackendLease {
+        logger.Info("Existing backend retained. Role=" flowCellBackendRole)
+        ExitApp(0)
+    }
+    logger.Info("Backend owner. Role=" flowCellBackendRole " | LocalRoot=" flowCellLocalRoot " | ProgramsRoot=" flowCellProgramsRoot)
+}
 app := FlowCellApp(logger, !cliOneShotMode)
 
 if runActionId != "" {
@@ -5398,7 +5444,7 @@ if runScriptPath != "" {
 }
 
 app.StartDirectScriptReceiver()
-if IsFlowCellProgramRegistered("Illustrator")
+if flowCellBackendRole = "installed" && IsFlowCellProgramRegistered("Illustrator")
     app.StartIllustratorAutomationPrewarm()
 
 if HasCliFlag("--headless") {

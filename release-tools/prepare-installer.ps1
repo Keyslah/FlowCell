@@ -16,6 +16,14 @@ if (Test-Path -LiteralPath $stage) {
 }
 $tracked=@(& git -C $repo -c core.quotePath=false ls-files -- flowcellbackend tools)
 if($LASTEXITCODE -ne 0){throw 'Could not inventory tracked runtime resources.'}
+$newBackendHelpers = @(
+    'flowcellbackend/helpers/Start-FlowCellBackend.ps1',
+    'flowcellbackend/helpers/Configure-InstalledBackendStartup.ps1',
+    'flowcellbackend/helpers/BackendIdentity.ahk'
+)
+foreach ($helper in $newBackendHelpers) {
+    if ($tracked -notcontains $helper -and (Test-Path -LiteralPath (Join-Path $repo $helper) -PathType Leaf)) { $tracked += $helper }
+}
 foreach($relative in $tracked){
     if($relative -match '(^|/)(local|\.git|node_modules|target)(/|$)|\.(log|tmp)$'){throw "Private/generated runtime resource rejected: $relative"}
     $source=Join-Path $repo $relative

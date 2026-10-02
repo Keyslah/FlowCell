@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { LayoutSnapshot } from "../types.js";
+import { trackProgramAction } from "./programUndo.js";
 
 export const PROGRAM_DATA_INVALIDATED_EVENT = "flowcell://program-data-invalidated";
 export const PROGRAM_SETUP_COMMITTED_EVENT = "flowcell://program-setup-committed";
@@ -80,6 +81,12 @@ async function invokeProgramRailCommand<T>(
   args?: Record<string, unknown>
 ): Promise<T> {
   try {
+    if (
+      command === "run_panel_script_response" || command === "run_panel_button_event" ||
+      command === "run_toolset_action"
+    ) {
+      return await trackProgramAction(String(args?.programName ?? ""), () => invoke<T>(command, args));
+    }
     return await invoke<T>(command, args);
   } catch (error) {
     throw new Error(formatInvokeError(error));

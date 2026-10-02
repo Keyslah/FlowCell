@@ -57,6 +57,13 @@ fn is_valid_page_message(message_json: &str, expected_nonce: &str) -> bool {
         return false;
     }
     match message_field(&object, "type") {
+        Some("undo") => {
+            let request_id = message_field(&object, "requestId").unwrap_or_default();
+            object.len() == 5
+                && !request_id.is_empty()
+                && request_id.len() <= 160
+                && matches!(message_field(&object, "shortcut"), Some("undo" | "redo-shift-z" | "redo-y"))
+        }
         Some("request") => {
             let request_id = message_field(&object, "requestId").unwrap_or_default();
             let action_id = message_field(&object, "actionId").unwrap_or_default();
@@ -443,6 +450,42 @@ pub(crate) async fn unmount_installed_page_webview(_window: WebviewWindow) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_undo_accepts_only_the_three_nonce_bound_shortcuts() {
+        for shortcut in ["undo", "redo-shift-z", "redo-y"] {
+            let request = serde_json::json!({
+                "channel": "flowcell-installed-page", "type": "undo", "nonce": "undo-123",
+                "requestId": "request-1", "shortcut": shortcut,
+            });
+            assert!(is_valid_page_message(&request.to_string(), "undo-123"));
+            assert!(!is_valid_page_message(&request.to_string(), "different-nonce"));
+        }
+    }
+
+    #[test]
+    fn page_undo_rejects_extra_fields_arbitrary_keys_and_invalid_request_ids() {
+        let request = serde_json::json!({
+            "channel": "flowcell-installed-page", "type": "undo", "nonce": "undo-123",
+            "requestId": "request-1", "shortcut": "undo",
+        });
+        for shortcut in ["Ctrl+S", "", "UNDO"] {
+            let mut invalid = request.clone();
+            invalid["shortcut"] = serde_json::json!(shortcut);
+            assert!(!is_valid_page_message(&invalid.to_string(), "undo-123"));
+        }
+        for request_id in [String::new(), "x".repeat(161)] {
+            let mut invalid = request.clone();
+            invalid["requestId"] = serde_json::json!(request_id);
+            assert!(!is_valid_page_message(&invalid.to_string(), "undo-123"));
+        }
+        let mut extra = request.clone();
+        extra["programName"] = serde_json::json!("Other application");
+        assert!(!is_valid_page_message(&extra.to_string(), "undo-123"));
+        let mut missing = request;
+        missing.as_object_mut().unwrap().remove("shortcut");
+        assert!(!is_valid_page_message(&missing.to_string(), "undo-123"));
+    }
 
     #[test]
     fn page_messages_are_nonce_bound_and_shape_checked() {

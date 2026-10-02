@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { waitForPendingProgramActions, type ProgramUndoShortcut } from "./programUndo";
 
 export const SCOPED_WINDOW_INPUT_STATE_EVENT = "flowcell-scoped-window-input-state";
 
@@ -11,6 +12,14 @@ export interface ForegroundProcessInfo {
 
 export function getForegroundProcessInfo(): Promise<ForegroundProcessInfo> {
   return invoke("get_foreground_process_info");
+}
+
+export async function forwardProgramUndo(
+  shortcut: ProgramUndoShortcut,
+  programName?: string
+): Promise<void> {
+  await waitForPendingProgramActions(programName);
+  return invoke("forward_program_undo", { programName, shortcut });
 }
 
 export function setHostWindowTopmost(

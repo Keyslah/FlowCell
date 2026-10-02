@@ -81,7 +81,6 @@ function Harness() {
           onAssignSize={() => {}}
           onAssignSizeToPanel={() => {}}
           onPlacementTextChange={() => {}}
-          onAssignSkin={(next) => setSkin(next)}
           onAssignSkinToSelection={(next) => setSkin(next)}
           onAssignSkinToPanel={(next) => setSkin(next)}
           onLoadSkinFile={async () => null}

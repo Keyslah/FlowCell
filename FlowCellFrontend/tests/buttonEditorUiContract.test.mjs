@@ -83,7 +83,7 @@ test("FlowCell Main Page navigation never enters registered-program panel lookup
   );
   assert.match(
     editor,
-    /disabled=\{mainPageControlScope \|\| mode !== "edit" \|\| selectedSurfaceButtonCount < 2 \|\| busy\}/
+    /disabled=\{mainPageControlScope \|\| selectedSurfaceButtonCount < 2 \|\| busy\}/
   );
 });
 
@@ -222,10 +222,8 @@ test("Button workspace shows every selected Button and Shift toggles selection m
   );
   assert.match(css, /\.button-workspace-selection-indicator\s*\{[\s\S]{0,300}box-shadow:\s*inset/);
   assert.doesNotMatch(css, /\.button-workspace-selection-indicator::after/);
-  assert.match(
-    editor,
-    /className="button-editor-sidebar__selection"[\s\S]{0,700}selectedPlacementSummaries\.map[\s\S]{0,320}\{entry\.label\}/
-  );
+  assert.doesNotMatch(editor, /button-editor-sidebar__selection|selectedPlacementSummaries/);
+  assert.match(editor, /selectionButtonCount=\{selectedSetForSurface\.size\}/);
 });
 
 test("copied Button dimensions apply atomically to the selection with row-preserving fallback", () => {
@@ -395,7 +393,7 @@ test("legacy Fan Options exposes and previews a draft-only spinning animation ch
   );
 });
 
-test("Same size Buttons changes only content dimensions and keeps the Fan owner independent", () => {
+test("legacy uniform sizing changes only content dimensions and keeps the Fan owner independent", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const handler = editor.match(
     /const applyUniformSizeToSurface = useCallback\([\s\S]*?\n  \}, \[store\]\);/
@@ -673,10 +671,11 @@ test("Open Pop stays transient while Main Pop falls back to a canonical default"
   );
 });
 
-test("Skin assignment is explicit and selected-only unless Panel assignment is chosen", () => {
+test("Skin assignment stays selection-scoped unless Panel assignment is chosen", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
-  assert.match(editor, /onAssignSkin=\{\(skin, sizingMode\) => \{[\s\S]{0,300}\[selectedPlacement\.id\]/);
+  assert.doesNotMatch(editor, /onAssignSkin=/);
+  assert.doesNotMatch(skinEditor, />\s*Assign Skin\s*</);
   assert.match(
     editor,
     /onAssignSkinToSelection=\{\(skin, sizingMode\) => \{[\s\S]{0,300}surface\.placementIds\.filter[\s\S]{0,180}selectedSetForSurface\.has\(placementId\)[\s\S]{0,300}assignWorkingSkin/
@@ -914,7 +913,7 @@ test("Skin file loading uses only the native real-file picker and shares one reu
   const nativeMain = readFileSync(join(nativeRoot, "main.rs"), "utf8");
 
   assert.match(skinEditor, />\s*Load skin\.\.\.\s*</);
-  assert.match(skinEditor, /onLoadSkinFile\(null\)\.then\(applySkinFileResult\)/);
+  assert.match(skinEditor, /const loadSkin = async \(\) => \{[\s\S]{0,180}await onLoadSkinFile\(null\)/);
   assert.doesNotMatch(skinEditor, /Recent files|Saved skins|saved:|recent:/);
   assert.doesNotMatch(skinFiles, /localStorage|RecentFile|rememberButtonSkin/);
 
@@ -960,17 +959,16 @@ test("Size assignment is explicit, supports current Button or Panel scope, and s
   assert.doesNotMatch(naturalMeasurementHandler[0], /allowLabelResize|resolveDeterministicLabelGrowth|Grow Button label/);
 });
 
-test("Button Sizing remains below Same size Buttons without driving uniform resizing", () => {
+test("Button Sizing remains available without the Same size Buttons checkbox", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const workspace = readEditorFile("ButtonWorkspace.tsx");
   const defaults = readFileSync(
     join(frontendRoot, "src", "button", "state", "buttonDefaults.ts"),
     "utf8"
   );
-  const sameSizeIndex = editor.indexOf("<span>Same size Buttons</span>");
   const sizingIndex = editor.indexOf("<legend>Button Sizing</legend>");
-  assert.ok(sameSizeIndex >= 0);
-  assert.ok(sizingIndex > sameSizeIndex);
+  assert.ok(sizingIndex >= 0);
+  assert.doesNotMatch(editor, /button-editor-sidebar__same-size|setAllSurfaceButtonsSameSize/);
   assert.match(
     editor,
     /id="button-spacing-mm"[\s\S]{0,180}type="number"[\s\S]{0,180}min="0"[\s\S]{0,180}step="any"/
@@ -1108,13 +1106,9 @@ test("Animation page offers no animation, apply, and position setup controls", (
   }
 });
 
-test("Editor Run preview remains available for activation-animation playback", () => {
+test("Editor workspace stays in Edit mode without an Edit/Run switch", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
-  assert.match(editor, /const \[mode, setMode\] = useState<"run" \| "edit">\("edit"\)/);
-  assert.match(editor, /className="button-editor-mode button-editor-sidebar__mode"/);
-  assert.match(editor, /<span>Edit<\/span>/);
-  assert.match(editor, /checked=\{mode === "run"\}/);
-  assert.match(editor, /<span>Run<\/span>/);
-  assert.match(editor, /<ButtonWorkspace[\s\S]{0,180}mode=\{mode\}/);
+  assert.doesNotMatch(editor, /\bsetMode\b|button-editor-sidebar__mode/);
+  assert.match(editor, /<ButtonWorkspace[\s\S]{0,180}mode="edit"/);
   assert.match(editor, /onOwnerActivate=\{activateOwnerButton\}/);
 });

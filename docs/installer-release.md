@@ -8,7 +8,10 @@ No new portable ZIP is produced by this release route.
 ## Installed storage
 
 Tauri resources and the bundled AutoHotkey runtime live inside the application
-installation. Start Menu launch runs the existing preflight and headless backend.
+installation. Setup starts the installed headless backend and registers the
+per-user `FlowCell Background.lnk` Windows startup shortcut. Shortcuts and Temp
+Shots continue running when the frontend is closed. Start Menu launch runs the
+existing preflight and connects to that same installed background backend.
 Writable data is `%APPDATA%\FlowCell\local`, including the existing canonical
 `button-system/button-state.json`, bindings, layouts, logs and program data.
 When a packaged launcher redirects AppData, an existing canonical Button-state
@@ -23,10 +26,12 @@ Fresh launch creates only the empty `Programs/Windows` placeholder; without a
 manifest it is not a valid registered program. Extraction and Add Program remain
 separate. Neither upgrade nor normal uninstall removes this user data.
 
-`FLOWCELL_LOCAL_ROOT` supplies the local root directly for development/tests.
-With that override, program packages are under its `Programs` child. Without an
-override, source and existing portable runs retain their existing backend-local
-state and sibling Programs folder. No ignored development data is migrated.
+Source and existing portable runs retain their own backend-local state and
+sibling Programs folder. Their development backend does not register global
+shortcuts. Normal launch derives its role and roots from its own resources,
+discarding inherited roots from another FlowCell copy. Explicit environment
+overrides are available only to fixture definitions/tests. No ignored
+development data is migrated.
 
 ## Optional Update Git Scripts Button
 
@@ -91,7 +96,8 @@ Run `release-tools/build-installer.ps1` after committing all release source.
 The tag-triggered/manual `Windows installer and program packages` workflow runs
 frontend/native tests, isolated updater/path tests, builds all ZIPs, and silently
 installs, launches from the Start Menu with an unrelated working directory,
-upgrades and uninstalls on a disposable Windows runner. User-data sentinels must
+checks the installed sign-in shortcut and background backend independently of
+the UI, upgrades and uninstalls on a disposable Windows runner. User-data sentinels must
 survive. These are automated checks, not interactive installer or host-app tests.
 The workflow uploads validated assets as `windows-installer-release`; it does
 not publish a draft automatically. Download that successful run's artifact,
@@ -105,9 +111,17 @@ after add-in changes. Preserve package-specific Adobe setup notes. Restart
 FlowCell after changing a program manifest. Catalog-only downloads need no host
 reload until a user deliberately installs/updates a source that requires it.
 
-An installation may optionally keep `flowcell.runtime.json` beside its executable,
-with an absolute `localRoot` pointing to its existing writable data. Both native
-startup and backend helpers honor it; `FLOWCELL_LOCAL_ROOT` remains the explicit
-override. This per-install file is not bundled or overwritten by upgrades. Use
-the verified physical owner when a packaged launcher redirects AppData, so an
-Explorer launch and a packaged launch discover the same Programs and Button state.
+First startup registration creates `flowcell.runtime.json` beside the executable
+with the resolved physical writable `localRoot`; existing configuration survives
+upgrades. Native startup and backend helpers honor this config ahead of inherited
+environment. The resolver follows the physical canonical Button-state file when
+AppData is redirected, keeping Explorer and packaged launches on the same data.
+`HKCU\Software\FlowCell\InstalledResourceRoot` lets standalone installed script
+launchers find this backend while the frontend is closed. Uninstall removes only
+its own registry pointer and recycles its owned startup shortcut. The data folder
+and existing runtime configuration are preserved.
+Registration also recognizes the old `FlowCell Hotkeys Startup.vbs` only when
+its literal target resolves to an existing FlowCell backend launcher. It moves
+that entry unchanged into `local/backups/startup-migration/<timestamp-id>/`
+and stops only the corresponding legacy headless backend lacking an explicit
+role. Unrelated startup entries and modern development backends are preserved.

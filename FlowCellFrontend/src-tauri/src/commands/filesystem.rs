@@ -2,15 +2,15 @@ use crate::*;
 use std::io::Read;
 
 pub(crate) fn resolve_flowcell_local_root() -> Result<PathBuf, String> {
-    if let Some(root) = env::var_os("FLOWCELL_LOCAL_ROOT").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(root));
-    }
     if let Some(resource) = installed_resource_root() {
         let local = env::var_os("APPDATA")
             .map(|root| PathBuf::from(root).join("FlowCell").join("local"))
             .ok_or_else(|| "APPDATA is unavailable for installed FlowCell.".to_string())?;
         let local = configured_installed_local_root(&resource, &local)?;
         return installed_local_data_root(&local);
+    }
+    if let Some(root) = env::var_os("FLOWCELL_LOCAL_ROOT").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(root));
     }
     let repo_root = resolve_repo_root()
         .ok_or_else(|| "FlowCell repo root could not be resolved for local data.".to_string())?;
@@ -39,10 +39,14 @@ fn installed_local_data_root(local: &Path) -> Result<PathBuf, String> {
     if state.is_file() {
         let state = fs::canonicalize(&state)
             .map_err(|error| format!("Failed to resolve installed Button state: {error}"))?;
-        return state.parent().and_then(Path::parent).map(Path::to_path_buf)
-            .ok_or_else(|| "Installed Button state has no data root.".to_string());
+        let physical_root = state.parent().and_then(Path::parent)
+            .ok_or_else(|| "Installed Button state has no data root.".to_string())?;
+        // Shell recycling and Windows PowerShell helpers require DOS/UNC paths.
+        // Every installed caller must receive this spelling, even before runtime
+        // initialization or when configured paths take precedence over the env.
+        return Ok(super::execution::windows_child_process_path(physical_root));
     }
-    Ok(local.to_path_buf())
+    Ok(super::execution::windows_child_process_path(local))
 }
 
 pub(crate) fn resolve_flowcell_config_root() -> Result<PathBuf, String> {
@@ -96,19 +100,38 @@ pub(crate) fn installed_resource_root() -> Option<PathBuf> {
     root.join("flowcell-installed.json").is_file().then(|| root.to_path_buf())
 }
 
-fn runtime_programs_root(resource: &Path, local: &Path, use_local: bool, inherited: Option<PathBuf>) -> PathBuf {
-    // Preflight initializes both variables, including the normal development local
-    // root. Its presence alone must not relocate the already-resolved Programs root.
-    inherited.unwrap_or_else(|| if use_local { local.join("Programs") } else { resource.join("Programs") })
+fn runtime_programs_root(resource: &Path, local: &Path, installed: bool) -> PathBuf {
+    if installed { local.join("Programs") } else { resource.join("Programs") }
+}
+
+pub(crate) fn flowcell_backend_role() -> &'static str {
+    if installed_resource_root().is_some() { "installed" } else { "development" }
+}
+
+pub(crate) fn flowcell_global_hotkeys_enabled() -> bool {
+    flowcell_backend_role() == "installed"
+}
+
+pub(crate) fn flowcell_frontend_window_title() -> &'static str {
+    if flowcell_global_hotkeys_enabled() { "FlowCell" } else { "FlowCell Development" }
+}
+
+pub(crate) fn flowcell_frontend_instance_mutex() -> &'static str {
+    if flowcell_global_hotkeys_enabled() {
+        "Local\\com.flowcell.frontend.single-instance-v2-installed"
+    } else {
+        "Local\\com.flowcell.frontend.single-instance-v2-development"
+    }
 }
 
 pub(crate) fn initialize_runtime_paths() -> Result<(), String> {
-    let explicit_local = env::var_os("FLOWCELL_LOCAL_ROOT").filter(|value| !value.is_empty()).is_some();
     let installed = installed_resource_root().is_some();
     let resource = resolve_repo_root().ok_or("FlowCell resources could not be resolved.")?;
-    let local = resolve_flowcell_local_root()?;
-    let programs = runtime_programs_root(&resource, &local, installed || explicit_local,
-        env::var_os("FLOWCELL_PROGRAMS_ROOT").filter(|value| !value.is_empty()).map(PathBuf::from));
+    // A frontend launch establishes its own identity. Ambient roots inherited from
+    // Codex or another FlowCell copy must never make a test build share daily data.
+    let local = if installed { resolve_flowcell_local_root()? }
+        else { resource.join("flowcellbackend").join("local") };
+    let programs = runtime_programs_root(&resource, &local, installed);
     fs::create_dir_all(&local).map_err(|e| e.to_string())?;
     fs::create_dir_all(&programs).map_err(|e| e.to_string())?;
     if installed { fs::create_dir_all(programs.join("Windows")).map_err(|e| e.to_string())?; }
@@ -121,12 +144,14 @@ pub(crate) fn initialize_runtime_paths() -> Result<(), String> {
     env::set_var("FLOWCELL_LOCAL_ROOT", &local);
     env::set_var("FLOWCELL_PROGRAMS_ROOT", &programs);
     env::set_var("FLOWCELL_RESOURCE_ROOT", &resource);
+    env::set_var("FLOWCELL_BACKEND_ROLE", flowcell_backend_role());
     Ok(())
 }
 
 #[cfg(test)]
 mod runtime_path_tests {
     use super::{configured_installed_local_root, installed_local_data_root, runtime_programs_root};
+    use crate::commands::execution::windows_child_process_path;
     use std::path::Path;
 
     #[test]
@@ -145,19 +170,19 @@ mod runtime_path_tests {
     }
 
     #[test]
-    fn preflight_initialized_development_paths_keep_existing_programs() {
+    fn development_identity_keeps_repository_programs() {
         let resource = Path::new("C:/FlowCell Source");
         let local = resource.join("flowcellbackend/local");
         let programs = resource.join("Programs");
-        assert_eq!(runtime_programs_root(resource, &local, true, Some(programs.clone())), programs);
+        assert_eq!(runtime_programs_root(resource, &local, false), programs);
     }
 
     #[test]
-    fn installed_and_direct_override_paths_use_local_programs_without_preflight() {
+    fn installation_identity_uses_its_configured_programs_root() {
         let resource = Path::new("C:/FlowCell Install");
         let local = Path::new("C:/User Data/FlowCell/local");
-        assert_eq!(runtime_programs_root(resource, local, true, None), local.join("Programs"));
-        assert_eq!(runtime_programs_root(resource, local, false, None), resource.join("Programs"));
+        assert_eq!(runtime_programs_root(resource, local, true), local.join("Programs"));
+        assert_eq!(runtime_programs_root(resource, local, false), resource.join("Programs"));
     }
 
     #[cfg(windows)]
@@ -177,28 +202,29 @@ mod runtime_path_tests {
             .arg(overlay.join("button-system")).arg(owner.join("button-system"))
             .output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        assert_eq!(installed_local_data_root(&overlay).unwrap(), fs::canonicalize(&owner).unwrap());
+        let resolved = installed_local_data_root(&overlay).unwrap();
+        assert_eq!(resolved, windows_child_process_path(&fs::canonicalize(&owner).unwrap()));
+        assert!(!resolved.to_string_lossy().starts_with(r"\\?\"),
+            "the physical data root must remain usable by shell recycling and PowerShell");
         assert_eq!(installed_local_data_root(&temp.join("fresh")).unwrap(), temp.join("fresh"));
         fs::remove_dir(overlay.join("button-system")).unwrap();
         fs::remove_dir_all(&temp).unwrap();
     }
 }
 
-pub(crate) fn start_installed_backend() -> Result<(), String> {
-    if installed_resource_root().is_none() { return Ok(()); }
-    let preflight = resolve_repo_root().ok_or("Missing resources")?
-        .join("flowcellbackend/helpers/Start-FlowCellPreflight.ps1");
-    let output = spawn_powershell_output(&["-File".into(), preflight.to_string_lossy().into_owned()])?;
-    if !output.status.success() {
-        return Err(format_process_failure(&output, "FlowCell startup preflight failed."));
+pub(crate) fn start_flowcell_backend() -> Result<(), String> {
+    // Native transaction recovery has completed before this call. Preserve the
+    // installed manifest/bindings preflight here; sign-in must not mutate a
+    // pending transaction before the frontend has recovered it.
+    if installed_resource_root().is_some() {
+        let preflight = resolve_repo_root().ok_or("Missing resources")?
+            .join("flowcellbackend/helpers/Start-FlowCellPreflight.ps1");
+        let output = spawn_powershell_output(&["-File".into(), preflight.to_string_lossy().into_owned()])?;
+        if !output.status.success() {
+            return Err(format_process_failure(&output, "FlowCell startup preflight failed."));
+        }
     }
-    let mut command = Command::new("wscript.exe");
-    command.arg(resolve_flowcell_backend_launcher_path()?);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-    let status = command.status().map_err(|e| e.to_string())?;
-    if !status.success() { return Err("FlowCell backend launcher failed.".into()); }
-    Ok(())
+    run_flowcell_backend_helper(false)
 }
 
 pub(crate) fn escape_powershell_single_quoted(value: &str) -> String {

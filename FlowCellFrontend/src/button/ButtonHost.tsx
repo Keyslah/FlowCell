@@ -1147,22 +1147,27 @@ export function ButtonHost({
     interactionElement.addEventListener("pointerdown", handlePointerDown);
     interactionElement.addEventListener("pointerup", handlePointerUp);
     interactionElement.addEventListener("pointercancel", handlePointerCancel);
+    interactionElement.addEventListener("lostpointercapture", handleBlur);
     interactionElement.addEventListener("dblclick", handleDoubleClick);
     interactionElement.addEventListener("contextmenu", handleContextMenu);
     interactionElement.addEventListener("keydown", handleKeyDown);
     interactionElement.addEventListener("keyup", handleKeyUp);
     interactionElement.addEventListener("blur", handleBlur);
+    // Mouse presses prevent core focus, so leaving the app need not blur the core.
+    window.addEventListener("blur", handleBlur);
     return () => {
       interactionElement.removeEventListener("pointerenter", handlePointerEnter);
       interactionElement.removeEventListener("pointerleave", handlePointerLeave);
       interactionElement.removeEventListener("pointerdown", handlePointerDown);
       interactionElement.removeEventListener("pointerup", handlePointerUp);
       interactionElement.removeEventListener("pointercancel", handlePointerCancel);
+      interactionElement.removeEventListener("lostpointercapture", handleBlur);
       interactionElement.removeEventListener("dblclick", handleDoubleClick);
       interactionElement.removeEventListener("contextmenu", handleContextMenu);
       interactionElement.removeEventListener("keydown", handleKeyDown);
       interactionElement.removeEventListener("keyup", handleKeyUp);
       interactionElement.removeEventListener("blur", handleBlur);
+      window.removeEventListener("blur", handleBlur);
       cancelPress();
       if (hoverActiveRef.current) {
         hoverActiveRef.current = false;

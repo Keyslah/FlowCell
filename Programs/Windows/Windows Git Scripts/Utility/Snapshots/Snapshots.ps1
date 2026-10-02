@@ -10,14 +10,19 @@ $repoRoot = if ($env:FLOWCELL_RESOURCE_ROOT -and
     $env:FLOWCELL_RESOURCE_ROOT
 } else {
     $current = [IO.Path]::GetFullPath($PSScriptRoot)
-    while ($current -and -not (Test-Path -LiteralPath (Join-Path $current 'PROGRAM_SUMMARY.txt') -PathType Leaf)) {
+    while ($current -and -not (Test-Path -LiteralPath (Join-Path $current 'flowcellbackend/FlowCellBackend.ahk') -PathType Leaf)) {
         $parent = Split-Path -Parent $current
         if (-not $parent -or $parent -eq $current) { break }
         $current = $parent
     }
-    $current
+    if (Test-Path -LiteralPath (Join-Path $current 'flowcellbackend/FlowCellBackend.ahk') -PathType Leaf) {
+        $current
+    } else {
+        Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\FlowCell' -Name InstalledResourceRoot -ErrorAction Stop
+    }
 }
-$engine = Join-Path $repoRoot 'Programs/Windows/Windows Git Scripts/Utility/Temp Shots/Temp Shots.ps1'
+. (Join-Path $repoRoot 'flowcellbackend/helpers/FlowCellPaths.ps1')
+$engine = Join-Path $FlowCellProgramsRoot 'Windows/Windows Git Scripts/Utility/Temp Shots/Temp Shots.ps1'
 if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
     throw 'The shared Temp Shots capture engine is missing.'
 }

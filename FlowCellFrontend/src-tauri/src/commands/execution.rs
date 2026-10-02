@@ -574,13 +574,14 @@ pub(crate) fn resolve_flowcell_command_backend_script_path() -> Result<PathBuf, 
     }
 }
 
-pub(crate) fn resolve_flowcell_backend_launcher_path() -> Result<PathBuf, String> {
+pub(crate) fn resolve_flowcell_backend_start_helper_path() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root().ok_or_else(|| {
         "FlowCell repo root could not be resolved for backend launch.".to_string()
     })?;
     let launcher_path = repo_root
         .join("flowcellbackend")
-        .join("run_backend_hidden.vbs");
+        .join("helpers")
+        .join("Start-FlowCellBackend.ps1");
     if launcher_path.is_file() {
         Ok(launcher_path)
     } else {
@@ -668,6 +669,7 @@ pub(crate) fn build_flowcell_controller_script_command(
     command
         .arg("/ErrorStdOut")
         .arg(&backend_script_path)
+        .arg(format!("--backend-role={}", flowcell_backend_role()))
         .arg(format!("--run-script-path={}", script_path.display()))
         .arg(format!("--run-script-program={program_key}"))
         .arg("--run-script-program-tab-id=0")
@@ -1885,46 +1887,30 @@ pub(crate) fn record_frontend_macro_to_path(
     ))
 }
 
-pub(crate) fn restart_flowcell_headless_backend() -> Result<(), String> {
-    let backend_script_path = resolve_flowcell_backend_script_path()?;
-    let launcher_path = resolve_flowcell_backend_launcher_path()?;
-    let powershell_script = format!(
-        concat!(
-            "$ErrorActionPreference = 'Stop'; ",
-            "$backendScript = '{backend_script}'; ",
-            "Get-CimInstance Win32_Process -Filter \"Name = 'AutoHotkey64.exe' OR Name = 'AutoHotkey.exe'\" | ",
-            "Where-Object {{ ($_.CommandLine -like \"*$backendScript*\") -and ($_.CommandLine -like '*--headless*') }} | ",
-            "ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}; ",
-            "Start-Sleep -Milliseconds 500; ",
-            "& wscript.exe '{launcher_path}'"
-        ),
-        backend_script = escape_powershell_single_quoted(&backend_script_path.to_string_lossy()),
-        launcher_path = escape_powershell_single_quoted(&launcher_path.to_string_lossy()),
-    );
+fn flowcell_backend_helper_arguments(helper: &Path, role: &str, restart: bool) -> Vec<String> {
+    let mut arguments = vec!["-File".into(), helper.to_string_lossy().into_owned(),
+        "-Role".into(), role.into()];
+    if restart { arguments.push("-Restart".into()); }
+    arguments
+}
 
-    let mut command = Command::new("powershell.exe");
-    command
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-Command")
-        .arg(powershell_script);
-
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-
-    let output = command.output().map_err(|error| {
-        format!("Failed to restart the FlowCell backend after saving bindings: {error}")
-    })?;
+pub(crate) fn run_flowcell_backend_helper(restart: bool) -> Result<(), String> {
+    let helper = resolve_flowcell_backend_start_helper_path()?;
+    let arguments = flowcell_backend_helper_arguments(&helper, flowcell_backend_role(), restart);
+    let output = spawn_powershell_output(&arguments)?;
     if output.status.success() {
         Ok(())
     } else {
         Err(format_process_failure(
             &output,
-            "FlowCell backend restart failed after saving bindings.",
+            if restart { "FlowCell backend restart failed after saving bindings." }
+            else { "FlowCell backend startup failed." },
         ))
     }
+}
+
+pub(crate) fn restart_flowcell_headless_backend() -> Result<(), String> {
+    run_flowcell_backend_helper(true)
 }
 
 pub(crate) fn bootstrap_blender_program(
@@ -2413,6 +2399,7 @@ mod tests {
         fusion_addin_root_candidates, fusion_bridge_response_matches_request,
         read_fusion_bridge_runtime_process_ids, resolve_macro_recorder_script_path,
         wait_for_blender_bridge_response, wait_for_fusion_bridge_response, windows_child_process_path,
+        flowcell_backend_helper_arguments,
     };
     use serde_json::json;
     use std::fs;
@@ -2472,6 +2459,18 @@ mod tests {
                 .join("helpers")
                 .join("RecordMacro.ahk")
         ));
+    }
+
+    #[test]
+    fn backend_restart_targets_the_explicit_frontend_role() {
+        let helper = Path::new("C:/FlowCell Source/flowcellbackend/helpers/Start-FlowCellBackend.ps1");
+        for role in ["installed", "development"] {
+            let start = flowcell_backend_helper_arguments(helper, role, false);
+            assert_eq!(&start[2..], ["-Role", role]);
+            let restart = flowcell_backend_helper_arguments(helper, role, true);
+            assert_eq!(&restart[2..], ["-Role", role, "-Restart"]);
+            assert_eq!(restart[1], helper.to_string_lossy());
+        }
     }
 
     #[test]

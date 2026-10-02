@@ -2193,7 +2193,9 @@ def _apply_modal_transform(drag, mouse):
 class VIEW3D_OT_flowcell_place_picture_fake_gizmo_modal(bpy.types.Operator):
     bl_idname = "view3d.flowcell_place_picture_fake_gizmo_modal"
     bl_label = "FlowCell Place Picture Fake Gizmo Modal"
-    bl_options = {"REGISTER", "UNDO"}
+    # This listener survives many actions. Only completed drags push undo below;
+    # retiring the listener must not add a duplicate scene checkpoint.
+    bl_options = {"INTERNAL"}
 
     def invoke(self, context, event):
         state = bpy.app.driver_namespace.get(VIEWPORT_OVERLAY_NAMESPACE_KEY, {})

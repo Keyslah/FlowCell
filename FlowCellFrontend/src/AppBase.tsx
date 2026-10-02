@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { hideFlowTooltip, showFlowTooltipForElement } from "./lib/flowTooltip";
 import { getWindowContextFromLocation } from "./lib/windowContext";
+import { installProgramUndoKeys } from "./lib/programUndo";
 import {
   unregisterLayoutWindow,
   writeRegisteredLayoutWindowSnapshotBounds
@@ -20,6 +21,7 @@ import {
 import { registerBuiltinButtonCoreActions } from "./button/runtime/registerBuiltinCoreActions";
 import { FRONTEND_MACRO_CORE_ACTION_ID } from "./button/state/frontendMacroButtonOperations";
 import {
+  forwardProgramUndo,
   registerScopedWindowTopmost,
   refreshScopedWindowTopmost,
   setHostWindowTopmost,
@@ -80,6 +82,27 @@ export default function App() {
     windowContext.kind === "installed-page" && windowContext.alwaysOnTop;
 
   useEffect(() => installThemeRuntime(), []);
+
+  useEffect(() => {
+    const tauriInternals = (
+      window as Window & { __TAURI_INTERNALS__?: { metadata?: unknown } }
+    ).__TAURI_INTERNALS__;
+    if (
+      !tauriInternals?.metadata ||
+      !["main", "button-popout", "button-fan", "installed-page"].includes(windowContext.kind)
+    ) return;
+
+    return installProgramUndoKeys(
+      window,
+      (shortcut) => forwardProgramUndo(shortcut, programName || undefined),
+      (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        const anchor = document.activeElement instanceof HTMLElement
+          ? document.activeElement : document.body;
+        void showFlowTooltipForElement(`Undo/Redo: ${message}`, anchor).catch(() => {});
+      }
+    );
+  }, [programName, windowContext.kind]);
 
   useEffect(() => registerButtonCoreAction(
     FRONTEND_MACRO_CORE_ACTION_ID,

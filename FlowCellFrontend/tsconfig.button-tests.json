@@ -74,6 +74,7 @@
     "src/lib/bindsButtonScope.ts",
     "src/lib/bindsMacroScope.ts",
     "src/lib/layoutSnapshots.ts",
+    "src/lib/programUndo.ts",
     "src/lib/safeTauriUnlisten.ts",
     "src/lib/shortcutProfiles.ts",
     "src/theme/themeEditorState.ts",

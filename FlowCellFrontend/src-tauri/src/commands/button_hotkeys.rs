@@ -151,6 +151,7 @@ fn load_desired_tool_set_hotkeys() -> Result<HashMap<u32, RegisteredToolSetHotke
 }
 
 pub(crate) fn synchronize_tool_set_hotkeys(app: &AppHandle) -> Result<(), String> {
+    if !crate::flowcell_global_hotkeys_enabled() { return Ok(()); }
     let registry = app.state::<ToolSetHotkeyRegistry>();
     let _synchronize_guard = registry
         .synchronize_lock

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import ts from "typescript";
 
 const frontendRoot = join(import.meta.dirname, "..");
 const repoRoot = join(frontendRoot, "..");
@@ -9,6 +10,27 @@ const repoRoot = join(frontendRoot, "..");
 function read(...parts) {
   return readFileSync(join(...parts), "utf8");
 }
+
+test("isolated-page Undo accepts only its nonce and the three Undo/Redo chords", () => {
+  const source = read(frontendRoot, "src", "pages", "installed-page", "InstalledPageWindowPage.tsx");
+  const parsed = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const guards = parsed.statements.filter((statement) =>
+    ts.isFunctionDeclaration(statement) && ["isRecord", "isPageUndoMessage"].includes(statement.name?.text)
+  ).map((statement) => statement.getText(parsed)).join("\n");
+  const compiled = ts.transpileModule(guards, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const accepts = new Function(`${compiled}\nreturn isPageUndoMessage;`)();
+  const message = { channel: "flowcell-installed-page", type: "undo", nonce: "page-session", requestId: "undo-1", shortcut: "undo" };
+  for (const shortcut of ["undo", "redo-shift-z", "redo-y"]) {
+    assert.equal(accepts({ ...message, shortcut }, "page-session"), true);
+  }
+  for (const invalid of [null, [], {}, { ...message, nonce: "other-page" },
+    { ...message, requestId: "" }, { ...message, requestId: "a".repeat(161) },
+    { ...message, shortcut: "delete" }, { ...message, channel: "other" }, { ...message, type: "request" }]) {
+    assert.equal(accepts(invalid, "page-session"), false);
+  }
+  assert.match(source, /installProgramUndoKeys\.toString\(\)/);
+  assert.match(source, /forwardProgramUndo\(request\.shortcut, context\.programName\)/);
+});
 
 test("Main exposes one Add Button action and keeps the serialized action ID", () => {
   const layout = read(frontendRoot, "src", "pages", "main", "mainLayout.ts");

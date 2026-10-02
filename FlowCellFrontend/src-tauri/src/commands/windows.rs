@@ -77,7 +77,7 @@ struct ScopedWindowInputState {
     active: bool,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 #[derive(Clone, Default)]
 struct ForegroundWindowState {
     hwnd: isize,
@@ -442,24 +442,20 @@ fn resolve_last_external_foreground(
 }
 
 #[cfg(windows)]
-static SCRIPT_TARGET_WINDOW: OnceLock<Mutex<Option<ForegroundWindowState>>> = OnceLock::new();
+static SCRIPT_TARGET_WINDOWS: OnceLock<Mutex<Vec<ForegroundWindowState>>> = OnceLock::new();
 
 #[cfg(windows)]
 fn remember_script_target(foreground: &ForegroundWindowState) -> Option<ForegroundWindowState> {
-    let mut cached = SCRIPT_TARGET_WINDOW
-        .get_or_init(|| Mutex::new(None))
+    let mut cached = SCRIPT_TARGET_WINDOWS
+        .get_or_init(|| Mutex::new(Vec::new()))
         .lock()
         .ok()?;
+    cached.retain(is_valid_cached_external);
     if is_valid_external_foreground(foreground) {
-        *cached = Some(foreground.clone());
+        cached.retain(|window| window.hwnd != foreground.hwnd);
+        cached.push(foreground.clone());
     }
-    if cached
-        .as_ref()
-        .is_some_and(|window| !is_valid_cached_external(window))
-    {
-        *cached = None;
-    }
-    cached.clone()
+    cached.last().cloned()
 }
 
 /// Use the same validated last external application as scoped Button windows.
@@ -772,6 +768,299 @@ fn set_scoped_native_window_placement<R: tauri::Runtime>(
         .hwnd()
         .map_err(|error| format!("Failed to resolve window handle: {error}"))?;
     set_scoped_native_hwnd_placement(hwnd, placement, promote)
+}
+
+#[cfg(any(windows, test))]
+fn program_undo_target_from_candidates(
+    candidates: &[ForegroundWindowState],
+    process_names: Option<&[String]>,
+    owner_hwnd: Option<isize>,
+) -> Option<ForegroundWindowState> {
+    let matches = |window: &&ForegroundWindowState| {
+        process_names
+            .map(|names| matches_foreground_process(names, &window.process_info))
+            .unwrap_or(true)
+    };
+    if let Some(owner_hwnd) = owner_hwnd {
+        if let Some(owner) = candidates
+            .iter()
+            .rev()
+            .filter(matches)
+            .find(|window| window.hwnd == owner_hwnd)
+        {
+            return Some(owner.clone());
+        }
+    }
+    candidates.iter().rev().find(matches).cloned()
+}
+
+#[cfg(any(windows, test))]
+fn unique_program_undo_target(candidates: &[ForegroundWindowState]) -> Result<ForegroundWindowState, String> {
+    match candidates {
+        [target] => Ok(target.clone()),
+        [] => Err("The application that should receive Undo/Redo has no available window.".to_string()),
+        _ => Err("More than one application window could receive Undo/Redo. Activate the intended window once.".to_string()),
+    }
+}
+
+#[cfg(windows)]
+struct ProgramUndoWindowSearch {
+    process_names: Vec<String>,
+    candidates: Vec<ForegroundWindowState>,
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn enum_program_undo_windows(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    if hwnd.is_null() || IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
+        return 1;
+    }
+    let mut process_id = 0u32;
+    GetWindowThreadProcessId(hwnd, &mut process_id);
+    if process_id == 0 || process_id == std::process::id() {
+        return 1;
+    }
+    let Some(process_path) = query_process_path_by_id(process_id) else {
+        return 1;
+    };
+    let process_name = Path::new(&process_path).file_name()
+        .map(|name| name.to_string_lossy().to_string()).unwrap_or_default();
+    let candidate = ForegroundWindowState {
+        hwnd: hwnd as isize,
+        process_id,
+        process_info: ForegroundProcessInfo { process_name, process_path },
+    };
+    let search = &mut *(lparam as *mut ProgramUndoWindowSearch);
+    if matches_foreground_process(&search.process_names, &candidate.process_info)
+        && is_valid_cached_external(&candidate)
+    {
+        search.candidates.push(candidate);
+    }
+    1
+}
+
+#[cfg(windows)]
+fn find_unique_program_undo_target(process_names: &[String]) -> Result<ForegroundWindowState, String> {
+    let mut search = ProgramUndoWindowSearch { process_names: process_names.to_vec(), candidates: Vec::new() };
+    let complete = unsafe { EnumWindows(Some(enum_program_undo_windows), &mut search as *mut ProgramUndoWindowSearch as LPARAM) };
+    if complete == 0 {
+        return Err("Windows could not inspect the application windows for Undo/Redo.".to_string());
+    }
+    unique_program_undo_target(&search.candidates)
+}
+
+#[cfg(any(windows, test))]
+fn program_undo_key_sequence(
+    shortcut: &str,
+    control_down: bool,
+    shift_down: bool,
+    other_modifier_down: bool,
+) -> Result<Vec<(u16, bool)>, String> {
+    let (key, needs_shift) = match shortcut {
+        "undo" => (0x5A, false),
+        "redo-shift-z" => (0x5A, true),
+        "redo-y" => (0x59, false),
+        _ => return Err("Unsupported Undo/Redo shortcut.".to_string()),
+    };
+    if other_modifier_down || (shift_down && !needs_shift) {
+        return Err("The modifier keys changed before Undo/Redo could be sent.".to_string());
+    }
+    let mut keys = Vec::new();
+    if !control_down {
+        keys.push((0x11, false));
+    }
+    if needs_shift && !shift_down {
+        keys.push((0x10, false));
+    }
+    keys.push((key, false));
+    keys.push((key, true));
+    if needs_shift && !shift_down {
+        keys.push((0x10, true));
+    }
+    if !control_down {
+        keys.push((0x11, true));
+    }
+    Ok(keys)
+}
+
+#[cfg(any(windows, test))]
+fn program_undo_cleanup_keys(keys: &[(u16, bool)], sent: usize) -> Vec<u16> {
+    let mut held = Vec::new();
+    for &(key, released) in keys.iter().take(sent) {
+        if released {
+            held.retain(|held_key| *held_key != key);
+        } else {
+            held.push(key);
+        }
+    }
+    held.reverse();
+    held
+}
+
+#[cfg(windows)]
+fn acknowledge_program_undo_target(hwnd: isize, timeout_ms: u32) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, SMTO_ABORTIFHUNG, SMTO_BLOCK, SMTO_ERRORONEXIT, WM_NULL,
+    };
+    let mut result = 0;
+    // Foreground activation is asynchronous across input queues. A bounded
+    // message acknowledges that the receiving thread processed the activation.
+    unsafe {
+        SendMessageTimeoutW(hwnd as _, WM_NULL, 0, 0,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT, timeout_ms, &mut result) != 0
+    }
+}
+
+#[cfg(any(windows, test))]
+#[derive(Debug, PartialEq, Eq)]
+enum ProgramUndoFocusState { Ready, Pending, Changed }
+
+#[cfg(any(windows, test))]
+fn program_undo_focus_state(
+    caller_hwnd: isize,
+    caller_pid: u32,
+    target: &ForegroundWindowState,
+    current: &ForegroundWindowState,
+) -> ProgramUndoFocusState {
+    if current.hwnd == target.hwnd && current.process_id == target.process_id {
+        ProgramUndoFocusState::Ready
+    } else if current.hwnd == 0 || (current.hwnd == caller_hwnd && current.process_id == caller_pid) {
+        // GetForegroundWindow may return NULL while the previous window loses activation.
+        ProgramUndoFocusState::Pending
+    } else {
+        ProgramUndoFocusState::Changed
+    }
+}
+
+#[cfg(windows)]
+fn send_program_undo_shortcut(
+    caller_hwnd: isize,
+    target: ForegroundWindowState,
+    shortcut: &str,
+) -> Result<(), String> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        IsWindowEnabled, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+        VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    };
+
+    let foreground = get_foreground_window_state_impl();
+    if foreground.hwnd != caller_hwnd || foreground.process_id != std::process::id() {
+        return Err("Undo/Redo was not sent because focus left this FlowCell window.".to_string());
+    }
+    if !is_valid_cached_external(&target) {
+        return Err("The application that should receive Undo/Redo is no longer available.".to_string());
+    }
+    if unsafe { IsWindowEnabled(target.hwnd as _) } == 0 {
+        return Err("Close the application's dialog before using Undo/Redo.".to_string());
+    }
+    let deadline = Instant::now() + Duration::from_millis(1000);
+    let activated = unsafe { SetForegroundWindowSys(target.hwnd as _) } != 0;
+    let focus_error = |stage: &str, current: &ForegroundWindowState| {
+        crate::append_flowcell_local_log("program_undo.log", &format!(
+            "stage={stage} caller_hwnd={caller_hwnd} caller_pid={} target_hwnd={} target_pid={} foreground_hwnd={} foreground_pid={} set_foreground={activated}",
+            std::process::id(), target.hwnd, target.process_id, current.hwnd, current.process_id));
+    };
+    if !acknowledge_program_undo_target(target.hwnd, 750) {
+        focus_error("activation_ack_timeout", &get_foreground_window_state_impl());
+        return Err("The application did not respond in time for Undo/Redo.".to_string());
+    }
+    loop {
+        let current = get_foreground_window_state_impl();
+        match program_undo_focus_state(caller_hwnd, std::process::id(), &target, &current) {
+            ProgramUndoFocusState::Ready => break,
+            ProgramUndoFocusState::Changed => {
+                focus_error("foreground_changed", &current);
+                return Err("Undo/Redo was not sent because the active application changed.".to_string());
+            }
+            ProgramUndoFocusState::Pending if Instant::now() >= deadline => {
+                focus_error("activation_timeout", &current);
+                return Err("Windows could not focus the application for Undo/Redo.".to_string());
+            }
+            ProgramUndoFocusState::Pending => {}
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let down = |key: u16| (unsafe { GetAsyncKeyState(key as i32) } as u16 & 0x8000) != 0;
+    let keys = program_undo_key_sequence(
+        shortcut,
+        down(VK_CONTROL),
+        down(VK_SHIFT),
+        down(VK_MENU) || down(VK_LWIN) || down(VK_RWIN),
+    )?;
+    let input = |key: u16, released: bool| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: key,
+                wScan: 0,
+                dwFlags: if released { KEYEVENTF_KEYUP } else { 0 },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let inputs = keys.iter().map(|&(key, released)| input(key, released)).collect::<Vec<_>>();
+    let current = get_foreground_window_state_impl();
+    if current.hwnd != target.hwnd || current.process_id != target.process_id
+        || unsafe { IsWindowEnabled(target.hwnd as _) } == 0
+    {
+        focus_error("before_send_changed", &current);
+        return Err("Undo/Redo was not sent because the active application changed.".to_string());
+    }
+    let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) } as usize;
+    if sent != inputs.len() {
+        // Release only keys whose synthetic press was accepted without its release.
+        let releases = program_undo_cleanup_keys(&keys, sent).into_iter()
+            .map(|key| input(key, true)).collect::<Vec<_>>();
+        if !releases.is_empty() {
+            unsafe { SendInput(releases.len() as u32, releases.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
+        }
+        return Err("Windows could not send the complete Undo/Redo shortcut.".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn forward_program_undo(
+    window: WebviewWindow,
+    program_name: Option<String>,
+    shortcut: String,
+    registry: State<'_, ScopedTopmostRegistry>,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        program_undo_key_sequence(&shortcut, false, false, false)?;
+        let caller_hwnd = window.hwnd().map_err(|error| error.to_string())?.0 as isize;
+        let foreground = get_foreground_window_state_impl();
+        if foreground.hwnd != caller_hwnd || foreground.process_id != std::process::id() {
+            return Err("Undo/Redo was not sent because focus left this FlowCell window.".to_string());
+        }
+        let process_names = program_name.as_deref().map(str::trim).filter(|name| !name.is_empty())
+            .map(resolve_program_window_scope).transpose()?.map(|scope| scope.0);
+        let owner_hwnd = registry.entries.lock()
+            .map_err(|_| "Could not read the FlowCell window owner.".to_string())?
+            .get(window.label())
+            .filter(|entry| process_names.as_ref().is_some_and(|names| process_groups_overlap(names, &entry.process_names)))
+            .and_then(|entry| entry.last_owner_hwnd);
+        let cached_target = {
+            let mut candidates = SCRIPT_TARGET_WINDOWS.get_or_init(|| Mutex::new(Vec::new())).lock()
+                .map_err(|_| "Could not read the last active application.".to_string())?;
+            candidates.retain(is_valid_cached_external);
+            program_undo_target_from_candidates(&candidates, process_names.as_deref(), owner_hwnd)
+        };
+        let target = match (cached_target, process_names.as_deref()) {
+            (Some(target), _) => target,
+            (None, Some(names)) => find_unique_program_undo_target(names)?,
+            (None, None) => return Err("Open the application once so FlowCell can send Undo/Redo to it.".to_string()),
+        };
+        tauri::async_runtime::spawn_blocking(move || send_program_undo_shortcut(caller_hwnd, target, &shortcut))
+            .await.map_err(|error| error.to_string())?
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, program_name, shortcut, registry);
+        Err("Application Undo/Redo forwarding is only available on Windows.".to_string())
+    }
 }
 
 fn update_fan_open_order(entries: &mut HashMap<String, ScopedTopmostEntry>, label: &str, expanded: bool) {
@@ -1674,6 +1963,173 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
 
 #[cfg(test)]
 mod tests {
+    fn undo_target(hwnd: isize, process_name: &str) -> super::ForegroundWindowState {
+        super::ForegroundWindowState {
+            hwnd,
+            process_id: hwnd as u32 + 100,
+            process_info: super::ForegroundProcessInfo {
+                process_name: process_name.to_string(),
+                process_path: format!(r"C:\Apps\{process_name}"),
+            },
+        }
+    }
+
+    #[test]
+    fn program_undo_routes_to_the_scoped_owner_without_falling_back_to_another_app() {
+        let candidates = vec![
+            undo_target(10, "blender.exe"),
+            undo_target(20, "blender.exe"),
+            undo_target(30, "illustrator.exe"),
+        ];
+        let blender = super::normalize_configured_process_names(&["blender.exe".to_string()]);
+        assert_eq!(super::program_undo_target_from_candidates(&candidates, Some(&blender), Some(10)).unwrap().hwnd, 10);
+        assert_eq!(super::program_undo_target_from_candidates(&candidates, Some(&blender), None).unwrap().hwnd, 20);
+        assert_eq!(super::program_undo_target_from_candidates(&candidates, Some(&blender), Some(30)).unwrap().hwnd, 20);
+        let absent = super::normalize_configured_process_names(&["krita.exe".to_string()]);
+        assert!(super::program_undo_target_from_candidates(&candidates, Some(&absent), Some(30)).is_none());
+    }
+
+    #[test]
+    fn program_undo_main_window_uses_the_last_external_target() {
+        let candidates = vec![undo_target(10, "blender.exe"), undo_target(30, "illustrator.exe")];
+        assert_eq!(super::program_undo_target_from_candidates(&candidates, None, None).unwrap().hwnd, 30);
+        assert!(super::program_undo_target_from_candidates(&[], None, None).is_none());
+    }
+
+    #[test]
+    fn program_undo_startup_fallback_requires_exactly_one_matching_window() {
+        let blender = undo_target(10, "blender.exe");
+        assert_eq!(super::unique_program_undo_target(&[blender.clone()]).unwrap().hwnd, 10);
+        assert!(super::unique_program_undo_target(&[]).is_err());
+        assert!(super::unique_program_undo_target(&[blender, undo_target(20, "blender.exe")]).is_err());
+    }
+
+    #[test]
+    fn program_undo_preserves_physically_held_modifiers() {
+        assert_eq!(super::program_undo_key_sequence("undo", true, false, false).unwrap(), vec![(0x5A, false), (0x5A, true)]);
+        assert_eq!(super::program_undo_key_sequence("redo-shift-z", true, true, false).unwrap(), vec![(0x5A, false), (0x5A, true)]);
+        assert_eq!(super::program_undo_key_sequence("redo-shift-z", true, false, false).unwrap(), vec![(0x10, false), (0x5A, false), (0x5A, true), (0x10, true)]);
+        assert_eq!(super::program_undo_key_sequence("redo-y", false, false, false).unwrap(), vec![(0x11, false), (0x59, false), (0x59, true), (0x11, true)]);
+        assert!(super::program_undo_key_sequence("undo", true, true, false).is_err());
+        assert!(super::program_undo_key_sequence("undo", true, false, true).is_err());
+        assert!(super::program_undo_key_sequence("arbitrary-key", false, false, false).is_err());
+    }
+
+    #[test]
+    fn program_undo_partial_send_releases_only_accepted_synthetic_presses() {
+        let keys = super::program_undo_key_sequence("redo-shift-z", false, false, false).unwrap();
+        assert_eq!(super::program_undo_cleanup_keys(&keys, 0), Vec::<u16>::new());
+        assert_eq!(super::program_undo_cleanup_keys(&keys, 1), vec![0x11]);
+        assert_eq!(super::program_undo_cleanup_keys(&keys, 3), vec![0x5A, 0x10, 0x11]);
+        assert_eq!(super::program_undo_cleanup_keys(&keys, 4), vec![0x10, 0x11]);
+        assert_eq!(super::program_undo_cleanup_keys(&keys, keys.len()), Vec::<u16>::new());
+        let held_control = super::program_undo_key_sequence("undo", true, false, false).unwrap();
+        assert_eq!(super::program_undo_cleanup_keys(&held_control, 1), vec![0x5A]);
+    }
+
+    #[test]
+    fn program_undo_waits_through_null_activation_but_rejects_other_windows_and_reused_handles() {
+        use super::{program_undo_focus_state, ProgramUndoFocusState::*};
+        let caller = undo_target(10, "flowcell_frontend.exe");
+        let target = undo_target(20, "blender.exe");
+        for (current, expected) in [
+            (caller.clone(), Pending),
+            (super::ForegroundWindowState::default(), Pending),
+            (target.clone(), Ready),
+            (undo_target(30, "illustrator.exe"), Changed),
+            (super::ForegroundWindowState { process_id: 999, ..target.clone() }, Changed),
+            (super::ForegroundWindowState { process_id: 999, ..caller.clone() }, Changed),
+        ] {
+            assert_eq!(program_undo_focus_state(caller.hwnd, caller.process_id, &target, &current), expected);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_program_undo_ack_is_bounded_and_leaves_private_desktop_windows_responsive() {
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, DispatchMessageW, PeekMessageW, MSG, PM_REMOVE,
+        };
+        // Never switch the input desktop, activate a window, or send keyboard input.
+        // An inactive desktop tests message acknowledgement, not foreground success.
+        #[link(name = "user32")]
+        extern "system" {
+            fn CreateDesktopW(name: *const u16, device: *const u16, mode: *const std::ffi::c_void,
+                flags: u32, access: u32, attributes: *const std::ffi::c_void) -> isize;
+            fn SetThreadDesktop(desktop: isize) -> i32;
+            fn CloseDesktop(desktop: isize) -> i32;
+        }
+        struct Desktop(isize);
+        impl Drop for Desktop { fn drop(&mut self) { unsafe { CloseDesktop(self.0); } } }
+        enum Command { Pause, Stop }
+        struct Probe {
+            hwnd: isize,
+            command: mpsc::Sender<Command>,
+            paused: mpsc::Receiver<bool>,
+            thread: Option<std::thread::JoinHandle<()>>,
+        }
+        impl Drop for Probe {
+            fn drop(&mut self) {
+                let _ = self.command.send(Command::Stop);
+                if let Some(thread) = self.thread.take() { let _ = thread.join(); }
+            }
+        }
+        let name: Vec<u16> = format!("FlowCellUndoAckTest{}-{}\0", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())
+            .encode_utf16().collect();
+        let desktop = Desktop(unsafe { CreateDesktopW(name.as_ptr(), std::ptr::null(),
+            std::ptr::null(), 0, 0x01FF, std::ptr::null()) });
+        assert_ne!(desktop.0, 0);
+        let spawn = || {
+            let (command, commands) = mpsc::channel();
+            let (ready, window) = mpsc::channel();
+            let (paused_tx, paused) = mpsc::channel();
+            let desktop_handle = desktop.0;
+            let thread = std::thread::spawn(move || {
+                assert_ne!(unsafe { SetThreadDesktop(desktop_handle) }, 0);
+                let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+                let hwnd = unsafe { CreateWindowExW(0, class.as_ptr(), class.as_ptr(), 0,
+                    0, 0, 1, 1, std::ptr::null_mut(), std::ptr::null_mut(),
+                    std::ptr::null_mut(), std::ptr::null()) };
+                assert!(!hwnd.is_null());
+                ready.send(hwnd as isize).unwrap();
+                loop {
+                    match commands.try_recv() {
+                        Ok(Command::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
+                        Ok(Command::Pause) => {
+                            paused_tx.send(true).unwrap();
+                            std::thread::sleep(Duration::from_millis(300));
+                            paused_tx.send(false).unwrap();
+                        }
+                        Err(mpsc::TryRecvError::Empty) => {}
+                    }
+                    let mut message: MSG = unsafe { std::mem::zeroed() };
+                    while unsafe { PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) } != 0 {
+                        unsafe { DispatchMessageW(&message); }
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                unsafe { DestroyWindow(hwnd); }
+            });
+            Probe { hwnd: window.recv_timeout(Duration::from_secs(2)).unwrap(), command, paused, thread: Some(thread) }
+        };
+        let caller = spawn();
+        let target = spawn();
+        assert!(super::acknowledge_program_undo_target(caller.hwnd, 500));
+        assert!(super::acknowledge_program_undo_target(target.hwnd, 500));
+        target.command.send(Command::Pause).unwrap();
+        assert!(target.paused.recv_timeout(Duration::from_secs(1)).unwrap());
+        let start = Instant::now();
+        assert!(!super::acknowledge_program_undo_target(target.hwnd, 30));
+        assert!(start.elapsed() < Duration::from_millis(250));
+        assert!(super::acknowledge_program_undo_target(caller.hwnd, 100));
+        assert!(!target.paused.recv_timeout(Duration::from_secs(1)).unwrap());
+        assert!(super::acknowledge_program_undo_target(target.hwnd, 500));
+        assert!(super::acknowledge_program_undo_target(caller.hwnd, 500));
+    }
+
     #[cfg(windows)]
     #[test]
     fn native_new_fan_covers_pinned_fan_and_masks_underlying_hover_without_focus() {

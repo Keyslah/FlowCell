@@ -3,6 +3,8 @@
 mod button_state;
 mod krita_brushes;
 mod commands;
+#[cfg(windows)]
+mod main_window_resize;
 mod program_sources;
 
 use commands::bindings::*;
@@ -84,9 +86,6 @@ const BLENDER_BRIDGE_RESPONSE_POLL_MS: u64 = 4;
 const BLENDER_BRIDGE_NOT_RUNNING_MESSAGE: &str = "Open Blender first, then run the button again.";
 const FLOWCELL_CONTROLLER_SCRIPT_TIMEOUT_SECONDS: u64 = 25;
 #[cfg(windows)]
-const FLOWCELL_SINGLE_INSTANCE_MUTEX: &str = "Local\\com.flowcell.frontend.single-instance-v1";
-
-#[cfg(windows)]
 struct FlowCellInstanceGuard {
     handle: HANDLE,
 }
@@ -103,7 +102,7 @@ impl Drop for FlowCellInstanceGuard {
 
 #[cfg(windows)]
 fn focus_existing_flowcell_window() {
-    let mut title = "FlowCell".encode_utf16().collect::<Vec<_>>();
+    let mut title = flowcell_frontend_window_title().encode_utf16().collect::<Vec<_>>();
     title.push(0);
     for _ in 0..20 {
         let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
@@ -120,7 +119,7 @@ fn focus_existing_flowcell_window() {
 
 #[cfg(windows)]
 fn acquire_flowcell_instance_guard() -> Result<Option<FlowCellInstanceGuard>, String> {
-    let mut name = FLOWCELL_SINGLE_INSTANCE_MUTEX
+    let mut name = flowcell_frontend_instance_mutex()
         .encode_utf16()
         .collect::<Vec<_>>();
     name.push(0);
@@ -169,6 +168,7 @@ fn main() {
             get_scoped_window_input_state,
             refresh_frontend_host,
             get_foreground_process_info,
+            forward_program_undo,
             get_native_input_snapshot,
             show_save_layout_dialog,
             show_open_layout_dialog,
@@ -273,6 +273,9 @@ fn main() {
         ])
         .setup(|app| {
             initialize_runtime_paths().map_err(std::io::Error::other)?;
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_title(flowcell_frontend_window_title()).map_err(std::io::Error::other)?;
+            }
             program_sources::rename::recover_rename_transactions_on_startup()
                 .map_err(std::io::Error::other)?;
             let recovered_program_renames =
@@ -299,7 +302,7 @@ fn main() {
             recover_add_program_transactions_on_startup(app.handle())
                 .map_err(std::io::Error::other)?;
             recover_add_panel_transactions_on_startup().map_err(std::io::Error::other)?;
-            start_installed_backend().map_err(std::io::Error::other)?;
+            start_flowcell_backend().map_err(std::io::Error::other)?;
 
             if let Err(error) = synchronize_tool_set_hotkeys(app.handle()) {
                 let message =
@@ -311,6 +314,7 @@ fn main() {
             #[cfg(windows)]
             if let Some(window) = app.get_webview_window("main") {
                 apply_square_corner_preference(&window);
+                main_window_resize::install(&window).map_err(std::io::Error::other)?;
             }
 
             #[cfg(windows)]

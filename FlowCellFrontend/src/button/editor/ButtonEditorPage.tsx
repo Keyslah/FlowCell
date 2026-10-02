@@ -615,7 +615,6 @@ function ButtonEditorContent({
   const cancelRef = useRef<() => Promise<boolean>>(async () => false);
   const handledAutoImportRequestRef = useRef(0);
   const [activePage, setActivePage] = useState<"placement" | "animation">("placement");
-  const [mode, setMode] = useState<"run" | "edit">("edit");
   const [reorderMode, setReorderMode] = useState(false);
   const [selectedSurfaceId, setSelectedSurfaceId] = useState(initialSelection.surfaceId);
   const [focusedPlacementId, setFocusedPlacementId] = useState<string | null>(initialSelection.placementId);
@@ -664,10 +663,7 @@ function ButtonEditorContent({
   );
   useEffect(() => {
     setWorkingSizingModeOverride(null);
-  }, [
-    selectedPlacement?.id,
-    allSurfaceButtonsSameSize
-  ]);
+  }, [selectedPlacement?.id]);
   const selectedWorkingSizingMode = allSurfaceButtonsSameSize
     ? "responsive"
     : (
@@ -728,12 +724,6 @@ function ButtonEditorContent({
       )
     );
   }));
-  const selectedPlacementSummaries = selectedSurfacePlacements
-    .filter((placement) => selectedSetForSurface.has(placement.id))
-    .map((placement) => ({
-      placementId: placement.id,
-      label: store.draft.buttons[placement.buttonId]?.label ?? "Unknown Button"
-    }));
   const settingsPlacementKind = selectedSurface
     ? buttonSettingsPlacementKind(selectedSurface)
     : null;
@@ -1725,31 +1715,6 @@ function ButtonEditorContent({
     return true;
   }, [store]);
 
-  const setAllSurfaceButtonsSameSize = useCallback((enabled: boolean) => {
-    const document = store.current();
-    const placement = focusedPlacementId
-      ? document.placements[focusedPlacementId]
-      : null;
-    if (!placement) {
-      setMessage("Select a Button placement before setting the surface size.");
-      return;
-    }
-    if (enabled) {
-      applyUniformSizeToSurface(
-        placement.surfaceId,
-        { width: placement.width, height: placement.height },
-        "Set every Button on the surface to the same size"
-      );
-      return;
-    }
-    const surface = document.surfaces[placement.surfaceId];
-    if (!surface) return;
-    store.transact((draft) => {
-      draft.surfaces[surface.id].uniformButtonSize = null;
-    }, { label: "Stop linking Button sizes" });
-    setMessage(null);
-  }, [applyUniformSizeToSurface, focusedPlacementId, store]);
-
   const commitButtonSpacing = useCallback(() => {
     const nextMillimeters = Number(buttonSpacingInput.trim());
     if (!Number.isFinite(nextMillimeters) || nextMillimeters < 0) {
@@ -1830,11 +1795,6 @@ function ButtonEditorContent({
       : null;
     const surface = placement ? document.surfaces[placement.surfaceId] : null;
     if (!placement || !surface) return;
-    if (surface.uniformButtonSize) {
-      setMessage("Turn off the separate Same size Buttons format before assigning an Editor size.");
-      return;
-    }
-
     const naturalMeasurement = currentNaturalCoreMeasurement(
       document,
       placement,
@@ -1872,6 +1832,7 @@ function ButtonEditorContent({
 
     setMessage(null);
     store.transact((draft) => {
+      draft.surfaces[surface.id].uniformButtonSize = null;
       Object.assign(draft.placements[placement.id], {
         width: candidate.width,
         height: candidate.height,
@@ -1901,10 +1862,6 @@ function ButtonEditorContent({
     const surface = document.surfaces[placement.surfaceId];
     if (!surface) {
       setMessage("The current Button placement surface no longer exists.");
-      return;
-    }
-    if (surface.uniformButtonSize) {
-      setMessage("Turn off the separate Same size Buttons format before assigning an Editor size.");
       return;
     }
     const orderedPlacementIds = [...surface.placementIds].sort((left, right) => {
@@ -1948,7 +1905,8 @@ function ButtonEditorContent({
       orderedPlacementIds,
       compacted.placements,
       "Assign Button size to current surface",
-      buttonPlacementSizingPatch(assignment)
+      buttonPlacementSizingPatch(assignment),
+      { uniformButtonSize: null }
     );
     if (applied) {
       setMessage(
@@ -2590,7 +2548,7 @@ function ButtonEditorContent({
         createStableButtonId("skin")
       );
       setMessage(
-        `Skin '${loadedSkin.name}' loaded from ${selectedPath} as a working copy. Use Assign Skin to apply it.`
+        `Skin '${loadedSkin.name}' loaded from ${selectedPath}.`
       );
       return { skin: loadedSkin, path: selectedPath };
     } catch (error) {
@@ -2991,27 +2949,11 @@ function ButtonEditorContent({
             >
               Update {settingsPlacementLabel} Default
             </button>
-            <label className="button-editor-mode button-editor-sidebar__mode">
-              <span>Edit</span>
-              <input
-                type="checkbox"
-                checked={mode === "run"}
-                disabled={busy}
-                onChange={(event) => {
-                  if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
-                  const nextMode = event.currentTarget.checked ? "run" : "edit";
-                  setActivePage("placement");
-                  setMode(nextMode);
-                  if (nextMode === "run") setReorderMode(false);
-                }}
-              />
-              <span>Run</span>
-            </label>
             <button
               type="button"
               className={activePage === "placement" && reorderMode ? "is-active" : undefined}
               aria-pressed={reorderMode}
-              disabled={mainPageControlScope || mode !== "edit" || selectedSurfaceButtonCount < 2 || busy}
+              disabled={mainPageControlScope || selectedSurfaceButtonCount < 2 || busy}
               onClick={() => {
                 if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
                 setActivePage("placement");
@@ -3020,35 +2962,9 @@ function ButtonEditorContent({
             >
               Re-order
             </button>
-            <section
-              className="button-editor-sidebar__selection"
-              aria-live="polite"
-              aria-label="Selected Buttons"
-            >
-              <div className="button-editor-sidebar__selection-heading">
-                <strong>Selected Buttons</strong>
-                <span>{selectedPlacementSummaries.length}</span>
-              </div>
-              {selectedPlacementSummaries.length > 0 ? (
-                <ul>
-                  {selectedPlacementSummaries.map((entry) => (
-                    <li
-                      key={entry.placementId}
-                      className={entry.placementId === focusedPlacementId ? "is-focused" : undefined}
-                    >
-                      <span>{entry.label}</span>
-                      {entry.placementId === focusedPlacementId ? <em>editing</em> : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p>No Buttons selected.</p>
-              )}
-              <small>Shift-click or Shift-drag toggles Buttons in this selection.</small>
-            </section>
             <button
               type="button"
-              disabled={mainPageControlScope || mode !== "edit" || selectedSetForSurface.size === 0 || busy}
+              disabled={mainPageControlScope || selectedSetForSurface.size === 0 || busy}
               onClick={() => {
                 if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
                 setActivePage("placement");
@@ -3060,7 +2976,7 @@ function ButtonEditorContent({
             </button>
             <button
               type="button"
-              disabled={mainPageControlScope || mode !== "edit" || selectedSetForSurface.size === 0 || busy}
+              disabled={mainPageControlScope || selectedSetForSurface.size === 0 || busy}
               onClick={() => {
                 if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
                 setActivePage("placement");
@@ -3082,15 +2998,6 @@ function ButtonEditorContent({
             >
               Animation
             </button>
-            <label className="button-editor-check button-editor-sidebar__same-size">
-              <input
-                type="checkbox"
-                checked={allSurfaceButtonsSameSize}
-                disabled={!selectedPlacement || busy}
-                onChange={(event) => setAllSurfaceButtonsSameSize(event.currentTarget.checked)}
-              />
-              <span>Same size Buttons</span>
-            </label>
             <fieldset className="button-editor-sidebar__sizing">
               <legend>Button Sizing</legend>
               <div className="button-editor-sidebar__size-copy-actions">
@@ -3183,7 +3090,7 @@ function ButtonEditorContent({
           <ButtonWorkspace
             document={store.draft}
             surfaceId={selectedSurfaceId}
-            mode={mode}
+            mode="edit"
             selectedPlacementIds={selectedSetForSurface}
             focusedPlacementId={focusedPlacementId}
             onSelectPlacement={selectWorkspacePlacement}
@@ -3204,7 +3111,7 @@ function ButtonEditorContent({
           busy={busy}
           placement={selectedPlacement}
           surfaceButtonCount={selectedSurfaceButtonCount}
-          selectionButtonCount={selectedPlacementSummaries.length}
+          selectionButtonCount={selectedSetForSurface.size}
           allSurfaceButtonsSameSize={allSurfaceButtonsSameSize}
           buttonLabel={selectedButton?.label ?? "Button Preview"}
           buttonTooltip={selectedButton?.tooltip ?? ""}
@@ -3251,16 +3158,6 @@ function ButtonEditorContent({
               label: "Edit Button text fitting",
               coalesceKey
             });
-          }}
-          onAssignSkin={(skin, sizingMode) => {
-            if (!selectedPlacement || !selectedButton) return;
-            void assignWorkingSkin(
-              skin,
-              [selectedPlacement.id],
-              `Skin assigned only to '${selectedButton.label}'.`,
-              selectedButton.label || "Button",
-              sizingMode
-            );
           }}
           onAssignSkinToSelection={(skin, sizingMode) => {
             const document = store.current();

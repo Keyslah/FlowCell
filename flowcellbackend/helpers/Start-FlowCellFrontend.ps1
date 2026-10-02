@@ -1,4 +1,4 @@
-# Description: Starts the FlowCell Tauri frontend and keeps the backend host on the existing path.
+# Description: Builds and starts the development frontend independently of the installed backend.
 param(
     [switch]$ForceRestart
 )
@@ -19,7 +19,10 @@ $launcherLogPath = Join-Path $logsRoot 'frontend-launcher.log'
 $buttonStateRoot = Join-Path $projectRoot 'local\button-system'
 $buttonBootstrapErrorPath = Join-Path $buttonStateRoot 'last-bootstrap-error.log'
 $preflightPath = Join-Path $PSScriptRoot 'Start-FlowCellPreflight.ps1'
-$backendLauncherPath = Join-Path $projectRoot 'run_backend_hidden.vbs'
+$env:FLOWCELL_RESOURCE_ROOT = $repoRoot
+$env:FLOWCELL_LOCAL_ROOT = Join-Path $projectRoot 'local'
+$env:FLOWCELL_PROGRAMS_ROOT = Join-Path $repoRoot 'Programs'
+$env:FLOWCELL_BACKEND_ROLE = 'development'
 $npmCommand = (Get-Command 'npm.cmd' -ErrorAction Stop).Source
 $script:FlowCellFrontendLaunchWaited = $false
 $script:FlowCellFrontendLauncherMutexName = 'Global\FlowCellFrontendLauncher'
@@ -258,7 +261,13 @@ function Get-FlowCellFrontendSourceRoots {
         (Join-Path $frontendRoot 'package.json'),
         (Join-Path $frontendRoot 'vite.config.ts'),
         (Join-Path $frontendRoot 'index.html'),
-        (Join-Path $frontendRoot 'tsconfig.json')
+        (Join-Path $frontendRoot 'tsconfig.json'),
+        (Join-Path $projectRoot 'FlowCellBackend.ahk'),
+        (Join-Path $projectRoot 'FlowCellCommandBackend.ps1'),
+        (Join-Path $projectRoot 'run_backend_hidden.vbs'),
+        (Join-Path $projectRoot 'helpers'),
+        (Join-Path $repoRoot 'Programs\Windows\Windows Git Scripts\Utility\Temp Shots'),
+        (Join-Path $repoRoot 'Programs\Windows\Windows Git Scripts\Utility\Snapshots')
     )
 }
 
@@ -276,13 +285,13 @@ function Get-FlowCellFrontendSourceStamp {
 
         $rootItem = Get-Item -LiteralPath $sourceRoot
         if (-not $rootItem.PSIsContainer) {
-            $entries.Add(('{0}|{1}|{2}' -f $rootItem.FullName.Substring($frontendRoot.Length), $rootItem.Length, $rootItem.LastWriteTimeUtc.Ticks))
+            $entries.Add(('{0}|{1}|{2}' -f $rootItem.FullName, $rootItem.Length, $rootItem.LastWriteTimeUtc.Ticks))
             continue
         }
 
         $files = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -ErrorAction SilentlyContinue
         foreach ($file in $files) {
-            $entries.Add(('{0}|{1}|{2}' -f $file.FullName.Substring($frontendRoot.Length), $file.Length, $file.LastWriteTimeUtc.Ticks))
+            $entries.Add(('{0}|{1}|{2}' -f $file.FullName, $file.Length, $file.LastWriteTimeUtc.Ticks))
         }
     }
 
@@ -317,9 +326,7 @@ function Get-FlowCellFrontendProcess {
     $knownExePaths = @(@(
         $frontendReleaseExePath,
         $frontendDebugExePath
-    ) | Where-Object {
-        Test-Path -LiteralPath $_ -PathType Leaf
-    } | ForEach-Object {
+    ) | ForEach-Object {
         [System.IO.Path]::GetFullPath($_)
     })
 
@@ -332,11 +339,8 @@ function Get-FlowCellFrontendProcess {
             $processPath = ''
         }
 
-        if (
-            $knownExePaths.Count -gt 0 -and
-            -not [string]::IsNullOrWhiteSpace($processPath) -and
-            (-not ($knownExePaths -contains [System.IO.Path]::GetFullPath($processPath)))
-        ) {
+        if ([string]::IsNullOrWhiteSpace($processPath) -or
+            -not ($knownExePaths -contains [System.IO.Path]::GetFullPath($processPath))) {
             continue
         }
 
@@ -426,7 +430,7 @@ function Get-FlowCellFrontendMainWindowHandle([System.Diagnostics.Process]$Proce
         $titleBuilder = New-Object System.Text.StringBuilder 512
         [void][FlowCellWindowInterop]::GetWindowText($hWnd, $titleBuilder, $titleBuilder.Capacity)
         $title = $titleBuilder.ToString()
-        if ($title -ne 'FlowCell') {
+        if ($title -ne 'FlowCell Development') {
             return $true
         }
 
@@ -584,11 +588,6 @@ try {
         }
     }
 
-    if (Test-Path -LiteralPath $backendLauncherPath -PathType Leaf) {
-        Write-LauncherLog 'Ensuring backend stays on the existing hidden launch path.'
-        Start-Process -FilePath 'wscript.exe' -ArgumentList @('//nologo', $backendLauncherPath) -WindowStyle Hidden
-    }
-
     $buildRequired = Test-FlowCellFrontendBuildRequired
 
     if ($script:FlowCellFrontendLaunchWaited -and (-not $buildRequired)) {
@@ -670,6 +669,11 @@ try {
 
         if (-not (Test-Path -LiteralPath $frontendExePath -PathType Leaf)) {
             throw "Tauri frontend executable was not found after build: $frontendExePath"
+        }
+
+        if ($ForceRestart -or $buildRequired) {
+            Write-LauncherLog 'Refreshing only the development backend after successful release build.'
+            & (Join-Path $PSScriptRoot 'Start-FlowCellBackend.ps1') -Role development -Restart
         }
 
         $runningFrontend = @(Get-FlowCellFrontendProcess)

@@ -39,6 +39,7 @@ jobs:
         run: |
           & release-tools/tests/Test-CatalogUpdater.ps1
           & release-tools/tests/Test-InstalledPaths.ps1
+          & release-tools/tests/Test-BackendStartup.ps1
           & flowcellbackend/helpers/tests/Test-FlowCellPreflightManifestPaths.ps1
       - name: Program package regression tests
         shell: pwsh

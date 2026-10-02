@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { InstalledPageWindowContext } from "../../lib/windowContext";
+import { installProgramUndoKeys, trackProgramAction, type ProgramUndoShortcut } from "../../lib/programUndo";
+import { forwardProgramUndo } from "../../lib/tauri";
 import {
   isInstalledPageCoreActionPlan,
   runInstalledPageCoreAction
@@ -76,6 +78,14 @@ interface PageSecurityProbeMessage {
   hasRawWryIpc: boolean;
 }
 
+interface PageUndoMessage {
+  channel: "flowcell-installed-page";
+  type: "undo";
+  nonce: string;
+  requestId: string;
+  shortcut: ProgramUndoShortcut;
+}
+
 interface InstalledPageNativeMessage {
   messageJson: string;
 }
@@ -100,6 +110,13 @@ function isPageRequestMessage(value: unknown, nonce: string): value is PageReque
     typeof value.actionId === "string" &&
     value.actionId.length > 0 &&
     value.actionId.length <= 160;
+}
+
+function isPageUndoMessage(value: unknown, nonce: string): value is PageUndoMessage {
+  return isRecord(value) && value.channel === "flowcell-installed-page" &&
+    value.type === "undo" && value.nonce === nonce &&
+    typeof value.requestId === "string" && value.requestId.length > 0 && value.requestId.length <= 160 &&
+    (value.shortcut === "undo" || value.shortcut === "redo-shift-z" || value.shortcut === "redo-y");
 }
 
 function isPageSecurityProbeMessage(
@@ -221,6 +238,18 @@ function buildBridgeSource(descriptor: InstalledPageDescriptor, nonce: string): 
       const requestId = String(Date.now()) + "-" + String(++sequence);
       pending.set(requestId, { resolve, reject });
       sendNative({ channel, type: "request", nonce, requestId, actionId, payload });
+    });
+    (${installProgramUndoKeys.toString()})(window, (shortcut) => new Promise((resolve, reject) => {
+      const requestId = "undo-" + String(Date.now()) + "-" + String(++sequence);
+      pending.set(requestId, { resolve, reject });
+      sendNative({ channel, type: "undo", nonce, requestId, shortcut });
+    }), (error) => {
+      const notice = document.createElement("div");
+      notice.setAttribute("role", "alert");
+      notice.textContent = "Undo/Redo: " + String(error && error.message || error);
+      notice.style.cssText = "position:fixed;bottom:12px;left:12px;right:12px;padding:10px;background:#302329;color:#fff;z-index:2147483647;pointer-events:none;border-radius:6px";
+      document.body.appendChild(notice);
+      setTimeout(() => notice.remove(), 5000);
     });
     Object.defineProperty(window, "flowcellPage", {
       value: Object.freeze({ descriptor, request }),
@@ -402,7 +431,7 @@ export default function InstalledPageWindowPage({
         fileName: context.fileName,
         pageId: context.pageId
       };
-      void invoke<CompletedPageActionResult | unknown>("run_installed_page_action", {
+      void trackProgramAction(context.programName, () => invoke<CompletedPageActionResult | unknown>("run_installed_page_action", {
         ...identity,
         actionId: message.actionId,
         payloadJson
@@ -423,7 +452,7 @@ export default function InstalledPageWindowPage({
           throw new Error("Installed page action returned an invalid broker result.");
         }
         return (runResult as unknown as CompletedPageActionResult).value;
-      }).then((result) => postToPage({
+      })).then((result) => postToPage({
         channel: "flowcell-installed-page",
         type: "response",
         nonce,
@@ -471,6 +500,17 @@ export default function InstalledPageWindowPage({
             if (!verified) {
               failPage("Installed page isolation failed closed because its default execution context was not isolated.");
             }
+            return;
+          }
+          if (isPageUndoMessage(message, nonce)) {
+            const request = message;
+            void forwardProgramUndo(request.shortcut, context.programName).then(() => postToPage({
+              channel: "flowcell-installed-page", type: "response", nonce,
+              requestId: request.requestId, ok: true, result: null
+            })).catch((reason) => postToPage({
+              channel: "flowcell-installed-page", type: "response", nonce,
+              requestId: request.requestId, ok: false, error: formatError(reason)
+            }));
             return;
           }
           if (isPageRequestMessage(message, nonce)) handlePageRequest(message);

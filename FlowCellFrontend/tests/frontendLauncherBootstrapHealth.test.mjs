@@ -9,7 +9,7 @@ const launcherSource = readFileSync(
   "utf8",
 );
 
-test("launcher process lookup supports zero, one, or two built executables", { skip: process.platform !== "win32" }, () => {
+test("development launcher excludes installed and unidentified processes even before its first build", { skip: process.platform !== "win32" }, () => {
   const script = `
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
@@ -18,14 +18,14 @@ test("launcher process lookup supports zero, one, or two built executables", { s
     Invoke-Expression $function.Extent.Text
     $frontendReleaseExePath = Join-Path $env:TEMP 'FlowCell-launcher-test-release.exe'
     $frontendDebugExePath = Join-Path $env:TEMP 'FlowCell-launcher-test-debug.exe'
-    function Get-Process { param($Name, $ErrorAction) @([pscustomobject]@{Path=$frontendReleaseExePath}, [pscustomobject]@{Path=$frontendDebugExePath}, [pscustomobject]@{Path=(Join-Path $env:TEMP 'unrelated.exe')}) }
+    function Get-Process { param($Name, $ErrorAction) @([pscustomobject]@{Path=$frontendReleaseExePath}, [pscustomobject]@{Path=$frontendDebugExePath}, [pscustomobject]@{Path=(Join-Path $env:TEMP 'installed.exe')}, [pscustomobject]@{Path=''}) }
     function Test-Path { param($LiteralPath, $PathType) $availablePaths -contains $LiteralPath }
     foreach ($count in 0,1,2) {
       $availablePaths = @(@($frontendReleaseExePath,$frontendDebugExePath) | Select-Object -First $count)
       $matches = @(Get-FlowCellFrontendProcess)
-      $expected = if ($count -eq 0) { 3 } else { $count }
+      $expected = 2
       if ($matches.Count -ne $expected) { throw "Expected $expected matches for $count built executables, got $($matches.Count)" }
-      if ($count -eq 1 -and $matches[0].Path -ne $frontendReleaseExePath) { throw 'Selected another installed copy' }
+      if ($matches[0].Path -ne $frontendReleaseExePath -or $matches[1].Path -ne $frontendDebugExePath) { throw 'Selected another installed copy' }
     }
   `;
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {

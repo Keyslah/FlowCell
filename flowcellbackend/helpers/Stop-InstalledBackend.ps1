@@ -11,6 +11,7 @@ $root=[IO.Path]::GetFullPath($ResourceRoot)
 if (-not (Test-Path -LiteralPath (Join-Path $root 'flowcell-installed.json'))) { throw 'Not an installed FlowCell resource root.' }
 $runtime=Join-Path $root 'flowcellbackend\runtime\AutoHotkey64.exe'
 $backend=Join-Path $root 'flowcellbackend\FlowCellBackend.ahk'
+$backendSessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId
 Get-CimInstance Win32_Process -Filter "Name = 'AutoHotkey64.exe'" | Where-Object {
-    $_.ExecutablePath -eq $runtime -and $_.CommandLine.Contains($backend) -and $_.CommandLine.Contains('--headless')
+    $_.SessionId -eq $backendSessionId -and $_.ExecutablePath -eq $runtime -and $_.CommandLine.Contains($backend) -and $_.CommandLine.Contains('--headless')
 } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop }
