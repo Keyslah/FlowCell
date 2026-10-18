@@ -350,7 +350,7 @@ Repository Map
 - `flowcellbackend/` is the canonical AutoHotkey/PowerShell backend and launcher root. Macro Lab resolves its tracked recorder from `flowcellbackend/helpers/RecordMacro.ahk` and launches it with the backend AutoHotkey v2 runtime.
 - `flowcellbackend/local/` is ignored durable runtime state: bindings, Button state, layouts, logs, owner runtime state, program data, command payloads, and private configuration.
 - `Programs/` contains manifest-defined program packages, tracked Git Scripts catalogs, ignored owned Local Scripts installs, active panel source records, and runner adapters.
-- `docs/buttons.md` is the Button owner/file map. `docs/repository-layout.md`, `docs/flowcell-program-registry.md`, `docs/flowcell-toolset-manifest.md`, and `docs/blender-scripts.md` define source/package contracts.
+- `docs/buttons.md` is the Button owner/file map. `docs/repository-layout.md`, `docs/flowcell-program-registry.md`, `docs/flowcell-toolset-manifest.md`, and `docs/blender-scripts.md` define source/package contracts. `docs/File organizer.md` is the user-facing Setup Organization how-to (open, set up, use), illustrated by `docs/file-organizer-setup.png`; package internals live in `Programs/Windows/README.md` and the package source.
 
 Canonical Contracts
 -------------------
