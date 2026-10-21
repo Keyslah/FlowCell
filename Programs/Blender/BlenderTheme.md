@@ -113,14 +113,21 @@ Theme controls:
   Switching packages never writes their files. Older packages without popped
   settings keep the last-used appearance. First use adopts the saved page
   gradient and the common current popout effects, without replacing skins.
-- Highlight and Glow each have a spatial strength curve, Angle, and Whole Layout
-  control. The curve multiplies all three state's amounts by 0-100% at each Button
-  center. Angle determines direction in both modes: Whole Layout spans visible
+- Theme 3.0.35 gives Glow separate Regular, Active, and Hover curve tabs, and
+  Highlight separate Regular and Active tabs. The Regular Highlight curve also
+  scales the existing Hover Highlight amount. Each tab has a link checkbox:
+  editing a checked tab updates the other checked curves in that section;
+  unchecked curves stay independent. Checking a tab alone does not copy a curve.
+  Tabs and link selections persist in page state, and packages retain each curve.
+  Each curve multiplies its state's configured Highlights and Glow amount by
+  0-100% at each Button center, so 100% uses that amount without changing it.
+  Angle and Whole Layout are shared by the tabs within each effect section.
+  Angle determines direction in both modes: Whole Layout spans visible
   Buttons on each monitor, while disabling it spans each window independently.
   A single-position layout samples Start. Fade runs from full strength at Start
   to zero at End: top to bottom at 0 degrees, left to right at 90 degrees.
   Full and Reset give constant 100% strength, also the default for older themes.
-  Apply Highlights & Glow commits both curves with the state amounts. Packages
+  Apply Highlights & Glow commits all state curves with the state amounts. Packages
   and the appearance lock retain the curves, angles, and Whole Layout choices.
 - Theme 3.0.34 gives every Button its own named color row and checkbox, even when
   multiple Buttons have the same color. Color/hex changes apply directly to only

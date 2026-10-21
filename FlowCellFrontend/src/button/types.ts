@@ -294,11 +294,17 @@ export interface ProgramPopoutThemeSettings {
   textAngle?: number;
   textCurve?: ProgramPopoutGradientCurvePoint[];
   textScreenTopToBottom?: boolean;
-  /** Spatial multipliers for all three interaction-state amounts. Absent means full strength. */
+  /** Regular Highlight spatial multiplier, also used while hovered. Absent means full strength. */
   highlightCurve?: ProgramPopoutGradientCurvePoint[];
+  /** Active Highlight multiplier. Absent inherits the legacy shared highlightCurve. */
+  activeHighlightCurve?: ProgramPopoutGradientCurvePoint[];
   highlightAngle?: number;
   highlightScreenTopToBottom?: boolean;
+  /** Regular Glow multiplier. Absent means full strength. */
   glowCurve?: ProgramPopoutGradientCurvePoint[];
+  /** State Glow multipliers. Absent inherit the legacy shared glowCurve. */
+  hoverGlowCurve?: ProgramPopoutGradientCurvePoint[];
+  activeGlowCurve?: ProgramPopoutGradientCurvePoint[];
   glowAngle?: number;
   glowScreenTopToBottom?: boolean;
   hoverEnabled: boolean;

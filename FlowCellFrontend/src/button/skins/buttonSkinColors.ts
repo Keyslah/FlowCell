@@ -527,7 +527,10 @@ export function normalizeButtonHighlightAmount(value: unknown): number | null {
 }
 
 export function resolveButtonHighlightAmount(value: unknown): number {
-  return normalizeButtonHighlightAmount(value) ?? DEFAULT_BUTTON_HIGHLIGHT_AMOUNT;
+  // Spatial curves produce fractional amounts even though the saved sliders are integers.
+  return typeof value === "number" && Number.isFinite(value) &&
+    value >= BUTTON_HIGHLIGHT_AMOUNT_MIN && value <= BUTTON_HIGHLIGHT_AMOUNT_MAX
+    ? value : DEFAULT_BUTTON_HIGHLIGHT_AMOUNT;
 }
 
 export function normalizeButtonGlowAmount(value: unknown): number | null {
@@ -540,7 +543,9 @@ export function normalizeButtonGlowAmount(value: unknown): number | null {
 }
 
 export function resolveButtonGlowAmount(value: unknown): number {
-  return normalizeButtonGlowAmount(value) ?? DEFAULT_BUTTON_HIGHLIGHT_AMOUNT;
+  return typeof value === "number" && Number.isFinite(value) &&
+    value >= BUTTON_HIGHLIGHT_AMOUNT_MIN && value <= BUTTON_GLOW_AMOUNT_MAX
+    ? value : DEFAULT_BUTTON_HIGHLIGHT_AMOUNT;
 }
 
 function highlightFilterNumber(value: number): string {

@@ -389,7 +389,7 @@ test("canceling or failing a gradient eyedropper preserves colors and releases c
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.0.34");
+  assert.equal(contribution.version, "3.0.35");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -1437,7 +1437,7 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
   const root = await renderThemePage();
   const buttons = root.querySelectorAll("button");
   // Grid visibility and spacing apply directly through their inputs.
-  assert.equal(buttons.length, 27 + 6 + 2 * 17 + 2 * 19 + page.config.roles.length + page.config.environment.valueFields.length);
+  assert.equal(buttons.length, 27 + 6 + 5 + 2 * 17 + 2 * 19 + page.config.roles.length + page.config.environment.valueFields.length);
   assert.deepEqual(
     buttons.flatMap((button, index) => button.title.trim() ? [] : [`${index}: ${button.textContent}`]),
     []
@@ -1450,7 +1450,7 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
   );
   const checkboxes = root.querySelectorAll("input").filter((input) => input.type === "checkbox");
   const gradientRole = root.querySelectorAll("div").find((node) => node.title === "Gradient 2");
-  assert.equal(checkboxes.length, 10);
+  assert.equal(checkboxes.length, 15);
   assert.ok(gradientRole);
   assert.equal(gradientRole.querySelectorAll("input").filter((input) => input.type === "checkbox").length, 1);
   assert.equal(
@@ -1869,7 +1869,8 @@ test("packages declare only portable popped settings, without placement identity
   assert.equal(settingsAction.handler.options.operation, "settings");
   const schema = settingsAction.requestSchema.properties.settings;
   const shapeKeys = ["angle", "curve", "textAngle", "textColors", "textCurve", "textScreenTopToBottom",
-    "highlightCurve", "highlightAngle", "highlightScreenTopToBottom", "glowCurve", "glowAngle", "glowScreenTopToBottom"];
+    "highlightCurve", "activeHighlightCurve", "highlightAngle", "highlightScreenTopToBottom",
+    "glowCurve", "activeGlowCurve", "hoverGlowCurve", "glowAngle", "glowScreenTopToBottom"];
   assert.deepEqual(Object.keys(schema.properties).sort(), [...Object.keys(poppedSettings()), ...shapeKeys].sort());
   assert.deepEqual([...schema.required].sort(), Object.keys(poppedSettings()).filter((key) => !key.startsWith("idle")).sort(), "older packages stay valid");
   assert.deepEqual(schema.properties.curve.items.properties.mode.enum, ["auto", "corner", "aligned", "free"]);
@@ -2426,7 +2427,7 @@ test("every curve visibly explains its axes and distinguishes color progression 
     const help = panel.querySelectorAll("p").find((node) => classes(node).includes("gradient-curve__axes-help"));
     assert.match(help.textContent, /Position follows Angle; Whole Layout spans all visible Buttons on each monitor/);
     if (channel === "highlight" || channel === "glow") {
-      assert.match(help.textContent, /0% is off; 100% uses the full Regular\/Hover\/Active amount/);
+      assert.match(help.textContent, /0% is off; 100% uses the selected state's amount from Highlights and Glow/);
       assert.ok(labelledInput(panel, `${title} point strength percent`));
     } else {
       assert.match(help.textContent, /0% is the first color; 100% is the last color/);
@@ -2447,7 +2448,7 @@ test("effect Fade keeps strength separate from angle and Whole Layout when appli
   for (const [channel, title] of [["highlight", "Highlight"], ["glow", "Glow"]]) {
     const panel = channelBox(root, channel);
     toolButton(panel, "Fade curve").click();
-    const whole = panel.querySelectorAll("input").find(({ type }) => type === "checkbox");
+    const whole = labelledInput(panel, `${title} Whole Layout`);
     whole.checked = true;
     dispatch(whole, "change");
     for (const angle of [0, 90, 45]) {
@@ -2497,7 +2498,7 @@ test("spatial effect curves edit, apply, save, lock, reopen and reset independen
   setInput(labelledInput(channelBox(root, "highlight"), "Highlight point strength percent"), 60);
   setInput(labelledInput(channelBox(root, "highlight"), "Highlight angle"), 90);
   toolButton(channelBox(root, "glow"), "Linear curve").click();
-  const whole = channelBox(root, "glow").querySelectorAll("input").find(({ type }) => type === "checkbox");
+  const whole = labelledInput(channelBox(root, "glow"), "Glow Whole Layout");
   whole.checked = true;
   dispatch(whole, "change");
   await root.flushTimers();
@@ -2534,6 +2535,125 @@ test("spatial effect curves edit, apply, save, lock, reopen and reset independen
   await settlePageAction();
   assert.deepEqual(live.highlightCurve, captured.highlightCurve);
   assert.deepEqual(live.glowCurve, captured.glowCurve);
+});
+
+test("effect tabs share edits only between checked states and preserve unchecked curves", async () => {
+  const root = await renderThemePage({}, { "button-theme.settings": () => ({ settings: poppedSettings(), configured: true }) });
+  for (const [channel, title, labels] of [["highlight", "Highlight", ["Regular", "Active"]], ["glow", "Glow", ["Regular", "Active", "Hover"]]]) {
+    const panel = channelBox(root, channel);
+    assert.deepEqual(panel.querySelectorAll("button").filter((button) => button.role === "tab").map((button) => button.textContent), labels);
+    for (const label of labels) assert.equal(labelledInput(panel, `Link ${label} ${title} curve`).checked, true);
+  }
+  const panel = channelBox(root, "glow");
+  const state = async () => {
+    await root.flushTimers();
+    return plain(root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state.buttonTheme);
+  };
+  toolButton(panel, "Fade curve").click();
+  let staged = await state();
+  assert.deepEqual(staged.activeGlowCurve, staged.glowCurve);
+  assert.deepEqual(staged.hoverGlowCurve, staged.glowCurve);
+  const activeLink = labelledInput(panel, "Link Active Glow curve");
+  activeLink.checked = false;
+  dispatch(activeLink, "change");
+  toolButton(panel, "Hover Glow curve").click();
+  selectCurvePoint(panel, 0);
+  setInput(labelledInput(panel, "Glow point strength percent"), 75);
+  staged = await state();
+  assert.equal(staged.glowCurve[0].y, 0.75);
+  assert.equal(staged.hoverGlowCurve[0].y, 0.75);
+  assert.equal(staged.activeGlowCurve[0].y, 1, "unchecked destination retains its curve");
+  const hoverLink = labelledInput(panel, "Link Hover Glow curve");
+  hoverLink.checked = false;
+  dispatch(hoverLink, "change");
+  setInput(labelledInput(panel, "Glow point strength percent"), 60);
+  toolButton(panel, "Corner").click();
+  staged = await state();
+  assert.equal(staged.hoverGlowCurve[0].y, 0.6);
+  assert.equal(staged.hoverGlowCurve[0].mode, "corner");
+  assert.equal(staged.glowCurve[0].y, 0.75, "an unchecked source edits only itself");
+  assert.equal(staged.glowCurve[0].mode, "auto");
+  hoverLink.checked = true;
+  dispatch(hoverLink, "change");
+  const afterCheck = await state();
+  for (const key of ["glowCurve", "activeGlowCurve", "hoverGlowCurve"]) assert.deepEqual(afterCheck[key], staged[key], "checking alone never replaces curves");
+  toolButton(panel, "Regular Glow curve").click();
+  toolButton(panel, "Full curve").click();
+  staged = await state();
+  assert.ok(staged.glowCurve.every(({ y }) => y === 1));
+  assert.deepEqual(staged.hoverGlowCurve, staged.glowCurve);
+  assert.equal(staged.activeGlowCurve.at(-1).y, 0);
+  assert.equal(toolButton(panel, "Regular Glow curve")["aria-selected"], "true");
+  assert.equal(toolButton(panel, "Hover Glow curve")["aria-selected"], "false");
+});
+
+test("independent state curves apply, save and reopen with exact state amounts and page link choices", async () => {
+  let live = poppedSettings({ idleEnabled: true, idleGlowAmount: 29, idleHighlightAmount: 410 });
+  const originalAmounts = plain(live);
+  let saved;
+  const responses = {
+    "button-theme.settings": (payload) => {
+      if (payload.settings) live = plain(payload.settings);
+      return { settings: live, configured: true };
+    },
+    "theme.package.save": (payload) => {
+      saved = plain(payload.values);
+      return { saved: true, packagePath: "C:\\Themes\\states.json", packageName: "States" };
+    },
+    "theme.package.open": () => ({ selected: true, packagePath: "C:\\Themes\\states.json", fieldPatch: saved })
+  };
+  const root = await renderThemePage({}, responses);
+  for (const [channel, title] of [["highlight", "Highlight"], ["glow", "Glow"]]) {
+    const panel = channelBox(root, channel);
+    const active = labelledInput(panel, `Link Active ${title} curve`);
+    active.checked = false;
+    dispatch(active, "change");
+    toolButton(panel, "Fade curve").click();
+    toolButton(panel, `Active ${title} curve`).click();
+    assert.ok(curvePoints(panel).every(({ cy }) => cy === "0"), "unlinked Active remains at 100%");
+  }
+  const glow = channelBox(root, "glow");
+  const hover = labelledInput(glow, "Link Hover Glow curve");
+  hover.checked = false;
+  dispatch(hover, "change");
+  toolButton(glow, "Hover Glow curve").click();
+  toolButton(glow, "Linear curve").click();
+  await clickPageButton(root, "Apply Highlights & Glow");
+  const full = [{ x: 0, y: 1, mode: "auto" }, { x: 1, y: 1, mode: "auto" }];
+  assert.deepEqual(live.activeHighlightCurve, full, "explicit full strength must survive a non-full Regular fallback");
+  assert.deepEqual(live.activeGlowCurve, full);
+  assert.deepEqual(live.hoverGlowCurve, LINEAR_CURVE);
+  assert.equal(live.glowCurve.at(-1).y, 0);
+  assert.equal(live.highlightCurve.at(-1).y, 0);
+  for (const key of Object.keys(originalAmounts).filter((key) => key.endsWith("Amount"))) assert.equal(live[key], originalAmounts[key], `${key} is the unchanged 100% reference`);
+  assert.equal(live.effectCurveEditors, undefined, "tab selections and links are page state, not runtime settings");
+  await clickPageButton(root, "Save Package");
+  assert.deepEqual(saved.popped_button_settings, live);
+  await root.flushTimers();
+  const owner = plain(root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state);
+  const reopened = await renderThemePage(owner, responses);
+  assert.equal(toolButton(channelBox(reopened, "glow"), "Hover Glow curve")["aria-selected"], "true");
+  assert.equal(labelledInput(channelBox(reopened, "glow"), "Link Active Glow curve").checked, false);
+  assert.equal(labelledInput(channelBox(reopened, "glow"), "Link Hover Glow curve").checked, false);
+  assert.equal(labelledInput(channelBox(reopened, "highlight"), "Link Active Highlight curve").checked, false);
+  assert.equal(curvePoints(channelBox(reopened, "glow"))[0].cy, "100");
+  toolButton(channelBox(reopened, "glow"), "Full curve").click();
+  await clickPageButton(reopened, "Apply Highlights & Glow");
+  await clickPageButton(reopened, "Open Package");
+  assert.deepEqual(live, saved.popped_button_settings, "opening the package restores every independent state curve");
+});
+
+test("legacy effect curves seed each state without changing existing appearance", async () => {
+  const legacy = poppedSettings({ highlightCurve: LINEAR_CURVE, glowCurve: [{ x: 0, y: 0.8, mode: "auto" }, { x: 1, y: 0.2, mode: "auto" }] });
+  const root = await renderThemePage({}, { "button-theme.settings": () => ({ settings: legacy, configured: true }) });
+  for (const [channel, title, labels] of [["highlight", "Highlight", ["Regular", "Active"]], ["glow", "Glow", ["Regular", "Active", "Hover"]]]) {
+    const panel = channelBox(root, channel);
+    for (const label of labels) {
+      toolButton(panel, `${label} ${title} curve`).click();
+      assert.deepEqual(curvePoints(panel).map(({ cy }) => Number(cy)), legacy[`${channel}Curve`].map(({ y }) => Math.round((1 - y) * 100)));
+    }
+  }
+  assert.equal(root.requests.some(({ payload }) => payload.settings), false, "merely opening and switching tabs does not apply settings");
 });
 
 test("Toggle Text replaces a text gradient with the solid color Blender reports", async () => {

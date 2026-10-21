@@ -46,10 +46,14 @@
     free: "Broken: each handle moves on its own, for a sharp kink."
   };
   const EFFECT_CHANNELS = {
-    highlight: { title: "Highlight", curveKey: "highlightCurve", angleKey: "highlightAngle", screenKey: "highlightScreenTopToBottom", effect: true },
-    glow: { title: "Glow", curveKey: "glowCurve", angleKey: "glowAngle", screenKey: "glowScreenTopToBottom", effect: true }
+    highlight: { title: "Highlight", curveKey: "highlightCurve", angleKey: "highlightAngle", screenKey: "highlightScreenTopToBottom", effect: true,
+      states: [{ id: "regular", label: "Regular", curveKey: "highlightCurve" }, { id: "active", label: "Active", curveKey: "activeHighlightCurve" }] },
+    glow: { title: "Glow", curveKey: "glowCurve", angleKey: "glowAngle", screenKey: "glowScreenTopToBottom", effect: true,
+      states: [{ id: "regular", label: "Regular", curveKey: "glowCurve" }, { id: "active", label: "Active", curveKey: "activeGlowCurve" },
+        { id: "hover", label: "Hover", curveKey: "hoverGlowCurve" }] }
   };
-  const EFFECT_SHAPE_KEYS = Object.values(EFFECT_CHANNELS).flatMap(({ curveKey, angleKey, screenKey }) => [curveKey, angleKey, screenKey]);
+  const EFFECT_CURVE_KEYS = Object.values(EFFECT_CHANNELS).flatMap(({ states }) => states.map(({ curveKey }) => curveKey));
+  const EFFECT_SHAPE_KEYS = [...EFFECT_CURVE_KEYS, ...Object.values(EFFECT_CHANNELS).flatMap(({ angleKey, screenKey }) => [angleKey, screenKey])];
   const GRADIENT_CHANNELS = {
     ...EFFECT_CHANNELS,
     fill: {
@@ -104,11 +108,17 @@
       textCurve: linearCurve(),
       textScreenTopToBottom: false,
       highlightCurve: fullStrengthCurve(),
+      activeHighlightCurve: fullStrengthCurve(),
       highlightAngle: 0,
       highlightScreenTopToBottom: false,
       glowCurve: fullStrengthCurve(),
+      activeGlowCurve: fullStrengthCurve(),
+      hoverGlowCurve: fullStrengthCurve(),
       glowAngle: 0,
       glowScreenTopToBottom: false,
+      effectCurveEditors: Object.fromEntries(Object.entries(EFFECT_CHANNELS).map(([channel, { states }]) => [channel, {
+        selected: "regular", linked: Object.fromEntries(states.map(({ id }) => [id, true]))
+      }])),
       idleEnabled: false,
       idleColor: "#FFFFFFCC",
       idleHighlightAmount: 0,
@@ -907,7 +917,7 @@
       if (!inUnitRange(settings[key], -360, 360)) return null;
       result[key] = settings[key];
     }
-    for (const key of ["curve", "textCurve", "highlightCurve", "glowCurve"]) {
+    for (const key of ["curve", "textCurve", ...EFFECT_CURVE_KEYS]) {
       if (settings[key] === undefined) continue;
       const curve = normalizeCurve(settings[key]);
       if (!curve) return null;
@@ -932,9 +942,14 @@
       "hoverHighlightAmount", "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount",
       "idleEnabled", "idleColor", "idleHighlightAmount", "idleGlowAmount"
     ].map((key) => [key, model.buttonTheme[key]]));
-    for (const { curveKey, angleKey, screenKey } of Object.values(EFFECT_CHANNELS)) {
+    for (const { curveKey, angleKey, screenKey, states } of Object.values(EFFECT_CHANNELS)) {
       // Omit the legacy-equivalent defaults from portable settings.
       if (JSON.stringify(model.buttonTheme[curveKey]) !== JSON.stringify(fullStrengthCurve())) effects[curveKey] = cloneValue(model.buttonTheme[curveKey]);
+      for (const state of states.slice(1)) {
+        if (JSON.stringify(model.buttonTheme[state.curveKey]) !== JSON.stringify(model.buttonTheme[curveKey])) {
+          effects[state.curveKey] = cloneValue(model.buttonTheme[state.curveKey]);
+        }
+      }
       if (model.buttonTheme[angleKey] !== 0) effects[angleKey] = model.buttonTheme[angleKey];
       if (model.buttonTheme[screenKey]) effects[screenKey] = true;
     }
@@ -946,8 +961,9 @@
     if (!settings) return null;
     model.buttonTheme.lastAppliedSettings = cloneValue(settings);
     for (const key of Object.keys(buttonThemeEffects()).filter((key) => !EFFECT_SHAPE_KEYS.includes(key))) model.buttonTheme[key] = settings[key] ?? ({ idleEnabled: false, idleColor: "#FFFFFFCC", idleHighlightAmount: 0, idleGlowAmount: 0 })[key];
-    for (const { curveKey, angleKey, screenKey } of Object.values(EFFECT_CHANNELS)) {
+    for (const { curveKey, angleKey, screenKey, states } of Object.values(EFFECT_CHANNELS)) {
       model.buttonTheme[curveKey] = cloneValue(settings[curveKey] || fullStrengthCurve());
+      for (const state of states.slice(1)) model.buttonTheme[state.curveKey] = cloneValue(settings[state.curveKey] || model.buttonTheme[curveKey]);
       model.buttonTheme[angleKey] = settings[angleKey] ?? 0;
       model.buttonTheme[screenKey] = settings[screenKey] === true;
     }
@@ -1110,10 +1126,17 @@
       ? state.textScreenTopToBottom
       : model.buttonTheme.textScreenTopToBottom;
     model.buttonTheme.revision = Number.isSafeInteger(state.revision) ? state.revision : null;
-    for (const { curveKey, angleKey, screenKey } of Object.values(EFFECT_CHANNELS)) {
+    for (const [channel, { curveKey, angleKey, screenKey, states }] of Object.entries(EFFECT_CHANNELS)) {
       model.buttonTheme[curveKey] = normalizeCurve(state[curveKey]) || model.buttonTheme[curveKey];
+      for (const item of states.slice(1)) model.buttonTheme[item.curveKey] = normalizeCurve(state[item.curveKey]) || cloneValue(model.buttonTheme[curveKey]);
       model.buttonTheme[angleKey] = normalizeAngle(finiteNumber(state[angleKey], model.buttonTheme[angleKey]));
       if (typeof state[screenKey] === "boolean") model.buttonTheme[screenKey] = state[screenKey];
+      const editor = objectRecord(state.effectCurveEditors?.[channel]);
+      if (editor) {
+        const target = model.buttonTheme.effectCurveEditors[channel];
+        if (states.some(({ id }) => id === editor.selected)) target.selected = editor.selected;
+        for (const { id } of states) if (typeof editor.linked?.[id] === "boolean") target.linked[id] = editor.linked[id];
+      }
     }
 
     const bucketById = new Map();
@@ -1908,6 +1931,7 @@
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = model.buttonTheme[key] === true;
+    checkbox.setAttribute("aria-label", `${GRADIENT_CHANNELS[channel].title} Whole Layout`);
     checkbox.addEventListener("change", () => {
       model.buttonTheme[key] = checkbox.checked === true;
       schedulePersistence();
@@ -1995,7 +2019,7 @@
     const spec = GRADIENT_CHANNELS[channel];
     return {
       colors: spec.effect ? ["#000000", "#FFFFFF"] : model.buttonTheme[spec.colorsKey],
-      curve: model.buttonTheme[spec.curveKey],
+      curve: editableCurve(channel),
       angle: model.buttonTheme[spec.angleKey],
       spread: channel === "fill" ? model.buttonTheme.spread : 100
     };
@@ -2033,7 +2057,25 @@
   }
 
   function editableCurve(channel) {
-    return model.buttonTheme[GRADIENT_CHANNELS[channel].curveKey];
+    return model.buttonTheme[channelCurveKey(channel)];
+  }
+
+  function channelCurveKey(channel) {
+    const spec = GRADIENT_CHANNELS[channel];
+    return spec.effect
+      ? spec.states.find(({ id }) => id === model.buttonTheme.effectCurveEditors[channel].selected).curveKey
+      : spec.curveKey;
+  }
+
+  function synchronizeLinkedEffectCurves(channel) {
+    const spec = EFFECT_CHANNELS[channel];
+    if (!spec) return;
+    const editor = model.buttonTheme.effectCurveEditors[channel];
+    if (!editor.linked[editor.selected]) return;
+    const curve = editableCurve(channel);
+    for (const { id, curveKey } of spec.states) {
+      if (id !== editor.selected && editor.linked[id]) model.buttonTheme[curveKey] = cloneValue(curve);
+    }
   }
 
   function handlePoint(x, y, inX, inY, outX, outY) {
@@ -2084,7 +2126,8 @@
   ];
 
   function replaceCurve(channel, curve) {
-    model.buttonTheme[GRADIENT_CHANNELS[channel].curveKey] = curve;
+    model.buttonTheme[channelCurveKey(channel)] = curve;
+    synchronizeLinkedEffectCurves(channel);
     curveSelection[channel] = -1;
     schedulePersistence();
     redrawGradientChannel(channel);
@@ -2124,6 +2167,7 @@
     curve[index] = mode === "aligned" || mode === "free"
       ? materializedCurvePoint(curve, index, mode)
       : { x: point.x, y: point.y, mode };
+    synchronizeLinkedEffectCurves(channel);
     schedulePersistence();
     redrawGradientChannel(channel);
   }
@@ -2138,6 +2182,7 @@
     const index = curve.findIndex((point) => point.x >= x);
     if (index <= 0 || x - curve[index - 1].x < CURVE_MIN_GAP || curve[index].x - x < CURVE_MIN_GAP) return -1;
     curve.splice(index, 0, { x, y: round4(bounded(position.y, 0, 1)), mode: "auto" });
+    synchronizeLinkedEffectCurves(channel);
     curveSelection[channel] = index;
     return index;
   }
@@ -2157,6 +2202,7 @@
       if (x > previous && x < next) point.x = x;
     }
     if (Number.isFinite(position.y)) point.y = round4(bounded(snapped(position.y, snap), 0, 1));
+    synchronizeLinkedEffectCurves(channel);
   }
 
   function moveCurveHandle(channel, index, side, position, breakHandles = false, snap = false) {
@@ -2175,21 +2221,29 @@
     const dy = bounded(snapped(position.y, snap) - point.y, -1, 1);
     point[`${side}X`] = round4(dx);
     point[`${side}Y`] = round4(dy);
-    if (point.mode !== "aligned") return;
+    if (point.mode !== "aligned") {
+      synchronizeLinkedEffectCurves(channel);
+      return;
+    }
     const other = side === "out" ? "in" : "out";
     const ownLength = Math.hypot(dx, dy);
     const otherLength = Math.hypot(point[`${other}X`], point[`${other}Y`]);
-    if (ownLength < 1e-6 || otherLength < 1e-6) return;
+    if (ownLength < 1e-6 || otherLength < 1e-6) {
+      synchronizeLinkedEffectCurves(channel);
+      return;
+    }
     point[`${other}X`] = round4(other === "out"
       ? bounded(-dx * otherLength / ownLength, 0, 1)
       : bounded(-dx * otherLength / ownLength, -1, 0));
     point[`${other}Y`] = round4(bounded(-dy * otherLength / ownLength, -1, 1));
+    synchronizeLinkedEffectCurves(channel);
   }
 
   function deleteCurvePoint(channel, index) {
     const curve = editableCurve(channel);
     if (index <= 0 || index >= curve.length - 1) return;
     curve.splice(index, 1);
+    synchronizeLinkedEffectCurves(channel);
     curveSelection[channel] = -1;
     schedulePersistence();
     redrawGradientChannel(channel);
@@ -2222,6 +2276,10 @@
   function renderGradientCurveEditor(channel) {
     const spec = GRADIENT_CHANNELS[channel];
     const editor = element("div", "gradient-curve");
+    if (spec.effect) {
+      editor.id = `${channel}-curve-panel`;
+      editor.setAttribute("role", "tabpanel");
+    }
     const yMeaning = spec.effect ? `${spec.title} strength` : "Color progression";
     const axisDescription = `X: Button position from start (0%) to end (100%). Y: ${yMeaning.toLowerCase()} from 0% at the bottom to 100% at the top.`;
     const box = svgElement("svg", {
@@ -2317,7 +2375,7 @@
     pointPanel.append(pointLabel, modes, fields);
     tools.append(element("p", "gradient-curve__axes-help",
       `Position follows Angle; Whole Layout spans all visible Buttons on each monitor. ${spec.effect
-        ? "Strength: 0% is off; 100% uses the full Regular/Hover/Active amount."
+        ? "Strength: 0% is off; 100% uses the selected state's amount from Highlights and Glow."
         : "Color: 0% is the first color; 100% is the last color."}`),
     presets, transforms, pointPanel, element("p", "gradient-curve__hint",
       "Click the box to add a point. Drag points or handles; double-click or Delete removes a point. Shift snaps, Alt breaks a handle."));
@@ -2325,6 +2383,7 @@
 
     const redraw = () => {
       const curve = editableCurve(channel);
+      if (spec.effect) editor.setAttribute("aria-labelledby", `${channel}-${model.buttonTheme.effectCurveEditors[channel].selected}-curve-tab`);
       const { colors, spread } = channelGradient(channel);
       if (!curve[curveSelection[channel]]) curveSelection[channel] = -1;
       const selected = curveSelection[channel];
@@ -2768,7 +2827,7 @@
     const heading = element("div", "theme-card__heading");
     heading.append(element("h3", "", "Highlights and Glow"));
     const description = element("p", "button-theme-effects__help",
-      "Set amounts for Regular, Hover, and Active buttons. Each spatial curve scales those amounts from 0% to 100% across the Button layout. Regular applies while neither hovered nor active. The lock includes both curves."
+      "Set amounts for Regular, Hover, and Active buttons. A curve at 100% uses exactly the corresponding amount below; 0% turns that effect off. Regular applies while neither hovered nor active. The lock includes every state curve."
     );
     const grid = element("div", "button-theme-effects__grid");
     for (const [prefix, label] of [["hover", "Hover"], ["active", "Active"], ["idle", "Regular"]]) {
@@ -2785,15 +2844,74 @@
     for (const [channel, spec] of Object.entries(EFFECT_CHANNELS)) {
       const box = element("section", `button-theme-channel button-theme-channel--${channel}`);
       const curveHeading = element("div", "theme-card__heading");
-      curveHeading.append(element("h3", "", spec.title));
+      curveHeading.append(element("h3", "", spec.title), renderEffectCurveTabs(channel));
       box.append(curveHeading,
-        element("p", "button-theme-effects__help", "Left to right: position along the Angle. Bottom to top: strength. Fade gives full strength at Start and none at End; at 0 degrees that means top to bottom. Whole Layout spans visible Buttons on each monitor and still follows Angle."),
+        element("p", "button-theme-effects__help", "Checked tabs share curve edits; unchecked tabs keep their own curve. " +
+          (channel === "highlight" ? "Regular also shapes Hover highlight, using its own Hover amount. " : "") +
+          "Angle and Whole Layout are shared by all tabs in this section. Left to right: position along the Angle. Bottom to top: strength. " +
+          "Fade gives full strength at Start and none at End; at 0 degrees that means top to bottom. Whole Layout spans visible Buttons on each monitor and still follows Angle. " +
+          "A single-button window samples Start when Whole Layout is unchecked."),
         renderGradientCurveEditor(channel), renderGradientAngleControl(channel), renderGradientScreenControl(channel));
       curves.append(box);
     }
     effects.append(heading, description, grid, curves,
       actionButton(buttonThemeActions.settings, applyButtonThemeEffects));
     return effects;
+  }
+
+  function renderEffectCurveTabs(channel) {
+    const spec = EFFECT_CHANNELS[channel];
+    const editor = model.buttonTheme.effectCurveEditors[channel];
+    const tabs = element("div", "effect-curve-tabs");
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", `${spec.title} state curves`);
+    const tabButtons = [];
+    const select = (id) => {
+      if (busy || editor.selected === id) return;
+      editor.selected = id;
+      curveSelection[channel] = -1;
+      schedulePersistence();
+      redrawGradientChannel(channel);
+    };
+    for (const state of spec.states) {
+      const item = element("div", "effect-curve-tabs__item");
+      const tab = curveToolButton(state.label, `Edit the ${state.label.toLowerCase()} ${spec.title.toLowerCase()} curve.`, () => select(state.id));
+      tab.className = "effect-curve-tabs__tab";
+      tab.id = `${channel}-${state.id}-curve-tab`;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", `${channel}-curve-panel`);
+      tab.setAttribute("aria-label", `${state.label} ${spec.title} curve`);
+      tab.addEventListener("keydown", (event) => {
+        const index = spec.states.indexOf(state);
+        const next = event.key === "ArrowRight" ? (index + 1) % spec.states.length
+          : event.key === "ArrowLeft" ? (index + spec.states.length - 1) % spec.states.length
+          : event.key === "Home" ? 0 : event.key === "End" ? spec.states.length - 1 : -1;
+        if (next < 0 || busy) return;
+        select(spec.states[next].id);
+        tabButtons[next].focus?.();
+        event.preventDefault();
+      });
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = editor.linked[state.id];
+      checkbox.setAttribute("aria-label", `Link ${state.label} ${spec.title} curve`);
+      checkbox.title = "Share subsequent curve edits with the other checked tabs.";
+      checkbox.addEventListener("change", () => {
+        editor.linked[state.id] = checkbox.checked === true;
+        schedulePersistence();
+      });
+      item.append(tab, checkbox);
+      tabButtons.push(tab);
+      tabs.append(item);
+    }
+    registerGradientRedraw(channel, () => {
+      tabButtons.forEach((tab, index) => {
+        const selected = editor.selected === spec.states[index].id;
+        tab.setAttribute("aria-selected", String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+      });
+    });
+    return tabs;
   }
 
   function renderGridControls() {

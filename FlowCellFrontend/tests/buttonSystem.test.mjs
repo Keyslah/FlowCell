@@ -2597,6 +2597,14 @@ test("host highlight and glow amounts default prominently and scale hover and ac
   assert.equal(normalizeButtonHighlightAmount(25.5), null);
   assert.equal(resolveButtonHighlightAmount(undefined), DEFAULT_BUTTON_HIGHLIGHT_AMOUNT);
   assert.equal(resolveButtonGlowAmount(undefined), DEFAULT_BUTTON_HIGHLIGHT_AMOUNT);
+  assert.equal(resolveButtonHighlightAmount(275.5), 275.5, "spatial strength keeps fractional runtime amounts");
+  assert.equal(resolveButtonGlowAmount(5.4), 5.4);
+  for (const value of [NaN, Infinity, -0.1, "5.4"]) {
+    assert.equal(resolveButtonHighlightAmount(value), DEFAULT_BUTTON_HIGHLIGHT_AMOUNT);
+    assert.equal(resolveButtonGlowAmount(value), DEFAULT_BUTTON_HIGHLIGHT_AMOUNT);
+  }
+  assert.equal(resolveButtonHighlightAmount(1000.1), DEFAULT_BUTTON_HIGHLIGHT_AMOUNT);
+  assert.equal(resolveButtonGlowAmount(100.1), DEFAULT_BUTTON_HIGHLIGHT_AMOUNT);
 
   assert.equal(buttonHighlightFilter({
     hoverHighlighted: false,

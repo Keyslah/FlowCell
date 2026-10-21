@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createButtonStateDocument } from "./.compiled-button-system/button/state/buttonDefaults.js";
 import { createButtonSourceIdentity } from "./.compiled-button-system/button/state/sourceIdentity.js";
+import { buttonHighlightFilter, resolveButtonGlowAmount, resolveButtonHighlightAmount } from "./.compiled-button-system/button/skins/buttonSkinColors.js";
 import { validateButtonStateDocument } from "./.compiled-button-system/button/state/buttonStateValidation.js";
 import {
   captureProgramPopoutThemeSettings,
@@ -169,8 +170,11 @@ test("freezing Whole Layout captures independent live Fill, Text, Highlight and 
   const curve = [{ x: 0, y: 1, mode: "corner" }, { x: 1, y: 0, mode: "corner" }];
   document.programPopoutThemes = { blender: settings({
     screenTopToBottom: true, angle: 27, textColors: ["#123456", "#FFFFFF"], textAngle: -41, textScreenTopToBottom: true,
-    highlightCurve: curve, highlightAngle: 90, highlightScreenTopToBottom: true,
-    glowCurve: curve, glowAngle: -30, glowScreenTopToBottom: true,
+    highlightCurve: curve, activeHighlightCurve: [{ x: 0, y: 0.13, mode: "corner" }, { x: 1, y: 0.63, mode: "corner" }],
+    highlightAngle: 90, highlightScreenTopToBottom: true,
+    glowCurve: curve, hoverGlowCurve: [{ x: 0, y: 0.25, mode: "corner" }, { x: 1, y: 0.75, mode: "corner" }],
+    activeGlowCurve: [{ x: 0, y: 0.37, mode: "corner" }, { x: 1, y: 0.83, mode: "corner" }],
+    glowAngle: -30, glowScreenTopToBottom: true,
     idleEnabled: true, idleHighlightAmount: 37, idleGlowAmount: 23
   }) };
   for (const [id, x, y] of [["first", 0, 0], ["middle", 100, 35], ["last", 30, 120]]) {
@@ -582,6 +586,58 @@ test("spatial Highlight and Glow scale all states independently with legacy and 
   for (const patch of [{ highlightCurve: [] }, { glowCurve: null }, { glowAngle: 361 }, { highlightScreenTopToBottom: 1 }]) {
     assert.equal(normalizeProgramPopoutThemeSettings(settings(patch)), null);
   }
+});
+
+test("state effect curves preserve configured 100 percent and fractional strength through host filters", () => {
+  const flat = (y) => [{ x: 0, y, mode: "corner" }, { x: 1, y, mode: "corner" }];
+  const document = createButtonStateDocument();
+  addPlacement(document, "button", "tools", "regular-popout");
+  const configured = settings({ idleEnabled: true, idleHighlightAmount: 275, idleGlowAmount: 10,
+    hoverHighlightAmount: 625, activeHighlightAmount: 1000, hoverGlowAmount: 16, activeGlowAmount: 42 });
+  const full = { highlightCurve: flat(1), activeHighlightCurve: flat(1), glowCurve: flat(1), hoverGlowCurve: flat(1), activeGlowCurve: flat(1) };
+  document.programPopoutThemes = { blender: { ...configured, ...full } };
+  let resolved = resolveProgramPopoutThemeOverride(document, "button");
+  for (const state of ["idle", "hover", "active"]) {
+    for (const effect of ["Highlight", "Glow"]) assert.equal(resolved[state + effect + "Amount"], configured[state + effect + "Amount"]);
+  }
+  const filters = (appearance) => ["idle", "hover", "active"].map((state) => buttonHighlightFilter({
+    ...appearance, idleHighlighted: state === "idle", hoverHighlighted: state === "hover", activeHighlighted: state === "active",
+    idleHighlightColor: "#FFFFFF", hoverHighlightColor: "#FFFFFF", activeHighlightColor: "#FFFFFF"
+  }));
+  assert.deepEqual(filters(resolved), filters(configured), "100% uses each existing Highlights and Glow amount, including values above 100");
+
+  const curves = { highlightCurve: flat(0.1), activeHighlightCurve: flat(0.2755), glowCurve: flat(0.54), hoverGlowCurve: flat(0.13), activeGlowCurve: flat(0.3) };
+  document.programPopoutThemes.blender = { ...configured, ...curves };
+  resolved = resolveProgramPopoutThemeOverride(document, "button");
+  const expected = { idleHighlightAmount: 27.5, hoverHighlightAmount: 62.5, activeHighlightAmount: 275.5,
+    idleGlowAmount: 5.4, hoverGlowAmount: 2.08, activeGlowAmount: 12.6 };
+  for (const [key, amount] of Object.entries(expected)) {
+    assert.ok(Math.abs(resolved[key] - amount) < 1e-9, key);
+    const runtimeAmount = key.endsWith("GlowAmount") ? resolveButtonGlowAmount(resolved[key]) : resolveButtonHighlightAmount(resolved[key]);
+    assert.equal(runtimeAmount, resolved[key], "ButtonSkinRenderer must not replace fractional curve output with 75");
+  }
+  assert.deepEqual(filters(resolved), [
+    "brightness(1.096) drop-shadow(0 0 2.756px #FFFFFF0E)",
+    "brightness(1.219) drop-shadow(0 0 2.291px #FFFFFF05)",
+    "brightness(2.377) drop-shadow(0 0 3.764px #FFFFFF20)"
+  ]);
+  assert.deepEqual(normalizeProgramPopoutThemeSettings(JSON.parse(JSON.stringify(document.programPopoutThemes.blender))), document.programPopoutThemes.blender);
+  assert.equal(validateButtonStateDocument(document).valid, true);
+  for (const key of ["activeHighlightCurve", "hoverGlowCurve", "activeGlowCurve"]) {
+    for (const invalid of [null, [], [{ x: 0, y: 1.1, mode: "corner" }, { x: 1, y: 0, mode: "corner" }]]) {
+      assert.equal(normalizeProgramPopoutThemeSettings(settings({ [key]: invalid })), null, key);
+    }
+  }
+
+  document.programPopoutThemes.blender = { ...configured, ...full, activeHighlightCurve: flat(0), hoverGlowCurve: flat(0), activeGlowCurve: flat(0) };
+  resolved = resolveProgramPopoutThemeOverride(document, "button");
+  assert.equal(resolved.idleHighlightAmount, 275);
+  assert.equal(resolved.hoverHighlightAmount, 625, "Hover retains the Regular Highlight curve");
+  assert.equal(resolved.idleGlowAmount, 10);
+  assert.equal(resolved.activeHighlightAmount, 0);
+  assert.equal(resolved.hoverGlowAmount, 0);
+  assert.equal(resolved.activeGlowAmount, 0);
+  assert.equal(filters(resolved)[2], undefined);
 });
 
 test("legacy Y-only Whole Layout geometry keeps vertical effects and single-position Start", () => {

@@ -638,6 +638,47 @@
                     ]
                   }
                 },
+                "activeHighlightCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
                 "highlightAngle": {
                   "type": "number"
                 },
@@ -645,6 +686,88 @@
                   "type": "boolean"
                 },
                 "glowCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "activeGlowCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "hoverGlowCurve": {
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -1242,6 +1365,47 @@
                     ]
                   }
                 },
+                "activeHighlightCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
                 "highlightAngle": {
                   "type": "number"
                 },
@@ -1249,6 +1413,88 @@
                   "type": "boolean"
                 },
                 "glowCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "activeGlowCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "hoverGlowCurve": {
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -1577,6 +1823,47 @@
                     ]
                   }
                 },
+                "activeHighlightCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
                 "highlightAngle": {
                   "type": "number"
                 },
@@ -1584,6 +1871,88 @@
                   "type": "boolean"
                 },
                 "glowCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "activeGlowCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "hoverGlowCurve": {
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -2658,6 +3027,47 @@
                         ]
                       }
                     },
+                    "activeHighlightCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
                     "highlightAngle": {
                       "type": "number"
                     },
@@ -2665,6 +3075,88 @@
                       "type": "boolean"
                     },
                     "glowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "activeGlowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "hoverGlowCurve": {
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -3219,6 +3711,47 @@
                         ]
                       }
                     },
+                    "activeHighlightCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
                     "highlightAngle": {
                       "type": "number"
                     },
@@ -3226,6 +3759,88 @@
                       "type": "boolean"
                     },
                     "glowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "activeGlowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "hoverGlowCurve": {
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -3748,6 +4363,47 @@
                         ]
                       }
                     },
+                    "activeHighlightCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
                     "highlightAngle": {
                       "type": "number"
                     },
@@ -3755,6 +4411,88 @@
                       "type": "boolean"
                     },
                     "glowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "activeGlowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "hoverGlowCurve": {
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -4277,6 +5015,47 @@
                         ]
                       }
                     },
+                    "activeHighlightCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
                     "highlightAngle": {
                       "type": "number"
                     },
@@ -4284,6 +5063,88 @@
                       "type": "boolean"
                     },
                     "glowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "activeGlowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "hoverGlowCurve": {
                       "type": "array",
                       "items": {
                         "type": "object",

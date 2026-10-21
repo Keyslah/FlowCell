@@ -402,6 +402,35 @@ select:focus-visible {
   margin-bottom: 0;
 }
 
+.effect-curve-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.effect-curve-tabs__item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.effect-curve-tabs__tab {
+  padding: 6px 10px;
+}
+
+.effect-curve-tabs__tab[aria-selected="true"] {
+  border-color: var(--accent);
+  background: rgba(142, 221, 184, 0.14);
+}
+
+.effect-curve-tabs__item input {
+  width: 18px;
+  height: 18px;
+  margin: 0 3px 0 0;
+  accent-color: var(--accent);
+}
+
 .button-theme-gradient {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

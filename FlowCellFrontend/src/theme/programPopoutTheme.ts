@@ -46,8 +46,8 @@ export interface ProgramPopoutThemeScreenGeometry {
 const SETTING_KEYS = new Set([
   "version", "colors", "spread", "scatter", "seed", "screenTopToBottom", "angle", "curve", "textColor",
   "textColors", "textAngle", "textCurve", "textScreenTopToBottom",
-  "highlightCurve", "highlightAngle", "highlightScreenTopToBottom",
-  "glowCurve", "glowAngle", "glowScreenTopToBottom",
+  "highlightCurve", "activeHighlightCurve", "highlightAngle", "highlightScreenTopToBottom",
+  "glowCurve", "hoverGlowCurve", "activeGlowCurve", "glowAngle", "glowScreenTopToBottom",
   "hoverEnabled", "activeEnabled", "hoverColor", "activeColor", "hoverHighlightAmount",
   "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount",
   "idleEnabled", "idleColor", "idleHighlightAmount", "idleGlowAmount"
@@ -158,7 +158,7 @@ export function normalizeProgramPopoutThemeSettings(value: unknown): ProgramPopo
     if (!validAngle(candidate[key])) return null;
     shape[key] = candidate[key] as number;
   }
-  for (const key of ["curve", "textCurve", "highlightCurve", "glowCurve"] as const) {
+  for (const key of ["curve", "textCurve", "highlightCurve", "activeHighlightCurve", "glowCurve", "hoverGlowCurve", "activeGlowCurve"] as const) {
     if (candidate[key] === undefined) continue;
     const curve = normalizeProgramPopoutGradientCurve(candidate[key]);
     if (!curve) return null;
@@ -223,9 +223,12 @@ export function normalizeProgramPopoutThemeSettings(value: unknown): ProgramPopo
     ...(shape.textCurve ? { textCurve: shape.textCurve } : {}),
     ...(shape.textScreenTopToBottom !== undefined ? { textScreenTopToBottom: shape.textScreenTopToBottom } : {}),
     ...(shape.highlightCurve ? { highlightCurve: shape.highlightCurve } : {}),
+    ...(shape.activeHighlightCurve ? { activeHighlightCurve: shape.activeHighlightCurve } : {}),
     ...(shape.highlightAngle !== undefined ? { highlightAngle: shape.highlightAngle } : {}),
     ...(shape.highlightScreenTopToBottom !== undefined ? { highlightScreenTopToBottom: shape.highlightScreenTopToBottom } : {}),
     ...(shape.glowCurve ? { glowCurve: shape.glowCurve } : {}),
+    ...(shape.hoverGlowCurve ? { hoverGlowCurve: shape.hoverGlowCurve } : {}),
+    ...(shape.activeGlowCurve ? { activeGlowCurve: shape.activeGlowCurve } : {}),
     ...(shape.glowAngle !== undefined ? { glowAngle: shape.glowAngle } : {}),
     ...(shape.glowScreenTopToBottom !== undefined ? { glowScreenTopToBottom: shape.glowScreenTopToBottom } : {}),
     hoverEnabled: candidate.hoverEnabled as boolean,
@@ -406,13 +409,17 @@ function effectStrength(
   effect: "highlight" | "glow",
   geometry?: ProgramPopoutThemeScreenGeometry,
   normalizedScreenPosition?: number
-): number {
-  const curve = settings[`${effect}Curve`];
-  if (!curve) return 1;
+): { regular: number; hover: number; active: number } {
+  const regularCurve = settings[`${effect}Curve`];
+  const hoverCurve = effect === "glow" ? settings.hoverGlowCurve ?? regularCurve : regularCurve;
+  const activeCurve = effect === "glow" ? settings.activeGlowCurve ?? regularCurve : settings.activeHighlightCurve ?? regularCurve;
+  if (!regularCurve && !hoverCurve && !activeCurve) return { regular: 1, hover: 1, active: 1 };
   const { y, minimumY, maximumY } = gradientChannelPosition(document, placement, programName, {
     angle: settings[`${effect}Angle`], screen: settings[`${effect}ScreenTopToBottom`] === true
   }, geometry, normalizedScreenPosition);
-  return programPopoutGradientCurveValue(curve, maximumY > minimumY ? (y - minimumY) / (maximumY - minimumY) : 0);
+  const position = maximumY > minimumY ? (y - minimumY) / (maximumY - minimumY) : 0;
+  const strength = (curve: ProgramPopoutThemeSettings["curve"]) => curve ? programPopoutGradientCurveValue(curve, position) : 1;
+  return { regular: strength(regularCurve), hover: strength(hoverCurve), active: strength(activeCurve) };
 }
 
 /** A scan passes a position already projected along the fill angle across occupied centers. */
@@ -494,16 +501,16 @@ export function resolveProgramPopoutThemeOverride(
       },
       idleEnabled: settings.idleEnabled ?? false,
       idleColor: settings.idleColor ?? "#FFFFFFCC",
-      idleHighlightAmount: (settings.idleHighlightAmount ?? 0) * highlight,
-      idleGlowAmount: (settings.idleGlowAmount ?? 0) * glow,
+      idleHighlightAmount: (settings.idleHighlightAmount ?? 0) * highlight.regular,
+      idleGlowAmount: (settings.idleGlowAmount ?? 0) * glow.regular,
       hoverEnabled: settings.hoverEnabled,
       activeEnabled: settings.activeEnabled,
       hoverColor: settings.hoverColor,
       activeColor: settings.activeColor,
-      hoverHighlightAmount: settings.hoverHighlightAmount * highlight,
-      activeHighlightAmount: settings.activeHighlightAmount * highlight,
-      hoverGlowAmount: settings.hoverGlowAmount * glow,
-      activeGlowAmount: settings.activeGlowAmount * glow
+      hoverHighlightAmount: settings.hoverHighlightAmount * highlight.hover,
+      activeHighlightAmount: settings.activeHighlightAmount * highlight.active,
+      hoverGlowAmount: settings.hoverGlowAmount * glow.hover,
+      activeGlowAmount: settings.activeGlowAmount * glow.active
     };
   }
   return colorOverride ? {

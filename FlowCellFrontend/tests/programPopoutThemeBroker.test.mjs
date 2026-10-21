@@ -198,6 +198,40 @@ test("effects retain manual colors; global text replaces only text and package r
   assert.equal(h.document.programPopoutColorOverrides.owner, undefined);
 });
 
+test("curve-only Apply publishes state effects and package restore preserves fractional frozen amounts", async () => {
+  const h = harness(); addLivePopout(h); addLiveMember(h, "bottom", 80);
+  const flat = (y) => [{ x: 0, y, mode: "corner" }, { x: 1, y, mode: "corner" }];
+  const settings = { ...h.document.programPopoutThemes.blender,
+    idleEnabled: true, idleHighlightAmount: 275, idleGlowAmount: 10,
+    hoverHighlightAmount: 625, activeHighlightAmount: 1000, hoverGlowAmount: 16, activeGlowAmount: 42,
+    highlightCurve: flat(0.1), activeHighlightCurve: flat(0.2755), glowCurve: flat(0.54), hoverGlowCurve: flat(0.13), activeGlowCurve: flat(0.3) };
+  await h.run("button-theme.palette", { operation: "settings" }, { settings });
+  assert.deepEqual(h.document.programPopoutThemes.blender, settings);
+  assert.equal(h.commits.length, 1);
+  const expected = theme.resolveProgramPopoutThemeOverride(h.document, "owner");
+  const expectedBottom = theme.resolveProgramPopoutThemeOverride(h.document, "bottom");
+  assert.equal(expected.idleHighlightAmount, 27.5);
+  assert.equal(expected.activeHighlightAmount, 275.5);
+  assert.ok(Math.abs(expected.activeGlowAmount - 12.6) < 1e-9);
+  let scan = await h.run("button-theme.palette", { operation: "scan" });
+  await h.run("button-theme.palette", { operation: "participation" }, {
+    expectedRevision: scan.revision, placementIds: [scan.placements[0].placementId], enabled: false
+  });
+  assert.deepEqual(h.document.programPopoutThemeLocks.owner, expected);
+  const captured = await h.run("button-theme.palette", { operation: "settings" }, { captureAppearance: true });
+  await h.run("button-theme.palette", { operation: "settings" }, {
+    settings: { ...settings, activeGlowCurve: flat(1), activeHighlightCurve: flat(1) }
+  });
+  assert.deepEqual(theme.resolveProgramPopoutThemeOverride(h.document, "owner"), expected, "unchecked Button keeps fractional effects");
+  assert.equal(theme.resolveProgramPopoutThemeOverride(h.document, "bottom").activeGlowAmount, 42);
+  await h.run("button-theme.palette", { operation: "settings" }, {
+    settings: JSON.parse(JSON.stringify(captured.settings)), buttonAppearance: JSON.parse(JSON.stringify(captured.buttonAppearance)), resetOverrides: true
+  });
+  assert.deepEqual(h.document.programPopoutThemeLocks.owner, expected);
+  assert.deepEqual(h.document.programPopoutThemes.blender, settings);
+  assert.deepEqual(theme.resolveProgramPopoutThemeOverride(h.document, "bottom"), expectedBottom, "restored state curves reach participating Buttons");
+});
+
 test("aggregate bucket editing changes exact assignments without replacing the shared gradient or freezing unchanged members", async () => {
   const h = harness(); addLivePopout(h); addLiveMember(h, "bottom", 80);
   const recipe = structuredClone(h.document.programPopoutThemes.blender);
@@ -297,7 +331,9 @@ for (const operation of ["settings", "apply"]) {
 
 test("generic package save/open round-trips complete popout settings independently of Button identities", async () => {
   const h = harness();
-  const settings = { ...h.initial, colors: ["#00FF00", "#002200"], activeHighlightAmount: 151, activeGlowAmount: 42 };
+  const flat = (y) => [{ x: 0, y, mode: "corner" }, { x: 1, y, mode: "corner" }];
+  const settings = { ...h.initial, colors: ["#00FF00", "#002200"], activeHighlightAmount: 151, activeGlowAmount: 42,
+    highlightCurve: flat(1), activeHighlightCurve: flat(0.37), glowCurve: flat(0.3), hoverGlowCurve: flat(0.13), activeGlowCurve: flat(0.54) };
   const options = { capability: "theme-package-library", storageFolder: "blender_themes", formatId: "blender-theme", valueFields: ["popped_button_settings"], assetFields: [] };
   await h.run("tool-package.save", options, { values: { popped_button_settings: settings } });
   const loaded = await h.run("tool-package.open", options);
