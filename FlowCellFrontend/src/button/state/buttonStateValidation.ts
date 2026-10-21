@@ -20,6 +20,7 @@ import {
 } from "./sourceIdentity.js";
 import { BUTTON_SKIN_SECTION_ORDER } from "../skins/buttonSkinFormat.js";
 import { validateButtonSkin } from "../skins/skinValidator.js";
+import { DEFAULT_BUTTON_SKIN, LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE } from "../skins/defaultButtonSkin.js";
 import {
   normalizeButtonGlowAmount,
   normalizeButtonHighlightAmount,
@@ -626,6 +627,17 @@ function validateTopLevel(value: unknown, issues: ButtonStateValidationIssue[]):
 export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
   if (!isObject(value) || !isObject(value.placements)) return value;
   let changed = false;
+  const skins = isObject(value.skins) ? { ...value.skins } : value.skins;
+  if (isObject(skins)) {
+    for (const [id, candidate] of Object.entries(skins)) {
+      if (!isObject(candidate) || candidate.structure !== LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE ||
+          typeof candidate.base !== "string" || !candidate.base.includes(
+            "--flowcell-button-shade-surface-face-light:var(--flowcell-button-color-surface,#E6E6E6);"
+          )) continue;
+      skins[id] = { ...candidate, structure: DEFAULT_BUTTON_SKIN.structure, compileCache: null };
+      changed = true;
+    }
+  }
   const themeOverrides = isObject(value.themeOverrides)
     ? { ...value.themeOverrides }
     : {};
@@ -760,7 +772,7 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
     }
   }
   return changed
-    ? { ...value, buttons, placements, surfaces, popoutUnits, fanSetups, themeOverrides, settings }
+    ? { ...value, buttons, placements, surfaces, skins, popoutUnits, fanSetups, themeOverrides, settings }
     : value;
 }
 

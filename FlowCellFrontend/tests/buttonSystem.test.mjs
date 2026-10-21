@@ -5,6 +5,54 @@ import { join } from "node:path";
 import {
   createButtonStateDocument
 } from "./.compiled-button-system/button/state/buttonDefaults.js";
+import {
+  DEFAULT_BUTTON_SKIN,
+  LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE
+} from "./.compiled-button-system/button/skins/defaultButtonSkin.js";
+
+test("saved DefaultGray color variants gain an exact face without changing their effects or identity", () => {
+  const document = createButtonStateDocument();
+  const legacy = {
+    ...structuredClone(DEFAULT_BUTTON_SKIN),
+    id: "skin-saved-gold",
+    name: "My gold pill",
+    structure: LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE,
+    base: DEFAULT_BUTTON_SKIN.base.replace("--flowcell-button-color-surface:#E6E6E6;", "--flowcell-button-color-surface:#FDC82B;"),
+    hover: `${DEFAULT_BUTTON_SKIN.hover}--custom-hover:1;`,
+    compileCache: { compilerVersion: 1, sourceFingerprint: "old-skin" }
+  };
+  document.skins[legacy.id] = legacy;
+  const before = structuredClone(document);
+  const normalized = normalizeLoadedButtonStateDocument(document);
+  assert.deepEqual(document, before, "normalization must not mutate the loaded snapshot");
+  assert.deepEqual(normalized.skins[legacy.id], {
+    ...legacy, structure: DEFAULT_BUTTON_SKIN.structure, compileCache: null
+  });
+  assert.deepEqual({ ...normalized, skins: before.skins }, before);
+  assert.equal(normalizeLoadedButtonStateDocument(normalized), normalized, "upgrade is idempotent");
+  assert.equal(compileButtonSkin(normalized.skins[legacy.id]).ok, true);
+  assert.equal(buttonSkinThemeColorVariables(normalized.skins[legacy.id], { surface: "#FDC82B" })["--flowcell-button-color-surface"], "#FDC82B");
+  const reloaded = parseButtonStateDocumentJson(JSON.stringify(normalized));
+  assert.equal(reloaded.structurallyValid, true);
+  assert.deepEqual(reloaded.document.skins[legacy.id], normalized.skins[legacy.id]);
+});
+
+test("exact pill face upgrade leaves custom geometry and custom face formulas alone", () => {
+  const document = createButtonStateDocument();
+  document.skins["skin-custom-geometry"] = {
+    ...structuredClone(DEFAULT_BUTTON_SKIN), id: "skin-custom-geometry",
+    structure: LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE.replace("border-radius:100em", "border-radius:8px")
+  };
+  document.skins["skin-custom-face"] = {
+    ...structuredClone(DEFAULT_BUTTON_SKIN), id: "skin-custom-face",
+    structure: LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE,
+    base: DEFAULT_BUTTON_SKIN.base.replace(
+      "--flowcell-button-shade-surface-face-light:var(--flowcell-button-color-surface,#E6E6E6);",
+      "--flowcell-button-shade-surface-face-light:#112233;"
+    )
+  };
+  assert.equal(normalizeLoadedButtonStateDocument(document), document);
+});
 
 const frontendRoot = join(import.meta.dirname, "..");
 import {
