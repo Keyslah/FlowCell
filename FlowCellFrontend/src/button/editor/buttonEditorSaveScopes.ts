@@ -127,6 +127,7 @@ export function buildButtonPlacementScopedDocument(
       delete next.placements[placementId];
       if (next.themeOverrides) delete next.themeOverrides[placementId];
       if (next.programPopoutColorOverrides) delete next.programPopoutColorOverrides[placementId];
+      if (next.programPopoutThemeLocks) delete next.programPopoutThemeLocks[placementId];
     }
   }
 
@@ -167,6 +168,10 @@ export function buildButtonPlacementScopedDocument(
           activationCycle: structuredClone(draftPlacement.activationCycle)
         }
       : structuredClone(draftPlacement);
+    if (!committedPlacement && draft.programPopoutThemeLocks?.[placementId]) {
+      next.programPopoutThemeLocks ??= {};
+      next.programPopoutThemeLocks[placementId] = structuredClone(draft.programPopoutThemeLocks[placementId]);
+    }
   }
 
   // A staged tool set creates its launcher on an existing panel while its

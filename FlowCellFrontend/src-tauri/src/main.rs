@@ -15,6 +15,7 @@ use commands::image_palette::*;
 use commands::layouts::*;
 use commands::macros::*;
 use commands::programs::*;
+use commands::screen_color::*;
 use commands::tool_packages::*;
 use commands::windows::*;
 
@@ -51,7 +52,7 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindowAsync, SW_RESTORE};
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    SetWindowPos, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
+    SetWindowPos, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
     SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW, SW_SHOWNOACTIVATE,
 };
 #[cfg(windows)]
@@ -176,6 +177,7 @@ fn main() {
             show_open_folder_dialog,
             show_save_file_dialog,
             sample_image_palette,
+            pick_screen_color,
             save_tool_field_file,
             load_tool_field_file,
             resolve_tool_package_root,

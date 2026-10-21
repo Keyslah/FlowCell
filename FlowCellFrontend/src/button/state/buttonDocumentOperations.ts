@@ -294,6 +294,7 @@ function removePlacement(document: ButtonStateDocument, placementId: string): vo
   delete document.placements[placementId];
   if (document.themeOverrides) delete document.themeOverrides[placementId];
   if (document.programPopoutColorOverrides) delete document.programPopoutColorOverrides[placementId];
+  if (document.programPopoutThemeLocks) delete document.programPopoutThemeLocks[placementId];
 }
 
 function removeSurface(document: ButtonStateDocument, surfaceId: string): void {

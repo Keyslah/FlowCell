@@ -72,7 +72,9 @@ function loadTestApi(postAction, appOverride, warnings) {
       BUTTENDCAP: "butt",
       ROUNDENDCAP: "round",
       PROJECTINGENDCAP: "projecting"
-    }
+    },
+    ZOrderMethod: { BRINGTOFRONT: "front" },
+    ElementPlacement: { PLACEATBEGINNING: "first" }
   };
   if (postAction !== undefined) {
     context.FLOWCELL_SEND_SVG_POST_ACTION = postAction;
@@ -284,7 +286,7 @@ test("selected compound paths and clipping groups remain the exact selected expo
   assert.equal(normalized[1], compound);
 });
 
-test("pre-Unite validation rejects visible clipping groups, including nested masks", () => {
+test("post-bake validation catches unresolved masks without the old manual-release warning", () => {
   const warnings = [];
   const { showBlockingWarning, validateVectorArtwork } = loadTestApi(undefined, undefined, warnings);
   const layer = mockLayer("Stencil");
@@ -314,13 +316,44 @@ test("pre-Unite validation rejects visible clipping groups, including nested mas
   } catch (error) {
     clippingError = error;
   }
-  assert.match(clippingError.message, /contains a visible clipping group/);
+  assert.match(clippingError.message, /clipping group remains after automatic mask processing/);
   assert.deepEqual(warnings, []);
-  assert.equal(showBlockingWarning(clippingError), true);
-  assert.deepEqual(warnings, [
-    "FlowCell cannot send this artwork to Blender.\n\n" +
-      "Layer \"Stencil\" contains a visible clipping mask. Expand or release the mask and convert the result " +
-      "to explicit closed filled paths, then try again."
+  assert.equal(showBlockingWarning(clippingError), false);
+  assert.deepEqual(warnings, []);
+});
+
+test("mask baking processes nested masks first and keeps compound mask subpaths together", () => {
+  const layer = mockLayer("Stencil"), calls = [];
+  const outer = { typename: "GroupItem", parent: layer, clipped: true };
+  const inner = { typename: "GroupItem", parent: outer, clipped: true };
+  const outerMask = normalizedPath(outer, { clipping: true, zOrder() {} });
+  const compound = { typename: "CompoundPathItem", parent: inner, zOrder() {}, move(parent) { this.parent = parent; } };
+  const hole = normalizedPath(compound, { clipping: true, evenodd: true });
+  const boundary = normalizedPath(compound, { clipping: true, evenodd: true });
+  compound.pathItems = [boundary, hole];
+  const document = {
+    groupItems: [outer, inner], pathItems: [outerMask, boundary, hole], pageItems: [], layers: [],
+    activate() { appMock.activeDocument = document; }
+  };
+  Object.defineProperty(document, "selection", { set() { outer.selected = inner.selected = false; } });
+  const appMock = {
+    activeDocument: document,
+    executeMenuCommand(command) {
+      const selected = inner.selected ? inner : outer;
+      calls.push([selected === inner ? "inner" : "outer", command]);
+      if (command === "releaseMask") { inner.clipped = false; compound.parent = outer; }
+      if (command === "Live Pathfinder Crop" && selected === inner) {
+        assert.equal(compound.parent, inner, "released mask must be inside the crop group");
+        assert.deepEqual(compound.pathItems, [boundary, hole]);
+        assert.equal(hole.evenodd, true);
+        assert.equal(hole.clipping, false);
+      }
+    }
+  };
+  loadTestApi(undefined, appMock).bakeVisibleClippingGroups(document, "Stencil");
+  assert.deepEqual(calls, [
+    ["inner", "releaseMask"], ["inner", "Live Pathfinder Crop"], ["inner", "expandStyle"],
+    ["outer", "Live Pathfinder Crop"], ["outer", "expandStyle"]
   ]);
 });
 
@@ -667,7 +700,7 @@ test("source enforces temporary vector cleanup, SVG 1.0 export, overwrite, and f
   assert.match(source, /PathItem.*CompoundPathItem/s);
   assert.match(source, /PlacedItem, RasterItem, PluginItem/);
   assert.match(source, /paths\[i\]\.stroked === true/);
-  assert.doesNotMatch(source, /releaseCompound|releaseMask|noCompoundPath/i);
+  assert.doesNotMatch(source, /releaseCompound|noCompoundPath/i);
 
   assert.match(source, /options\.DTD = SVGDTDVersion\.SVG1_0/);
   assert.match(source, /options\.cssProperties = SVGCSSPropertyLocation\.PRESENTATIONATTRIBUTES/);

@@ -225,17 +225,72 @@ test("horizontal extent is shared when windows report it and kept when a legacy 
   const placementsX = [{ x: 0, y: 0, width: 20, height: 40 }, { x: 150, y: 150, width: 50, height: 60 }];
   const own = programPopoutThemeWindowRange("Blender", placementsX, geometryX);
   assert.deepEqual(own, {
-    programName: "blender", monitorKey: "1920,-300,2560,1400", minimumY: 130, maximumY: 450, minimumX: 100, maximumX: 430
+    programName: "blender", monitorKey: "1920,-300,2560,1400", minimumY: 130, maximumY: 450, minimumX: 100, maximumX: 430,
+    centers: [{ x: 100, y: 130 }, { x: 430, y: 450 }]
   });
   assert.equal(isProgramPopoutThemeWindowRange(own), true);
   assert.equal(isProgramPopoutThemeWindowRange({ ...own, minimumX: 500 }), false);
   assert.equal(isProgramPopoutThemeWindowRange({ ...own, maximumX: undefined }), false);
-  const peer = { ...own, minimumX: -50, maximumX: 200, minimumY: 0, maximumY: 10 };
+  const peer = { ...own, minimumX: -50, maximumX: 200, minimumY: 0, maximumY: 10,
+    centers: [{ x: -50, y: 0 }, { x: 200, y: 10 }] };
   assert.deepEqual(aggregateProgramPopoutThemeScreenRange(own, [peer]), {
-    minimumY: 0, maximumY: 450, minimumX: -50, maximumX: 430
+    minimumY: 0, maximumY: 450, minimumX: -50, maximumX: 430, centers: [...own.centers, ...peer.centers]
   });
   const legacyPeer = { programName: own.programName, monitorKey: own.monitorKey, minimumY: 0, maximumY: 10 };
   assert.deepEqual(aggregateProgramPopoutThemeScreenRange(own, [legacyPeer]), {
     minimumY: 0, maximumY: 450, minimumX: 100, maximumX: 430
   });
+});
+
+test("exact-center payloads reject invalid points and inconsistent extents", () => {
+  const valid = { programName: "blender", monitorKey: "monitor", minimumX: -20, maximumX: 40,
+    minimumY: -30, maximumY: 50, centers: [{ x: -20, y: 50 }, { x: 40, y: -30 }] };
+  assert.equal(isProgramPopoutThemeWindowRange(valid), true);
+  for (const patch of [
+    { centers: [] }, { centers: [null] }, { centers: [{ x: NaN, y: 0 }] },
+    { centers: [{ x: 0, y: 0 }] }, { minimumX: undefined }, { maximumY: 60 }
+  ]) {
+    const invalid = { ...valid, ...patch };
+    assert.equal(isProgramPopoutThemeWindowRange(invalid), false);
+    assert.deepEqual(aggregateProgramPopoutThemeScreenRange(valid, [invalid]), {
+      minimumX: -20, maximumX: 40, minimumY: -30, maximumY: 50, centers: valid.centers
+    });
+  }
+});
+
+test("Pop and Fan share physical centers across DPI scales and negative coordinates without other monitors or programs", async () => {
+  const runtime = liveWindows();
+  const monitorWorkArea = { Left: -1920, Top: -600, Width: 1920, Height: 1200 };
+  const pop = runtime.mount("button-popout-scaled", {
+    enabled: true, programName: "Blender",
+    placements: [{ x: -30, y: 0, width: 20, height: 20 }],
+    geometry: { visibleBounds: { Left: -1800, Top: -500, Width: 300, Height: 300 },
+      envelope: { x: -40, y: -10, width: 200, height: 200 }, monitorWorkArea }
+  });
+  await pop.flush();
+  const fanArgs = { enabled: true, programName: "Blender", placements: [{ x: 10, y: 40, width: 20, height: 20 }],
+    geometry: { visibleBounds: { Left: -1700, Top: -300, Width: 400, Height: 400 },
+      envelope: { x: 0, y: 0, width: 200, height: 200 }, monitorWorkArea } };
+  const fan = runtime.mount("button-fan-scaled", fanArgs);
+  await fan.flush();
+  await pop.flush();
+  const otherMonitor = runtime.mount("button-popout-other-monitor", { ...fanArgs,
+    geometry: { ...fanArgs.geometry, monitorWorkArea: { Left: 0, Top: 0, Width: 1920, Height: 1080 } } });
+  const otherProgram = runtime.mount("button-fan-krita", { ...fanArgs, programName: "Krita" });
+  await otherMonitor.flush();
+  await otherProgram.flush();
+  await pop.flush();
+  await fan.flush();
+  const expected = [{ x: -1770, y: -470 }, { x: -1660, y: -200 }];
+  for (const instance of [pop, fan]) {
+    const range = instance.render();
+    assert.deepEqual({ ...range, centers: [...range.centers].sort((a, b) => a.x - b.x) }, {
+      minimumX: -1770, maximumX: -1660, minimumY: -470, maximumY: -200, centers: expected
+    });
+  }
+  fan.handle.visible = false;
+  await fan.tick(true);
+  await pop.flush();
+  assert.deepEqual(pop.render().centers, [expected[0]], "hidden Fan centers stop anchoring the gradient");
+  for (const instance of [pop, fan, otherMonitor, otherProgram]) instance.close();
 });

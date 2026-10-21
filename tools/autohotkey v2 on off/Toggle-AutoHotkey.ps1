@@ -1,4 +1,6 @@
 # Description: Toggle all AutoHotkey processes off or back on for anti-cheat game sessions.
+param([switch]$StatusOnly)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -44,11 +46,10 @@ else {
     $PSScriptRoot
 }
 
-Ensure-Directory -Path $script:ToggleRoot
-
 $script:ToggleStatePath = Join-Path $script:ToggleRoot 'AutoHotkeyToggleState.txt'
 $script:ToggleStatusPath = Join-Path $script:ToggleRoot 'AutoHotkeyToggleStatus.json'
 $script:ToggleSnapshotPath = Join-Path $script:ToggleRoot 'AutoHotkeyToggleSnapshot.json'
+$script:ToggleLogPath = Join-Path $script:ToggleRoot 'AutoHotkeyToggle.log'
 $script:DesktopShortcutPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Toggle AutoHotkey.lnk'
 $script:BackendVbsPath = Join-Path $PSScriptRoot 'Toggle-AutoHotkey.vbs'
 $script:OnIconPath = Join-Path $PSScriptRoot 'Toggle-AutoHotkey-On.ico'
@@ -278,10 +279,10 @@ function Start-HotkeySnapshot {
         }
 
         if ([string]::IsNullOrWhiteSpace($argumentString)) {
-            Start-Process -FilePath $exePath | Out-Null
+            Start-Process -FilePath $exePath -WindowStyle Hidden | Out-Null
         }
         else {
-            Start-Process -FilePath $exePath -ArgumentList $argumentString | Out-Null
+            Start-Process -FilePath $exePath -ArgumentList $argumentString -WindowStyle Hidden | Out-Null
         }
 
         $startedCount++
@@ -320,7 +321,7 @@ function Start-ManagedHotkeyLaunchers {
                     $argumentList += $launcherArguments
                 }
 
-                Start-Process -FilePath $ahkExePath -ArgumentList $argumentList | Out-Null
+                Start-Process -FilePath $ahkExePath -ArgumentList $argumentList -WindowStyle Hidden | Out-Null
             }
             '.vbs' {
                 $wscriptPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
@@ -329,7 +330,7 @@ function Start-ManagedHotkeyLaunchers {
                     $argumentList += $launcherArguments
                 }
 
-                Start-Process -FilePath $wscriptPath -ArgumentList $argumentList | Out-Null
+                Start-Process -FilePath $wscriptPath -ArgumentList $argumentList -WindowStyle Hidden | Out-Null
             }
             '.ps1' {
                 $argumentList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $launcherPath))
@@ -337,14 +338,14 @@ function Start-ManagedHotkeyLaunchers {
                     $argumentList += $launcherArguments
                 }
 
-                Start-Process -FilePath 'powershell.exe' -ArgumentList $argumentList | Out-Null
+                Start-Process -FilePath 'powershell.exe' -ArgumentList $argumentList -WindowStyle Hidden | Out-Null
             }
             default {
                 if ([string]::IsNullOrWhiteSpace($launcherArguments)) {
-                    Start-Process -FilePath $launcherPath | Out-Null
+                    Start-Process -FilePath $launcherPath -WindowStyle Hidden | Out-Null
                 }
                 else {
-                    Start-Process -FilePath $launcherPath -ArgumentList $launcherArguments | Out-Null
+                    Start-Process -FilePath $launcherPath -ArgumentList $launcherArguments -WindowStyle Hidden | Out-Null
                 }
             }
         }
@@ -438,7 +439,7 @@ function Set-DesktopShortcut {
         $shortcut.Save()
     }
     catch {
-        Write-Warning "Could not update the desktop shortcut: $($_.Exception.Message)"
+        throw "Could not update the desktop shortcut: $($_.Exception.Message)"
     }
 }
 
@@ -459,7 +460,9 @@ function Show-StatusPopup {
 
     try {
         $shell = New-Object -ComObject WScript.Shell
-        $null = $shell.Popup($Message, 2, 'Toggle AutoHotkey', 64)
+        $title = 'Toggle AutoHotkey - ' + $State.ToUpperInvariant()
+        $flags = if ($State -eq 'error') { 0x10010 } else { 0x10040 }
+        $null = $shell.Popup($Message, 5, $title, $flags)
     }
     catch {
         Write-Warning "Could not show the status popup: $($_.Exception.Message)"
@@ -477,63 +480,109 @@ function Update-TogglePresentation {
     Set-DesktopShortcut -State $State
 }
 
-$runningProcesses = @(Get-AllAutoHotkeyProcesses)
+function Invoke-AutoHotkeyToggle {
+    Ensure-Directory -Path $script:ToggleRoot
+    $runningProcesses = @(Get-AllAutoHotkeyProcesses)
 
-if ($runningProcesses.Count -gt 0) {
-    $snapshot = @(Get-RunningHotkeySnapshot)
-    if ($snapshot.Count -gt 0) {
-        Save-HotkeySnapshot -Entries $snapshot
+    if ($StatusOnly) {
+        $state = if ($runningProcesses.Count -gt 0) { 'on' } else { 'off' }
+        $message = "AutoHotkey is $($state.ToUpperInvariant()). $($runningProcesses.Count) process(es) active."
+        Update-TogglePresentation -State $state -ProcessCount $runningProcesses.Count -Message $message
+        Show-StatusPopup -State $state -Message $message
+        return
     }
 
-    Stop-AllAutoHotkeyProcesses | Out-Null
-    $remainingProcesses = @(Wait-ForAutoHotkeyProcessCount -ExpectedCount 0 -TimeoutMilliseconds 3000)
-    if ($remainingProcesses.Count -gt 0) {
-        $message = "AutoHotkey is still running ($($remainingProcesses.Count) process(es))."
-        Update-TogglePresentation -State 'on' -ProcessCount $remainingProcesses.Count -Message $message
-        Show-StatusPopup -State 'on' -Message $message
+    if ($runningProcesses.Count -gt 0) {
+        $snapshot = @(Get-RunningHotkeySnapshot)
+        if ($snapshot.Count -gt 0) {
+            Save-HotkeySnapshot -Entries $snapshot
+        }
+
+        Stop-AllAutoHotkeyProcesses | Out-Null
+        $remainingProcesses = @(Wait-ForAutoHotkeyProcessCount -ExpectedCount 0 -TimeoutMilliseconds 3000)
+        if ($remainingProcesses.Count -gt 0) {
+            $message = "AutoHotkey is still running ($($remainingProcesses.Count) process(es))."
+            Update-TogglePresentation -State 'on' -ProcessCount $remainingProcesses.Count -Message $message
+            throw $message
+        }
+
+        $message = 'AutoHotkey is OFF. No AutoHotkey process is running.'
+        Update-TogglePresentation -State 'off' -ProcessCount 0 -Message $message
+        Show-StatusPopup -State 'off' -Message $message
+        return
+    }
+
+    $startedCount = 0
+    $savedSnapshot = @(Get-SavedHotkeySnapshot)
+    if ($savedSnapshot.Count -gt 0) {
+        $startedCount = Start-HotkeySnapshot -Entries $savedSnapshot
+    }
+
+    if ($startedCount -eq 0) {
+        $startedCount = Start-ManagedHotkeyLaunchers
+    }
+
+    if ($startedCount -eq 0) {
+        $message = 'AutoHotkey is OFF. No saved AutoHotkey snapshot or managed launcher list was found.'
+        Update-TogglePresentation -State 'off' -ProcessCount 0 -Message $message
         throw $message
     }
 
-    $message = 'AutoHotkey is OFF. No AutoHotkey process is running.'
-    Update-TogglePresentation -State 'off' -ProcessCount 0 -Message $message
-    Show-StatusPopup -State 'off' -Message $message
-    exit 0
+    $finalProcesses = @(Wait-ForAutoHotkeyProcessCount -MinimumCount 1 -TimeoutMilliseconds 3000)
+
+    $finalState = if ($finalProcesses.Count -gt 0) { 'on' } else { 'off' }
+    if ($finalState -eq 'on') {
+        Save-HotkeySnapshot -Entries (Get-RunningHotkeySnapshot)
+    }
+
+    $message = if ($finalState -eq 'on') {
+        "AutoHotkey is ON. $($finalProcesses.Count) process(es) active."
+    }
+    else {
+        'AutoHotkey is OFF. Restart was requested, but no AutoHotkey process is running.'
+    }
+
+    Update-TogglePresentation -State $finalState -ProcessCount $finalProcesses.Count -Message $message
+    if ($finalState -ne 'on') {
+        throw 'AutoHotkey did not restart successfully.'
+    }
+    Show-StatusPopup -State $finalState -Message $message
 }
 
-$startedCount = 0
-$savedSnapshot = @(Get-SavedHotkeySnapshot)
-if ($savedSnapshot.Count -gt 0) {
-    $startedCount = Start-HotkeySnapshot -Entries $savedSnapshot
+function Write-ToggleLog {
+    param([string]$Message)
+
+    try {
+        Add-Content -LiteralPath $script:ToggleLogPath -Value ("[{0}] {1}" -f (Get-Date).ToString('o'), $Message) -Encoding UTF8
+    }
+    catch {
+        Write-Warning "Could not write the toggle log: $($_.Exception.Message)"
+    }
 }
 
-if ($startedCount -eq 0) {
-    $startedCount = Start-ManagedHotkeyLaunchers
+function Invoke-ToggleWithFeedback {
+    try {
+        Invoke-AutoHotkeyToggle
+        return $true
+    }
+    catch {
+        $failure = $_
+        Write-ToggleLog -Message ($failure.ToString() + [Environment]::NewLine + $failure.ScriptStackTrace)
+        $message = "AutoHotkey toggle failed: $($failure.Exception.Message)"
+        try {
+            $processes = @(Get-AllAutoHotkeyProcesses)
+            $state = if ($processes.Count -gt 0) { 'on' } else { 'off' }
+            $message = "AutoHotkey is $($state.ToUpperInvariant()). $($processes.Count) process(es) active.`n`n$message"
+            Update-TogglePresentation -State $state -ProcessCount $processes.Count -Message $message
+        }
+        catch {
+            Write-ToggleLog -Message "Could not refresh status after failure: $($_.Exception.Message)"
+        }
+        Show-StatusPopup -State 'error' -Message $message
+        return $false
+    }
 }
 
-if ($startedCount -eq 0) {
-    $message = 'AutoHotkey is OFF. No saved AutoHotkey snapshot or managed launcher list was found.'
-    Update-TogglePresentation -State 'off' -ProcessCount 0 -Message $message
-    Show-StatusPopup -State 'off' -Message $message
-    throw $message
-}
-
-$finalProcesses = @(Wait-ForAutoHotkeyProcessCount -MinimumCount 1 -TimeoutMilliseconds 3000)
-
-$finalState = if ($finalProcesses.Count -gt 0) { 'on' } else { 'off' }
-if ($finalState -eq 'on') {
-    Save-HotkeySnapshot -Entries (Get-RunningHotkeySnapshot)
-}
-
-$message = if ($finalState -eq 'on') {
-    "AutoHotkey is ON. $($finalProcesses.Count) process(es) active."
-}
-else {
-    'AutoHotkey is OFF. Restart was requested, but no AutoHotkey process is running.'
-}
-
-Update-TogglePresentation -State $finalState -ProcessCount $finalProcesses.Count -Message $message
-Show-StatusPopup -State $finalState -Message $message
-
-if ($finalState -ne 'on') {
-    throw 'AutoHotkey did not restart successfully.'
+if (-not (Invoke-ToggleWithFeedback)) {
+    exit 1
 }

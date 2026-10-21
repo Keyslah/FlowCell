@@ -1248,7 +1248,8 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     activeContext.programName.normalize("NFC").trim().toLocaleLowerCase("en")
   ];
   const programPopoutThemeScreenRange = useProgramPopoutThemeScreenRange({
-    enabled: Boolean(programPopoutThemeSettings?.screenTopToBottom || programPopoutThemeSettings?.textScreenTopToBottom),
+    enabled: Boolean(programPopoutThemeSettings?.screenTopToBottom || programPopoutThemeSettings?.textScreenTopToBottom ||
+      programPopoutThemeSettings?.highlightScreenTopToBottom || programPopoutThemeSettings?.glowScreenTopToBottom),
     programName: activeContext.programName,
     placements: renderedExpanded ? expandedPlacements : collapsedPlacement ? [collapsedPlacement] : [],
     geometry: physicalThemeGeometry

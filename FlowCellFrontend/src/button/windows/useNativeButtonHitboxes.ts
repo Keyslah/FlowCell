@@ -264,7 +264,7 @@ export function useNativeButtonHitboxes(args: {
         return;
       }
       const pointerPressActive = root.querySelector<HTMLElement>(
-        '[data-button-skin-host][data-button-pointer-pressed="true"],[data-close-control-dragging="true"]'
+        '[data-button-skin-host][data-button-pointer-pressed="true"],[data-close-control-dragging="true"],[data-button-field-dragging="true"]'
       ) !== null;
 
       if (!windowPosition || scaleFactor === null) {
@@ -412,7 +412,8 @@ export function useNativeButtonHitboxes(args: {
             "hidden",
             "inert",
             "style",
-            "data-button-pointer-pressed"
+            "data-button-pointer-pressed",
+            "data-button-field-dragging"
           ],
           childList: true,
           subtree: true

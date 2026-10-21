@@ -2029,10 +2029,8 @@ def get_target_name_for_object(
                     return stored_bucket_name.strip()
                 return strip_version_prefix(bucket.name) or bucket.name
 
-    stored_name = obj.get(TARGET_NAME_PROP)
-    if isinstance(stored_name, str) and stored_name.strip():
-        return stored_name.strip()
-
+    # Blender duplicates inherit custom properties, and renaming does not update
+    # them. A working object's current name identifies its own version family.
     return strip_version_prefix(obj.name) or obj.name
 
 
@@ -2134,9 +2132,9 @@ def remember_object_origin(
 
 def find_original_object(context: bpy.types.Context, target_name: str) -> bpy.types.Object | None:
     candidates = [obj for obj in context.scene.objects if working_collections(obj, context.scene.collection)]
-    return next((obj for obj in candidates if obj.name == target_name), None) or next(
-        (obj for obj in candidates if obj.get(TARGET_NAME_PROP) == target_name), None
-    )
+    # An inherited target property cannot identify the original: it may belong
+    # to a different duplicate after the original has been moved or renamed.
+    return next((obj for obj in candidates if obj.name == target_name), None)
 
 
 def restore_object_to_origin(
@@ -2615,16 +2613,25 @@ def perform_restore(context: bpy.types.Context) -> str:
 
     root_collections = ensure_root_structure(scene_root)
     trash_collection = root_collections["Trash"]
-    restored = 0
+    restored_objects = []
 
     for target_name, source_obj in dedupe_selected_targets(targets, root_collections, parent_map):
         current_live = find_original_object(context, target_name)
-        restore_object_to_origin(source_obj, current_live, target_name, context, root_collections, parent_map)
-        restored += 1
+        restored_live = restore_object_to_origin(
+            source_obj, current_live, target_name, context, root_collections, parent_map
+        )
+        restored_objects.append(restored_live)
 
     prune_empty_collections(trash_collection)
     prune_empty_collections(scene_root, skip_names=set(ROOT_STRUCTURE))
-    return f"Restored {restored} object(s) to their original collections."
+
+    if restored_objects:
+        bpy.ops.object.select_all(action="DESELECT")
+        for obj in restored_objects:
+            obj.select_set(True)
+        context.view_layer.objects.active = restored_objects[-1]
+
+    return f"Restored {len(restored_objects)} object(s) to their original collections."
 
 
 def perform_baseline_visibility(context: bpy.types.Context) -> str:

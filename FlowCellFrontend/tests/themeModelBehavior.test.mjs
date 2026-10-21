@@ -1272,6 +1272,7 @@ test("popped Button palette scan groups only explicit live targets without guess
     placementId: targets[0].paletteId,
     label: "button-a",
     groupLabel: "Blender / Tools Pop-out",
+    enabled: true,
     textColor: "#A0B0C0",
     color: "#102030",
     materialColors: []
@@ -1280,6 +1281,7 @@ test("popped Button palette scan groups only explicit live targets without guess
     placementId: targets[1].paletteId,
     label: "button-b",
     groupLabel: "Blender / Tools Pop-out",
+    enabled: true,
     textColor: "#FFFFFF",
     color: "#445566",
     materialColors: []

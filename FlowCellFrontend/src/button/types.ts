@@ -43,7 +43,7 @@ export interface ButtonDesktopBounds {
   height: number;
 }
 
-export type ButtonActivationAnimationPresetId = "plus-rise";
+export type ButtonActivationAnimationPresetId = "plus-rise" | "star-wars-lightsaber";
 
 export interface ButtonActivationAnimation {
   presetId: ButtonActivationAnimationPresetId;
@@ -294,6 +294,13 @@ export interface ProgramPopoutThemeSettings {
   textAngle?: number;
   textCurve?: ProgramPopoutGradientCurvePoint[];
   textScreenTopToBottom?: boolean;
+  /** Spatial multipliers for all three interaction-state amounts. Absent means full strength. */
+  highlightCurve?: ProgramPopoutGradientCurvePoint[];
+  highlightAngle?: number;
+  highlightScreenTopToBottom?: boolean;
+  glowCurve?: ProgramPopoutGradientCurvePoint[];
+  glowAngle?: number;
+  glowScreenTopToBottom?: boolean;
   hoverEnabled: boolean;
   activeEnabled: boolean;
   hoverColor: string;
@@ -383,7 +390,8 @@ interface ButtonToolFieldBase extends ButtonRect {
   zIndex: number;
   hidden?: boolean;
   disabled?: boolean;
-  serviceTrigger?: "change" | "activate";
+  /** "input" (range fields only) also commits while the slider is being dragged. */
+  serviceTrigger?: "change" | "activate" | "input";
   serviceTarget?: ButtonToolFieldServiceTarget;
 }
 
@@ -399,6 +407,18 @@ export interface ButtonNumberToolField extends ButtonToolFieldBase {
   minimum?: number;
   maximum?: number;
   step?: number;
+}
+
+export interface ButtonRangeToolField extends ButtonToolFieldBase {
+  kind: "range";
+  defaultValue: number;
+  minimum: number;
+  maximum: number;
+  step?: number;
+  /** While this toggle field is true, dragging moves every range field sharing it by the same amount. */
+  linkToggleField?: string;
+  /** Readout text; "{value}" is replaced with the current value. */
+  format?: string;
 }
 
 export interface ButtonSelectToolField extends ButtonToolFieldBase {
@@ -433,6 +453,7 @@ export interface ButtonDisplayToolField extends ButtonToolFieldBase {
 export type ButtonToolField =
   | ButtonTextToolField
   | ButtonNumberToolField
+  | ButtonRangeToolField
   | ButtonSelectToolField
   | ButtonToggleToolField
   | ButtonPathToolField
@@ -529,6 +550,8 @@ export interface ButtonStateDocument {
   themeOverrides?: Record<ButtonPlacementId, ButtonThemeOverride>;
   programPopoutThemes?: Record<string, ProgramPopoutThemeSettings>;
   programPopoutColorOverrides?: Record<ButtonPlacementId, ProgramPopoutColorOverride>;
+  /** Unchecked Theme targets retain their resolved appearance until explicitly re-enabled. */
+  programPopoutThemeLocks?: Record<ButtonPlacementId, ButtonThemeOverride>;
   programPopoutColorOverrideRevisions?: Record<string, ProgramPopoutColorOverrideRevision>;
   settings: ButtonDocumentSettings;
 }

@@ -10,6 +10,8 @@ export interface ProgramPopoutThemeWindowRange {
   /** Present when the window reports horizontal geometry, for tilted gradients. */
   minimumX?: number;
   maximumX?: number;
+  /** Actual physical Button centers keep rotated ranges off empty box corners. */
+  centers?: readonly { x: number; y: number }[];
 }
 
 export interface ProgramPopoutThemeScreenBox {
@@ -17,6 +19,7 @@ export interface ProgramPopoutThemeScreenBox {
   maximumY: number;
   minimumX?: number;
   maximumX?: number;
+  centers?: readonly { x: number; y: number }[];
 }
 
 export function programPopoutThemeProgramKey(programName: string): string {
@@ -42,7 +45,7 @@ export function programPopoutThemeWindowRange(
   const hasX = Number.isFinite(visibleBounds.Left) && Number.isFinite(envelope.x) &&
     Number.isFinite(visibleBounds.Width) && (visibleBounds.Width ?? 0) > 0 &&
     Number.isFinite(envelope.width) && (envelope.width ?? 0) > 0 &&
-    rendered.every((placement) => Number.isFinite(placement.x) && Number.isFinite(placement.width));
+    rendered.every((placement) => Number.isFinite(placement.x) && Number.isFinite(placement.width) && placement.width! > 0);
   const centersX = hasX
     ? rendered.map((placement) => visibleBounds.Left! +
       (placement.x! + placement.width! / 2 - envelope.x!) * visibleBounds.Width! / envelope.width!)
@@ -52,7 +55,10 @@ export function programPopoutThemeWindowRange(
     monitorKey: [monitorWorkArea.Left, monitorWorkArea.Top, monitorWorkArea.Width, monitorWorkArea.Height].join(","),
     minimumY: Math.min(...centers),
     maximumY: Math.max(...centers),
-    ...(hasX ? { minimumX: Math.min(...centersX), maximumX: Math.max(...centersX) } : {})
+    ...(hasX ? {
+      minimumX: Math.min(...centersX), maximumX: Math.max(...centersX),
+      centers: centers.map((y, index) => ({ x: centersX[index], y }))
+    } : {})
   };
 }
 
@@ -63,17 +69,24 @@ export function isProgramPopoutThemeWindowRange(value: unknown): value is Progra
   return typeof range.programName === "string" && Boolean(range.programName) &&
     typeof range.monitorKey === "string" && Boolean(range.monitorKey) &&
     Number.isFinite(range.minimumY) && Number.isFinite(range.maximumY) && range.minimumY <= range.maximumY &&
-    (!hasX || (Number.isFinite(range.minimumX) && Number.isFinite(range.maximumX) && range.minimumX! <= range.maximumX!));
+    (!hasX || (Number.isFinite(range.minimumX) && Number.isFinite(range.maximumX) && range.minimumX! <= range.maximumX!)) &&
+    (range.centers === undefined || (hasX && Array.isArray(range.centers) && range.centers.length > 0 &&
+      range.centers.every((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y)) &&
+      Math.min(...range.centers.map((point) => point.x)) === range.minimumX &&
+      Math.max(...range.centers.map((point) => point.x)) === range.maximumX &&
+      Math.min(...range.centers.map((point) => point.y)) === range.minimumY &&
+      Math.max(...range.centers.map((point) => point.y)) === range.maximumY));
 }
 
 export function aggregateProgramPopoutThemeScreenRange(
   own: ProgramPopoutThemeWindowRange | undefined,
   peers: Iterable<ProgramPopoutThemeWindowRange>
 ): ProgramPopoutThemeScreenBox | undefined {
-  if (!own) return undefined;
+  if (!isProgramPopoutThemeWindowRange(own)) return undefined;
   let { minimumY, maximumY, minimumX, maximumX } = own;
+  let centers = own.centers ? [...own.centers] : undefined;
   for (const peer of peers) {
-    if (peer.programName !== own.programName || peer.monitorKey !== own.monitorKey) continue;
+    if (!isProgramPopoutThemeWindowRange(peer) || peer.programName !== own.programName || peer.monitorKey !== own.monitorKey) continue;
     minimumY = Math.min(minimumY, peer.minimumY);
     maximumY = Math.max(maximumY, peer.maximumY);
     if (minimumX !== undefined && maximumX !== undefined &&
@@ -81,8 +94,11 @@ export function aggregateProgramPopoutThemeScreenRange(
       minimumX = Math.min(minimumX, peer.minimumX);
       maximumX = Math.max(maximumX, peer.maximumX);
     }
+    // A legacy peer cannot supply an exact rotated range; retain its vertical
+    // contribution until all participating windows report current geometry.
+    centers = centers && peer.centers ? [...centers, ...peer.centers] : undefined;
   }
   return minimumX !== undefined && maximumX !== undefined
-    ? { minimumY, maximumY, minimumX, maximumX }
+    ? { minimumY, maximumY, minimumX, maximumX, ...(centers ? { centers } : {}) }
     : { minimumY, maximumY };
 }

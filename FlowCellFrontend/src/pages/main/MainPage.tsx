@@ -2919,6 +2919,20 @@ export default function MainPage() {
   };
 
   const openDefaultPanelPop = async (programName: string, panelName: string) => {
+    const current = buttonDocumentRef.current ?? await loadButtonStateDocument();
+    const panelButtons = Object.values(current.buttons).filter((candidate) =>
+      sourceIdentityMatchesFolderScope(candidate.sourceIdentity, programName, panelName)
+    );
+    if (!panelButtons.some((candidate) => candidate.role === "single-script")) {
+      const toolSetOwners = panelButtons.filter((candidate) => candidate.role === "tool-set-owner");
+      if (toolSetOwners.length > 0) {
+        // A Tool Sets panel has no script Buttons to gather; Pop opens its tool sets instead.
+        for (const owner of toolSetOwners) {
+          await activateToolSetOwner(owner.id, current, "open");
+        }
+        return;
+      }
+    }
     let popoutUnitId: string | null = null;
     const document = await commitButtonDocumentMutation((draft) => {
       const memberButtons = Object.values(draft.buttons).filter(

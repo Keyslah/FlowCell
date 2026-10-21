@@ -111,13 +111,19 @@ async function renderThemePage(ownerState = {}, actionResponses = {}) {
           const buckets = new Map((stored.buckets || []).map((bucket) => [bucket.id, bucket]));
           return { revision: stored.revision ?? 0, placements: (stored.placements || []).map((placement) => ({
             placementId: placement.placementId,
+            enabled: placement.enabled !== false,
             color: placement.color || buckets.get(placement.bucketId)?.color,
             materialColors: buckets.get(placement.bucketId)?.materialColors || [],
             label: placement.label || "Button", groupLabel: placement.groupLabel || "Blender", textColor: placement.textColor || "#FFFFFF"
           })) };
         }
         const response = actionResponses[actionId];
-        return typeof response === "function" ? response(payload) : response || {};
+        const resolved = await (typeof response === "function" ? response(payload) : response || {});
+        // Existing fixtures have no individual overrides; model Core's new optional capture response.
+        if (actionId === "button-theme.settings" && payload.captureAppearance && resolved?.settings && !Object.hasOwn(resolved, "buttonAppearance")) {
+          return { ...resolved, buttonAppearance: { version: 1, placements: [] }, placementLinks: [] };
+        }
+        return resolved;
       }
     },
     clearTimeout: (timerId) => timers.delete(timerId),
@@ -133,6 +139,7 @@ async function renderThemePage(ownerState = {}, actionResponses = {}) {
   await Promise.resolve();
   await new Promise((resolve) => setImmediate(resolve));
   root.requests = requests;
+  root.focusInput = (input) => { document.activeElement = input; };
   root.status = status;
   root.flushTimers = async () => {
     while (timers.size) {
@@ -334,10 +341,55 @@ test("Theme owns its Blender lifecycle and generic deletion owns its sidecar", (
   assert.ok(registryPrune > 0 && registryPrune < runtimeRecycle);
 });
 
+test("gradient eyedroppers commit the selected screen color to the exact Fill or Text stop", async () => {
+  const root = await renderThemePage({}, {
+    "button-theme.settings": { configured: true, settings: poppedSettings({
+      colors: ["#123456", "#234567", "#345678"], textColors: ["#AAAAAA", "#BBBBBB"]
+    }) },
+    "button-theme.pick-color": { selected: true, color: "#a1b2c3" }
+  });
+  for (const name of ["Color 2", "Text End"]) {
+    const pick = root.querySelectorAll("button").find(node => node["aria-label"] === `${name} screen eyedropper`);
+    assert.ok(pick, `${name} has a dedicated screen eyedropper`);
+    pick.click();
+    assert.equal(root.dataset.busy, "true", "disable controls while screen selection is active");
+    pick.click();
+    await settlePageAction();
+    assert.equal(root.dataset.busy, "false");
+    assert.equal(root.querySelectorAll("input").find(node => node["aria-label"] === `${name} color`).value, "#A1B2C3");
+    assert.equal(root.querySelectorAll("input").find(node => node["aria-label"] === `${name} color picker`).value, "#A1B2C3");
+  }
+  assert.equal(root.requests.filter(({ actionId }) => actionId === "button-theme.pick-color").length, 2,
+    "a repeated click during selection cannot launch a second picker");
+  await root.flushTimers();
+  const saved = root.requests.filter(({ actionId }) => actionId === "owner-state.write").at(-1).payload.state.buttonTheme;
+  assert.deepEqual(plain(saved.gradientColors), ["#123456", "#A1B2C3", "#345678"]);
+  assert.deepEqual(plain(saved.textColors), ["#AAAAAA", "#A1B2C3"]);
+});
+
+test("canceling or failing a gradient eyedropper preserves colors and releases controls", async () => {
+  for (const response of [
+    { selected: false, color: "" },
+    { selected: true, color: "invalid" },
+    () => { throw new Error("Screen capture failed"); }
+  ]) {
+    const root = await renderThemePage({}, {
+      "button-theme.settings": { configured: true, settings: poppedSettings({ colors: ["#123456", "#345678"] }) },
+      "button-theme.pick-color": response
+    });
+    root.querySelectorAll("button").find(node => node["aria-label"] === "Start screen eyedropper").click();
+    await settlePageAction();
+    assert.equal(root.querySelectorAll("input").find(node => node["aria-label"] === "Start color").value, "#123456");
+    assert.equal(root.dataset.busy, "false");
+    assert.match(root.status.textContent, /canceled|invalid color|Screen capture failed/);
+    assert.equal(root.status.dataset.kind, response.selected === false ? "info" : "error");
+  }
+});
+
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.0.27");
+  assert.equal(contribution.version, "3.0.34");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -405,7 +457,8 @@ test("generic Core capability contracts are explicit and stable", () => {
     "button-theme.apply": ["button-theme.palette", ["assignments", "expectedRevision", "settings"], ["buttonCount", "changedCount", "colorCount", "message", "placements", "revision"]],
     "button-theme.refill": ["button-theme.palette", ["angle", "colors", "curve", "scatter", "screenTopToBottom", "seed", "spread"], ["buttonCount", "changedCount", "colorCount", "message", "placements", "revision"]],
     "button-theme.toggle-text": ["button-theme.palette", [], ["buttonCount", "changedCount", "colorCount", "message", "placements", "revision"]],
-    "button-theme.settings": ["button-theme.palette", ["resetOverrides", "settings"], ["configured", "message", "settings"]],
+    "button-theme.settings": ["button-theme.palette", ["buttonAppearance", "captureAppearance", "resetOverrides", "settings"], ["buttonAppearance", "configured", "message", "placementLinks", "settings"]],
+    "button-theme.participation": ["button-theme.palette", ["enabled", "expectedRevision", "placementIds"], ["buttonCount", "changedCount", "colorCount", "message", "placements", "revision"]],
     "button-theme.edit": ["button-theme.palette", ["edits", "expectedRevision"], ["buttonCount", "changedCount", "colorCount", "message", "placements", "revision"]]
   };
   for (const [actionId, [capability, requestKeys, responseKeys]] of Object.entries(expected)) {
@@ -437,12 +490,14 @@ test("popped Button colors use an aggregate revision-bound Core contract", async
   const refill = actionById.get("button-theme.refill");
   const toggleText = actionById.get("button-theme.toggle-text");
   assert.deepEqual(page.config.actions.buttonTheme, {
+    pickColor: "button-theme.pick-color",
     scan: scan.id,
     apply: apply.id,
     refill: refill.id,
     toggleText: toggleText.id,
     settings: "button-theme.settings",
-    edit: "button-theme.edit"
+    edit: "button-theme.edit",
+    participation: "button-theme.participation"
   });
   assert.equal(page.capabilities.includes("button-theme.palette"), true);
   for (const action of [scan, apply, refill, toggleText]) {
@@ -485,9 +540,9 @@ test("popped Button colors use an aggregate revision-bound Core contract", async
       gradientColorCount: 5,
       gradientColors: ["#8FDB0A", "#76B509", "#5D9008", "#456A06", "#141414"],
       placements: [
-        { placementId: "hidden-a", bucketId: "surface:#8FDB0A" },
-        { placementId: "hidden-b", bucketId: "surface:#8FDB0A" },
-        { placementId: "hidden-c", bucketId: "material:#369D8D|#3DCD9E" }
+        { placementId: "hidden-a", label: "Sphere", bucketId: "surface:#8FDB0A" },
+        { placementId: "hidden-b", label: "My Cube", bucketId: "surface:#8FDB0A" },
+        { placementId: "hidden-c", label: "Fill Gear", bucketId: "material:#369D8D|#3DCD9E" }
       ],
       buckets: [
         { id: "surface:#8FDB0A", kind: "surface", color: "#8FDB0A", materialColors: [] },
@@ -499,8 +554,9 @@ test("popped Button colors use an aggregate revision-bound Core contract", async
     ...root.querySelectorAll("span"),
     ...root.querySelectorAll("div")
   ].map((node) => node.textContent);
-  assert.ok(visibleText.includes("Surface · 2 Buttons"), JSON.stringify(visibleText));
-  assert.ok(visibleText.includes("Skin materials · 1 Button"), JSON.stringify(visibleText));
+  assert.ok(visibleText.includes("Sphere") && visibleText.includes("My Cube"), JSON.stringify(visibleText));
+  assert.ok(visibleText.includes("Fill Gear"), JSON.stringify(visibleText));
+  assert.equal(visibleText.some((text) => /^(Surface|Skin materials) ·/.test(text)), false);
   assert.equal(visibleText.some((text) => /hidden-[abc]/.test(text)), false);
   assert.match(pageScript, /buttonTheme:\s*cloneValue\(model\.buttonTheme\)/);
   assert.match(pageScript, /hydrateButtonThemeState\(state\.buttonTheme\)/);
@@ -517,6 +573,228 @@ test("popped Button colors use an aggregate revision-bound Core contract", async
   assert.equal(page.config.localActions.applyButtonText, "button-theme.apply-text");
   assert.equal(page.config.localActions.refillButtonColors, "button-theme.refill-colors");
   assert.equal(page.config.localActions.scatterButtonColors, "button-theme.scatter");
+});
+
+test("every Button has its own named color row through scan, apply, rename and saved-state reopen", async () => {
+  let placements = [
+    { placementId: "hidden-a", label: "Cube", color: "#224466", materialColors: [] },
+    { placementId: "hidden-b", label: "Sphere", color: "#224466", materialColors: [] },
+    { placementId: "hidden-c", label: "Cube", color: "#224466", materialColors: [] },
+    { placementId: "hidden-d", label: "Bevel <Preview> & Edges", color: "#99BBDD", materialColors: [] },
+    { placementId: "hidden-e", label: "Fill Gear", materialColors: ["#369D8D", "#3DCD9E"] }
+  ];
+  const root = await renderThemePage({}, {
+    "button-theme.scan": () => ({ revision: 41, placements }),
+    "button-theme.apply": () => ({ revision: 42, placements })
+  });
+  const buckets = () => root.querySelectorAll("div").filter((node) => classes(node).includes("button-theme-bucket"));
+  const names = () => root.querySelectorAll("div").filter((node) => classes(node).includes("button-theme-bucket__label"))
+    .map((node) => [...new Set(node.querySelectorAll("span").map(({ textContent }) => textContent))].join(", "));
+  assert.deepEqual(names(), ["Cube", "Sphere", "Cube", "Bevel <Preview> & Edges", "Fill Gear"]);
+  assert.equal(buckets().length, placements.length, "equal colors never combine Button identities");
+  assert.equal(root.querySelectorAll("input").filter((input) => input["aria-label"] === "Cube color").length, 2, "duplicate names remain separate rows");
+  assert.equal(labelledInput(root, "Sphere color").value, "#224466");
+  assert.equal(labelledInput(root, "Bevel <Preview> & Edges color picker").value, "#99BBDD");
+  assert.equal(root.querySelectorAll("Preview").length, 0, "names are literal text, not markup");
+  assert.deepEqual(bucketColors(root), ["#224466", "#224466", "#224466", "#99BBDD"]);
+  assert.equal(root.requests.some(({ actionId, payload }) => actionId === "button-theme.apply" ||
+    actionId === "button-theme.refill" || actionId === "button-theme.settings" && payload.settings), false);
+  await clickPageButton(root, "Apply Buckets");
+  const applied = plain(root.requests.find(({ actionId }) => actionId === "button-theme.apply").payload);
+  assert.equal(applied.expectedRevision, 41);
+  assert.deepEqual(applied.assignments, placements.map(({ placementId, color }) => color
+    ? { placementId, color } : { placementId }));
+  assert.deepEqual(names(), ["Cube", "Sphere", "Cube", "Bevel <Preview> & Edges", "Fill Gear"]);
+  placements = placements.map((entry) => entry.placementId === "hidden-b" ? { ...entry, label: "My Sphere" } : entry);
+  await clickPageButton(root, "Rescan");
+  assert.equal(names()[1], "My Sphere");
+  await root.flushTimers();
+  const saved = plain(root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state);
+  const reopened = await renderThemePage(saved);
+  assert.ok(reopened.querySelectorAll("span").some(({ textContent }) => textContent === "My Sphere"));
+  assert.deepEqual(bucketColors(reopened), ["#224466", "#224466", "#224466", "#99BBDD"]);
+});
+
+test("same-color Buttons edit independently, including while unchecked", async () => {
+  let placements = [
+    { placementId: "one", label: "Cube", color: "#224466" },
+    { placementId: "two", label: "Sphere", color: "#224466" }
+  ];
+  let revision = 1;
+  const root = await renderThemePage({}, {
+    "button-theme.scan": () => ({ revision, placements }),
+    "button-theme.participation": ({ placementIds, enabled }) => {
+      placements = placements.map((placement) => placementIds.includes(placement.placementId) ? { ...placement, enabled } : placement);
+      return { revision: ++revision, placements };
+    },
+    "button-theme.edit": ({ edits }) => {
+      placements = placements.map((placement) => ({ ...placement, ...edits.find((edit) => edit.placementId === placement.placementId) }));
+      return { revision: ++revision, placements };
+    },
+    "button-theme.apply": () => ({ revision: ++revision, placements })
+  });
+  assert.equal(labelledInput(root, "Apply theme to Cube").checked, true);
+  assert.equal(labelledInput(root, "Apply theme to Sphere").checked, true);
+  setInput(labelledInput(root, "Sphere color"), "#ABCDEF");
+  await settlePageAction();
+  assert.deepEqual(plain(root.requests.find(({ actionId }) => actionId === "button-theme.edit").payload.edits), [{ placementId: "two", color: "#ABCDEF" }]);
+  const checkbox = labelledInput(root, "Apply theme to Cube");
+  checkbox.checked = false;
+  dispatch(checkbox, "change");
+  await settlePageAction();
+  assert.equal(labelledInput(root, "Apply theme to Cube").checked, false);
+  assert.equal(labelledInput(root, "Apply theme to Sphere").checked, true);
+  assert.equal(labelledInput(root, "Cube color").value, "#224466");
+  assert.equal(labelledInput(root, "Sphere color").value, "#ABCDEF");
+  assert.equal(labelledInput(root, "Cube color").disabled, false, "unchecked protects global changes, not explicit edits");
+  setInput(labelledInput(root, "Cube color"), "#556677");
+  await settlePageAction();
+  assert.deepEqual(plain(root.requests.filter(({ actionId }) => actionId === "button-theme.edit").at(-1).payload.edits), [{ placementId: "one", color: "#556677" }]);
+  await clickPageButton(root, "Apply Buckets");
+  assert.deepEqual(plain(root.requests.find(({ actionId }) => actionId === "button-theme.apply").payload.assignments), [
+    { placementId: "one", color: "#556677" },
+    { placementId: "two", color: "#ABCDEF" }
+  ], "the bulk contract remains exhaustive; Core skips locked Buttons");
+  await root.flushTimers();
+  const saved = plain(root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state);
+  const reopened = await renderThemePage(saved);
+  assert.equal(labelledInput(reopened, "Apply theme to Cube").checked, false);
+  assert.equal(labelledInput(reopened, "Apply theme to Sphere").checked, true);
+  const other = labelledInput(root, "Apply theme to Sphere");
+  other.checked = false;
+  dispatch(other, "change");
+  await settlePageAction();
+  assert.equal(labelledInput(root, "Cube color").disabled, false);
+  assert.equal(labelledInput(root, "Sphere color").disabled, false);
+});
+
+test("material Buttons have an independent blank color field and only explicit color commits write", async () => {
+  let placements = [
+    { placementId: "material-one", label: "Fill Gear", materialColors: ["#369D8D", "#3DCD9E"] },
+    { placementId: "material-two", label: "Other Gear", materialColors: ["#369D8D", "#3DCD9E"] }
+  ];
+  const root = await renderThemePage({}, {
+    "button-theme.scan": () => ({ revision: 1, placements }),
+    "button-theme.edit": ({ edits }) => {
+      placements = placements.map((entry) => ({ ...entry, ...edits.find(({ placementId }) => placementId === entry.placementId) }));
+      return { revision: 2, placements };
+    }
+  });
+  const input = labelledInput(root, "Fill Gear color");
+  assert.equal(input.value, "", "no Surface color is invented from the skin's materials");
+  assert.equal(labelledInput(root, "Other Gear color").value, "");
+  assert.equal(root.requests.some(({ actionId }) => actionId === "button-theme.edit"), false);
+  const picker = labelledInput(root, "Fill Gear color picker");
+  setInput(picker, "#123456", "input");
+  assert.equal(input.value, "#123456");
+  assert.equal(root.requests.some(({ actionId }) => actionId === "button-theme.edit"), false, "picker motion stages without flooding writes");
+  dispatch(picker, "change");
+  await settlePageAction();
+  assert.deepEqual(plain(root.requests.find(({ actionId }) => actionId === "button-theme.edit").payload.edits), [
+    { placementId: "material-one", color: "#123456" }
+  ]);
+  assert.equal(labelledInput(root, "Other Gear color").value, "");
+  assert.equal(labelledInput(root, "Fill Gear color"), input, "material-to-Surface conversion keeps the editable node");
+  assert.equal(root.querySelectorAll("div").find((node) => node.dataset.placementId === "material-one").className,
+    "button-theme-bucket button-theme-bucket--surface");
+  setInput(input, "#ABCDEF");
+  await settlePageAction();
+  assert.equal(input.value, "#ABCDEF", "a second edit uses the current palette record, not the captured pre-response bucket");
+  assert.deepEqual(plain(root.requests.filter(({ actionId }) => actionId === "button-theme.edit").at(-1).payload.edits), [
+    { placementId: "material-one", color: "#ABCDEF" }
+  ]);
+});
+
+test("checkbox requests run in the background, serialize fresh revisions and save waits for pending row edits", async () => {
+  let placements = [
+    { placementId: "one", label: "Cube", color: "#224466", enabled: true },
+    { placementId: "two", label: "Sphere", color: "#224466", enabled: true }
+  ];
+  let revision = 10;
+  const pending = [];
+  const root = await renderThemePage({}, {
+    "button-theme.scan": () => ({ revision, placements }),
+    "button-theme.participation": (payload) => new Promise((resolve) => {
+      pending.push({ payload: plain(payload), finish: () => {
+        placements = placements.map((entry) => payload.placementIds.includes(entry.placementId) ? { ...entry, enabled: payload.enabled } : entry);
+        resolve({ revision: ++revision, placements });
+      } });
+    }),
+    "button-theme.edit": ({ edits, expectedRevision }) => {
+      assert.equal(expectedRevision, revision);
+      placements = placements.map((entry) => ({ ...entry, ...edits.find(({ placementId }) => placementId === entry.placementId) }));
+      return { revision: ++revision, placements };
+    },
+    "button-theme.settings": () => ({ settings: poppedSettings(), configured: true,
+      buttonAppearance: { version: 1, placements: [{ placementId: "one", buttonId: "cube", color: placements[0].color }] },
+      placementLinks: [{ paletteId: "one", placementId: "one", buttonId: "cube" }, { paletteId: "two", placementId: "two", buttonId: "sphere" }] }),
+    "theme.package.save": { saved: true, packageName: "Saved", packagePath: "C:\\Themes\\saved.json" }
+  });
+  const checkbox = labelledInput(root, "Apply theme to Cube");
+  const otherCheckbox = labelledInput(root, "Apply theme to Sphere");
+  const input = labelledInput(root, "Cube color");
+  const spread = poppedControl(root, "spread");
+  const curve = curveBox(root);
+  checkbox.checked = false;
+  dispatch(checkbox, "change");
+  await settlePageAction();
+  assert.equal(pending.length, 1);
+  assert.equal(root.dataset.busy, "false");
+  assert.equal(checkbox.disabled, true);
+  assert.equal(otherCheckbox.disabled, false);
+  assert.equal(input.disabled, false);
+  assert.equal(spread.disabled, false);
+  root.focusInput(input);
+  setInput(input, "#AB", "input");
+  setInput(spread, "62", "input");
+  otherCheckbox.checked = false;
+  dispatch(otherCheckbox, "change");
+  await settlePageAction();
+  assert.equal(pending.length, 1, "the second checkbox waits for the first revision");
+  pending[0].finish();
+  await settlePageAction();
+  assert.equal(pending.length, 2);
+  assert.equal(pending[1].payload.expectedRevision, 11);
+  assert.equal(input.value, "#AB", "even a partial hex being typed while another request runs is retained");
+  assert.equal(labelledInput(root, "Cube color"), input, "background responses do not remount focused inputs");
+  assert.equal(curveBox(root), curve, "curve editing nodes survive background responses");
+  assert.equal(spread.value, "62");
+  setInput(input, "#ABCDEF");
+  root.focusInput(null);
+  await clickPageButton(root, "Save Package");
+  assert.equal(root.requests.some(({ actionId }) => actionId === "theme.package.save"), false);
+  assert.equal(root.requests.some(({ actionId }) => actionId === "button-theme.edit"), false, "manual edit waits behind the second checkbox");
+  pending[1].finish();
+  await settlePageAction();
+  await settlePageAction();
+  const edits = root.requests.filter(({ actionId }) => actionId === "button-theme.edit");
+  assert.equal(edits.length, 1);
+  assert.equal(edits[0].payload.expectedRevision, 12);
+  assert.equal(root.requests.filter(({ actionId }) => actionId === "theme.package.save").length, 1);
+  assert.equal(root.dataset.busy, "false");
+});
+
+test("failed checkbox update rolls back only its checkbox and leaves manual color controls enabled", async () => {
+  let fail;
+  const root = await renderThemePage({}, {
+    "button-theme.scan": { revision: 5, placements: [{ placementId: "one", label: "Cube", color: "#224466", enabled: true }] },
+    "button-theme.participation": () => new Promise((_resolve, reject) => { fail = reject; })
+  });
+  const checkbox = labelledInput(root, "Apply theme to Cube");
+  const color = labelledInput(root, "Cube color");
+  checkbox.checked = false;
+  dispatch(checkbox, "change");
+  await settlePageAction();
+  setInput(color, "#ABCDEF", "input");
+  fail(new Error("Checkbox update failed"));
+  await settlePageAction();
+  assert.equal(checkbox.checked, true);
+  assert.equal(checkbox.disabled, false);
+  assert.equal(color.disabled, false);
+  assert.equal(color.value, "#ABCDEF");
+  assert.equal(root.dataset.busy, "false");
+  assert.equal(root.status.dataset.kind, "error");
+  assert.match(root.status.textContent, /Checkbox update failed/);
 });
 
 test("popped Button controls share one row and refill or scatter stable hidden placements", async () => {
@@ -754,7 +1032,7 @@ test("popped Button controls share one row and refill or scatter stable hidden p
   const gradientAfterRefill = root.querySelectorAll("div").find(
     (candidate) => String(candidate.className || "").split(/\s+/).includes("button-theme-gradient")
   );
-  const endpointControls = gradientAfterRefill.querySelectorAll("label").filter(
+  const endpointControls = gradientAfterRefill.querySelectorAll("div").filter(
     (candidate) => String(candidate.className || "").split(/\s+/).includes("button-theme-gradient__color")
   );
   const endpointText = (control) => control.querySelectorAll("input").find(({ type }) => type === "text")?.value;
@@ -845,7 +1123,7 @@ test("popped Button gradient migrates the legacy count and keeps edited endpoint
   const countNumber = countControl.querySelectorAll("input").find(({ type }) => type === "number");
   assert.equal(countNumber.value, "4", "legacy refillRange must hydrate Gradient Colors");
 
-  const endpointControls = channelBox(root, "fill").querySelectorAll("label").filter(
+  const endpointControls = channelBox(root, "fill").querySelectorAll("div").filter(
     (candidate) => String(candidate.className || "").split(/\s+/).includes("button-theme-gradient__color")
   );
   const topInput = endpointControls[0].querySelectorAll("input").find(({ type }) => type === "text");
@@ -1101,6 +1379,7 @@ test("the package restores the original Theme wording", () => {
 
 test("every rendered Theme button restores an explanatory tooltip", async () => {
   assert.deepEqual(page.config.actionTooltips, {
+    "button-theme.pick-color": "Pick this gradient color from anywhere on screen. Escape or right-click cancels.",
     "theme.image.select": "Pick an image, sample theme colors, and place it as the Place Picture image.",
     "theme.image.sample": "Sample theme colors from the selected reference image.",
     "theme.absorb": "Read the current Blender theme and stage all visible buckets.",
@@ -1116,9 +1395,10 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
     "theme.profile.save": "Save the current darkness settings under the entered profile name.",
     "theme.apply": "Apply the currently visible theme role colors.",
     "theme.apply-bucket": "Apply only this theme bucket.",
-    "button-theme.scan": "Collect and group Surface colors from scoped action Buttons in open Blender Pop-out and Fan windows. Fans include their surface owner and members even while collapsed; editor previews remain excluded.",
-    "button-theme.apply": "Apply the edited aggregate Surface buckets back to the same live scanned Buttons; Rescan is required if the open windows changed.",
-    "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Layout anchors vertically to the highest and lowest visible Buttons on each monitor; otherwise Angle applies within each window. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
+    "button-theme.scan": "Collect individual colors from scoped action Buttons in open Blender Pop-out and Fan windows. Each Button has its own editable color; editor previews remain excluded.",
+    "button-theme.participation": "Unchecked Buttons ignore gradients and bulk theme changes. Their individual colors remain editable and are saved with packages.",
+    "button-theme.apply": "Apply the listed colors to checked Buttons. Individual color edits apply directly, including to unchecked Buttons. Rescan is required if the open windows changed.",
+    "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Layout spans all visible Buttons on each monitor along the Angle; otherwise each window has its own gradient. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
     "button-theme.apply-text": "Apply the Button Text gradient to every Blender popped Button label, independently of the fill. One Text Color keeps the labels solid; more colors run from Start to End along the text Angle and curve.",
     "button-theme.refill": "Apply the ordered multi-color Surface gradient, with its angle and curve, to scoped Buttons in the currently open Blender Pop-outs and Fans.",
     "button-theme.refill-colors": "Sample the selected number of Gradient Colors from the current Theme image, show them as ordered gradient stops, and apply the gradient to scoped Buttons in open Blender Pop-outs and Fans.",
@@ -1126,7 +1406,7 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
     "button-theme.toggle-text": "Toggle all scoped Button label text in open Blender Pop-outs and Fans between black and white, replacing any text gradient, without changing Surface colors or saved skins.",
     "button-theme.settings": "Apply separate Regular, Hover, and Active highlights and glow to Blender buttons. Regular applies only while neither hovered nor active. Saved packages include all three groups.",
     "picture.file.select": "Pick a Place Picture image.",
-    "picture.apply": "Place the picture path in the Blender viewport with the overlay.",
+    "picture.apply": "Choose a picture and place it in the Blender viewport with the overlay.",
     "picture.grid": "Apply Grid Scale and Subdivisions and enable Blender's native viewport grid.",
     "picture.grid.remove": "Hide Blender's native grid; keep any Place Picture image and gizmos active.",
     "picture.startup": "Save the current Place Picture image so Blender restores it on startup.",
@@ -1157,7 +1437,7 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
   const root = await renderThemePage();
   const buttons = root.querySelectorAll("button");
   // Grid visibility and spacing apply directly through their inputs.
-  assert.equal(buttons.length, 28 + 2 * 17 + page.config.roles.length + page.config.environment.valueFields.length);
+  assert.equal(buttons.length, 27 + 6 + 2 * 17 + 2 * 19 + page.config.roles.length + page.config.environment.valueFields.length);
   assert.deepEqual(
     buttons.flatMap((button, index) => button.title.trim() ? [] : [`${index}: ${button.textContent}`]),
     []
@@ -1170,11 +1450,11 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
   );
   const checkboxes = root.querySelectorAll("input").filter((input) => input.type === "checkbox");
   const gradientRole = root.querySelectorAll("div").find((node) => node.title === "Gradient 2");
-  assert.equal(checkboxes.length, 8);
+  assert.equal(checkboxes.length, 10);
   assert.ok(gradientRole);
   assert.equal(gradientRole.querySelectorAll("input").filter((input) => input.type === "checkbox").length, 1);
   assert.equal(
-    root.querySelectorAll("span").filter((node) => node.textContent === "Whole Layout").length === 2,
+    root.querySelectorAll("span").filter((node) => node.textContent === "Whole Layout").length === 4,
     true
   );
   assert.equal(root.querySelectorAll("span").some((node) => node.textContent === page.config.gradient.label), false);
@@ -1306,7 +1586,7 @@ test("package page is headerless and keeps Theme plus Place Picture compact", ()
   assert.equal("subtitle" in page.config.copy, false);
   assert.match(
     pageScript,
-    /root\.append\(\s*renderThemeCard\(\),\s*renderButtonThemeCard\(\),\s*renderPictureCard\(\),\s*renderEnvironmentCard\(\)/
+    /root\.append\(\s*renderThemeCard\(\),\s*renderButtonThemeCard\(\),\s*renderEnvironmentCard\(\)/
   );
   assert.match(pageScript, /const grid = element\("div", "theme-role-grid"\);\s*roles\.forEach/);
   assert.match(pageScript, /role\.fieldId === config\.gradient\.gradientFieldId/);
@@ -1316,15 +1596,46 @@ test("package page is headerless and keeps Theme plus Place Picture compact", ()
   const renderToneStart = pageScript.indexOf("function renderToneControls(");
   const renderRolesStart = pageScript.indexOf("function renderRoleGroups(");
   const renderThemeStart = pageScript.indexOf("function renderThemeCard(");
-  const renderPictureStart = pageScript.indexOf("function renderPictureCard(");
+  const renderEnvironmentStart = pageScript.indexOf("function renderEnvironmentCard(");
   assert.ok(renderToneStart >= 0 && renderRolesStart > renderToneStart);
-  assert.ok(renderThemeStart >= 0 && renderPictureStart > renderThemeStart);
+  assert.ok(renderThemeStart >= 0 && renderEnvironmentStart > renderThemeStart);
   const renderToneSource = pageScript.slice(renderToneStart, renderRolesStart);
-  const renderThemeSource = pageScript.slice(renderThemeStart, renderPictureStart);
+  const renderThemeSource = pageScript.slice(renderThemeStart, renderEnvironmentStart);
   assert.match(renderToneSource, /row\.append\(tone, actionButton\(actions\.theme\.apply, applyTheme\)\)/);
   assert.match(renderToneSource, /profiles\.append\(select, nameInput, saveButton\);\s*storage\.append\(profiles\);/);
   assert.ok(renderThemeSource.indexOf("actions.theme.loadFields") < renderThemeSource.indexOf("renderToneControls(section, storage)"));
   assert.doesNotMatch(renderThemeSource, /applyRow/);
+});
+
+test("reference row shows only package name beside Browse and replaces the bottom picture section", async () => {
+  const root = await renderThemePage({
+    activePackage: { name: "Ocean", path: "C:\\Themes\\Ocean\\package.json" },
+    fields: { theme_image_path: "C:\\Images\\reference.png", static_background_path: "C:\\Images\\picture.png" }
+  });
+  const row = root.querySelectorAll("div").find((node) => classes(node).includes("theme-reference-row"));
+  assert.deepEqual(row.children.map((child) => child.textContent), ["Browse", "Ocean", "Absorb Theme", "Refill", "Clear Picture", "Place Picture"]);
+  assert.equal(row.querySelectorAll("input").length, 0);
+  assert.equal(root.querySelectorAll("h2").some((node) => node.textContent === "Place Picture"), false);
+  assert.equal(root.querySelectorAll("input").some((node) => String(node.value).includes("C:\\Images")), false);
+  assert.equal(root.requests.some(({ actionId }) => actionId === "picture.apply"), false);
+});
+
+test("Place Picture prompts each time then places the selection; cancel changes nothing", async () => {
+  let selection = { selected: true, path: "C:\\Images\\new.png" };
+  const root = await renderThemePage({ fields: { static_background_path: "C:\\Images\\old.png" } }, {
+    "picture.file.select": () => selection,
+    "picture.apply": { static_background_path: "C:\\Images\\new.png" }
+  });
+  await clickPageButton(root, "Place Picture");
+  const requests = root.requests.filter(({ actionId }) => ["picture.file.select", "picture.apply"].includes(actionId));
+  assert.deepEqual(requests.map(({ actionId }) => actionId), ["picture.file.select", "picture.apply"]);
+  assert.equal(requests[1].payload.static_background_path, "C:\\Images\\new.png");
+  selection = { selected: false };
+  await clickPageButton(root, "Place Picture");
+  assert.equal(root.requests.filter(({ actionId }) => actionId === "picture.file.select").length, 2);
+  assert.equal(root.requests.filter(({ actionId }) => actionId === "picture.apply").length, 1);
+  await clickPageButton(root, "Clear Picture");
+  assert.equal(root.requests.filter(({ actionId }) => actionId === "picture.clear").length, 1);
 });
 
 test("native Grid exposes native settings while retaining hidden legacy saved values", async () => {
@@ -1557,7 +1868,8 @@ test("packages declare only portable popped settings, without placement identity
   const settingsAction = actionById.get("button-theme.settings");
   assert.equal(settingsAction.handler.options.operation, "settings");
   const schema = settingsAction.requestSchema.properties.settings;
-  const shapeKeys = ["angle", "curve", "textAngle", "textColors", "textCurve", "textScreenTopToBottom"];
+  const shapeKeys = ["angle", "curve", "textAngle", "textColors", "textCurve", "textScreenTopToBottom",
+    "highlightCurve", "highlightAngle", "highlightScreenTopToBottom", "glowCurve", "glowAngle", "glowScreenTopToBottom"];
   assert.deepEqual(Object.keys(schema.properties).sort(), [...Object.keys(poppedSettings()), ...shapeKeys].sort());
   assert.deepEqual([...schema.required].sort(), Object.keys(poppedSettings()).filter((key) => !key.startsWith("idle")).sort(), "older packages stay valid");
   assert.deepEqual(schema.properties.curve.items.properties.mode.enum, ["auto", "corner", "aligned", "free"]);
@@ -1654,6 +1966,60 @@ test("effects apply without replacing the applied gradient and package save capt
   assert.deepEqual(plain(save.payload.values.popped_button_settings), live);
   assert.equal("lockSettings" in save.payload.values.popped_button_settings, false);
   assert.equal("placements" in save.payload.values.popped_button_settings, false);
+});
+
+test("Save Package records staged individual colors and unchecked appearances without applying or baking other Buttons", async () => {
+  const live = poppedSettings();
+  const lockedAppearance = { colors: { surface: "#224466", text: "#FFFFFF" }, hoverEnabled: false, activeEnabled: false, hoverColor: null, activeColor: null };
+  const appearance = { version: 1, placements: [
+    { placementId: "locked", buttonId: "locked-button", lockedAppearance },
+    { placementId: "manual", buttonId: "manual-button", color: "#112233", textColor: "#EEEEEE" }
+  ] };
+  const placements = [
+    { placementId: "live-one", label: "Cube", color: "#224466", enabled: true },
+    { placementId: "live-locked", label: "Sphere", color: "#224466", enabled: false },
+    { placementId: "live-two", label: "Cone", color: "#334455", enabled: true }
+  ];
+  let saved;
+  let applied;
+  const root = await renderThemePage({}, {
+    "button-theme.scan": () => ({ revision: 42, placements }),
+    "button-theme.settings": (payload) => {
+      if (payload.settings) applied = plain(payload);
+      return { settings: live, configured: true, buttonAppearance: appearance, placementLinks: [
+        { paletteId: "live-one", placementId: "cube", buttonId: "cube-button" },
+        { paletteId: "live-locked", placementId: "locked", buttonId: "locked-button" },
+        { paletteId: "live-two", placementId: "cone", buttonId: "cone-button" }
+      ] };
+    },
+    "theme.package.save": ({ values }) => { saved = plain(values); return { saved: true, packageName: "Exact colors", packagePath: "C:\\Themes\\exact.json" }; },
+    "theme.package.open": () => ({ selected: true, fieldPatch: saved, packageName: "Exact colors", packagePath: "C:\\Themes\\exact.json" })
+  });
+  setInput(labelledInput(root, "Cube color picker"), "#ABCDEF", "input");
+  await clickPageButton(root, "Save Package");
+  assert.deepEqual(saved.popped_button_settings, live);
+  assert.deepEqual(saved.popped_button_appearance, { version: 1, placements: [...appearance.placements,
+    { placementId: "cube", buttonId: "cube-button", color: "#ABCDEF" }
+  ] });
+  assert.equal(saved.popped_button_appearance.placements.some(({ placementId }) => placementId === "cone"), false);
+  assert.equal(applied, undefined, "Save is capture-only, not a live theme mutation");
+  assert.equal(root.requests.some(({ actionId }) => actionId === "button-theme.apply" || actionId === "button-theme.edit"), false);
+  assert.ok(root.querySelectorAll("span").some(({ textContent }) => textContent === "Exact colors"));
+  await clickPageButton(root, "Open Package");
+  assert.deepEqual(applied.buttonAppearance, saved.popped_button_appearance);
+  assert.equal(applied.resetOverrides, true);
+});
+
+test("Save Package fails explicitly if a staged color has no verified live Button identity", async () => {
+  const root = await renderThemePage({}, {
+    "button-theme.scan": { revision: 1, placements: [{ placementId: "gone", label: "Cube", color: "#224466" }] },
+    "button-theme.settings": { settings: poppedSettings(), configured: true, buttonAppearance: { version: 1, placements: [] }, placementLinks: [] }
+  });
+  setInput(labelledInput(root, "Cube color picker"), "#ABCDEF", "input");
+  await clickPageButton(root, "Save Package");
+  assert.equal(root.requests.some(({ actionId }) => actionId === "theme.package.save"), false);
+  assert.match(root.status.textContent, /no longer open/);
+  assert.equal(root.dataset.busy, "false");
 });
 
 test("package switching preserves a temporary lock and unlock restores the selected package without writing it", async () => {
@@ -2004,7 +2370,7 @@ test("the curve box edits points and presets within Core's curve contract and Ap
   assert.equal(pointLabel(), "Point 3 of 5");
   toolButton(fill(), "Corner").click();
   setInput(labelledInput(fill(), "Button Fill point position percent"), 40);
-  setInput(labelledInput(fill(), "Button Fill point value percent"), 25);
+  setInput(labelledInput(fill(), "Button Fill point color progression percent"), 25);
   toolButton(fill(), "Bezier").click();
   assert.equal(toolButton(fill(), "Bezier")["aria-pressed"], "true");
   await root.flushTimers();
@@ -2039,6 +2405,135 @@ test("the curve box edits points and presets within Core's curve contract and Ap
   assert.ok(xs.every((x, index) => index === 0 || x > xs[index - 1]), "curve x strictly increases");
   assert.ok(refill.curve.every((point) => Object.keys(point).every((key) => ["x", "y", "mode"].includes(key))));
   assert.equal(refill.curve.length, 2 * refill.colors.length, "Steps makes one flat band per color");
+});
+
+test("every curve visibly explains its axes and distinguishes color progression from effect strength", async () => {
+  const root = await renderThemePage();
+  for (const [channel, title, yMeaning] of [
+    ["fill", "Button Fill", "Color progression"],
+    ["text", "Button Text", "Color progression"],
+    ["highlight", "Highlight", "Highlight strength"],
+    ["glow", "Glow", "Glow strength"]
+  ]) {
+    const panel = channelBox(root, channel);
+    const box = curveBox(panel);
+    const labels = box.querySelectorAll("text").map(({ textContent }) => textContent);
+    assert.ok(labels.includes("X · Button position (%)"), `${title} identifies the spatial X axis`);
+    assert.ok(labels.includes(`Y · ${yMeaning} (%)`), `${title} identifies its own Y axis`);
+    assert.ok(labels.includes("0% · Start") && labels.includes("End · 100%"));
+    assert.ok(labels.includes("0%") && labels.includes("100%"));
+    assert.match(box["aria-label"], /0% at the bottom to 100% at the top/);
+    const help = panel.querySelectorAll("p").find((node) => classes(node).includes("gradient-curve__axes-help"));
+    assert.match(help.textContent, /Position follows Angle; Whole Layout spans all visible Buttons on each monitor/);
+    if (channel === "highlight" || channel === "glow") {
+      assert.match(help.textContent, /0% is off; 100% uses the full Regular\/Hover\/Active amount/);
+      assert.ok(labelledInput(panel, `${title} point strength percent`));
+    } else {
+      assert.match(help.textContent, /0% is the first color; 100% is the last color/);
+      assert.ok(labelledInput(panel, `${title} point color progression percent`));
+    }
+  }
+});
+
+test("effect Fade keeps strength separate from angle and Whole Layout when applied", async () => {
+  let live = poppedSettings();
+  const original = plain(live);
+  const root = await renderThemePage({}, {
+    "button-theme.settings": (payload) => {
+      if (payload.settings) live = plain(payload.settings);
+      return { settings: live, configured: true };
+    }
+  });
+  for (const [channel, title] of [["highlight", "Highlight"], ["glow", "Glow"]]) {
+    const panel = channelBox(root, channel);
+    toolButton(panel, "Fade curve").click();
+    const whole = panel.querySelectorAll("input").find(({ type }) => type === "checkbox");
+    whole.checked = true;
+    dispatch(whole, "change");
+    for (const angle of [0, 90, 45]) {
+      setInput(labelledInput(panel, `${title} angle`), angle);
+      await clickPageButton(root, "Apply Highlights & Glow");
+      assert.deepEqual(live[`${channel}Curve`].map(({ x, y }) => ({ x, y })), [{ x: 0, y: 1 }, { x: 1, y: 0 }]);
+      assert.equal(live[`${channel}Angle`] ?? 0, angle);
+      assert.equal(live[`${channel}ScreenTopToBottom`], true);
+    }
+    selectCurvePoint(panel, 0);
+    setInput(labelledInput(panel, `${title} point strength percent`), 75);
+    await clickPageButton(root, "Apply Highlights & Glow");
+    assert.equal(live[`${channel}Curve`][0].x, 0);
+    assert.equal(live[`${channel}Curve`][0].y, 0.75);
+    assert.equal(live[`${channel}Curve`].at(-1).y, 0);
+    assert.equal(live[`${channel}Angle`], 45);
+  }
+  for (const key of ["colors", "textColor", "hoverHighlightAmount", "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount"]) {
+    assert.deepEqual(live[key], original[key], `${key} is preserved`);
+  }
+  assert.doesNotMatch(page.config.buttonTheme.screenTopToBottomTooltip, /Angle applies only/);
+});
+
+test("spatial effect curves edit, apply, save, lock, reopen and reset independently of Fill and Text", async () => {
+  let live = poppedSettings();
+  let saved;
+  const responses = {
+    "button-theme.settings": (payload) => {
+      if (payload.settings) live = plain(payload.settings);
+      return { settings: live, configured: true };
+    },
+    "theme.package.save": (payload) => {
+      saved = plain(payload.values);
+      return { saved: true, packagePath: "C:\\Themes\\spatial.json", packageName: "Spatial" };
+    },
+    "theme.package.open": () => ({ selected: true, packagePath: "C:\\Themes\\spatial.json", fieldPatch: saved })
+  };
+  const root = await renderThemePage({}, responses);
+  for (const channel of ["highlight", "glow"]) {
+    assert.equal(curvePoints(channelBox(root, channel)).length, 2);
+    assert.ok(curvePoints(channelBox(root, channel)).every((point) => point.cy === "0"), "old packages start at full strength");
+  }
+  setInput(channelStops(root, "fill")[0], "#EE0000");
+  setInput(channelStops(root, "text")[0], "#000000");
+  toolButton(channelBox(root, "highlight"), "Peak curve").click();
+  selectCurvePoint(channelBox(root, "highlight"), 1);
+  setInput(labelledInput(channelBox(root, "highlight"), "Highlight point strength percent"), 60);
+  setInput(labelledInput(channelBox(root, "highlight"), "Highlight angle"), 90);
+  toolButton(channelBox(root, "glow"), "Linear curve").click();
+  const whole = channelBox(root, "glow").querySelectorAll("input").find(({ type }) => type === "checkbox");
+  whole.checked = true;
+  dispatch(whole, "change");
+  await root.flushTimers();
+  const staged = root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state;
+  assert.equal(staged.buttonTheme.highlightCurve[1].y, 0.6);
+  await clickPageButton(root, "Apply Highlights & Glow");
+  assert.equal(live.highlightCurve[1].y, 0.6);
+  assert.equal(live.highlightAngle, 90);
+  assert.deepEqual(live.glowCurve, LINEAR_CURVE);
+  assert.equal(live.glowScreenTopToBottom, true);
+  assert.deepEqual(live.colors, poppedSettings().colors);
+  assert.equal(live.textColor, "#FFFFFF");
+  assert.equal(channelStops(root, "fill")[0].value, "#EE0000");
+  assert.equal(channelStops(root, "text")[0].value, "#000000");
+  await clickPageButton(root, "Save Package");
+  assert.deepEqual(saved.popped_button_settings, live);
+  const captured = structuredClone(live);
+  const reopened = await renderThemePage({}, responses);
+  assert.equal(curvePoints(channelBox(reopened, "highlight")).length, 3);
+  toolButton(channelBox(reopened, "highlight"), "Reset").click();
+  toolButton(channelBox(reopened, "glow"), "Reset").click();
+  await clickPageButton(reopened, "Apply Highlights & Glow");
+  assert.equal(live.highlightCurve, undefined, "reset clears a previously applied curve");
+  assert.equal(live.glowCurve, undefined);
+  const lock = poppedControl(reopened, "lockSettings");
+  lock.checked = true;
+  dispatch(lock, "change");
+  await settlePageAction();
+  await clickPageButton(reopened, "Open Package");
+  assert.equal(live.highlightCurve, undefined, "lock preserves current effects");
+  const unlock = poppedControl(reopened, "lockSettings");
+  unlock.checked = false;
+  dispatch(unlock, "change");
+  await settlePageAction();
+  assert.deepEqual(live.highlightCurve, captured.highlightCurve);
+  assert.deepEqual(live.glowCurve, captured.glowCurve);
 });
 
 test("Toggle Text replaces a text gradient with the solid color Blender reports", async () => {
@@ -2090,7 +2585,7 @@ test("rapid package changes coalesce background scans and only the latest respon
   pending[1]({ revision: 7, placements: latest });
   await settlePageAction();
   assert.equal(scanCount, 3);
-  assert.deepEqual(bucketColors(root), ["#775599"]);
+  assert.deepEqual(bucketColors(root), ["#775599", "#775599", "#775599"]);
   assert.equal(applyBucketsButton(root).disabled, false);
   assert.equal(root.status.textContent, statusAfterPackages);
   assert.equal(root.dataset.busy, "false");
@@ -2138,7 +2633,7 @@ test("a late background response cannot overwrite newer gradient and text result
   await clickPageButton(root, "Toggle Text");
   finishStale({ revision: 3, placements: namedPlacements() });
   await settlePageAction();
-  assert.deepEqual(bucketColors(root), ["#771199"]);
+  assert.deepEqual(bucketColors(root), ["#771199", "#771199", "#771199"]);
   assert.equal(applyBucketsButton(root).disabled, false, "the newest complete response keeps its revision");
   assert.equal(scans, 2, "complete responses supersede the pending scan without queuing another");
 });
@@ -2198,9 +2693,9 @@ test("Grid controls follow Gradient 2 in Theme Palette and leave Place Picture g
   assert.equal(controls.children[0].querySelectorAll("input")[0]["aria-label"], "Grid");
   assert.equal(controls.children[1].querySelectorAll("span")[0].textContent, "Grid Scale");
   assert.equal(controls.children[2].querySelectorAll("span")[0].textContent, "Subdivisions (unitless)");
-  const picture = root.children[2];
-  assert.equal(picture.querySelectorAll("input").length, 1, "only the picture path remains");
-  assert.deepEqual(picture.querySelectorAll("button").map((button) => button.textContent), ["Browse", "Place Picture", "Clear"]);
+  const picture = palette.querySelectorAll("div").find((node) => classes(node).includes("theme-reference-row"));
+  assert.equal(picture.querySelectorAll("input").length, 0, "picture paths are no longer displayed");
+  assert.deepEqual(picture.querySelectorAll("button").slice(-2).map((button) => button.textContent), ["Clear Picture", "Place Picture"]);
 });
 
 test("spacing edits apply immediately while Grid is enabled", async () => {

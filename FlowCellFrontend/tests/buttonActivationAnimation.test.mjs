@@ -19,7 +19,10 @@ import {
 } from "./.compiled-button-system/button/runtime/latestDesiredRegistration.js";
 import {
   buildPlusRiseAnimationFrames,
+  BUTTON_ACTIVATION_ANIMATION_PRESETS,
   canButtonRunActivationAnimation,
+  consumeButtonAnimationPress,
+  getButtonActivationAnimationPreset,
   getButtonAnimationAspectRatio,
   normalizeButtonAnimationDesktopBounds,
   normalizeButtonAnimationEditorBounds,
@@ -27,6 +30,10 @@ import {
   resizeButtonAnimationEditorBounds,
   resolveButtonAnimationPlaybackBounds
 } from "./.compiled-button-system/button/animations/buttonActivationAnimations.js";
+import {
+  buildWindowContextUrl,
+  getWindowContextFromLocation
+} from "./.compiled-button-system/lib/windowContext.js";
 
 function deferred() {
   let resolve;
@@ -113,6 +120,105 @@ test("activation animations are available to executable and structural owner But
     ...makeExecutableButton(),
     executionTarget: null
   }), false);
+});
+
+test("Star Wars GIF survives canonical validation and animation window routing", () => {
+  const document = createButtonStateDocument();
+  document.buttons["animated-button"] = makeExecutableButton({
+    presetId: "star-wars-lightsaber",
+    desktopBounds: { left: 120, top: 80, width: 480, height: 268 }
+  });
+  assert.equal(validateButtonStateDocument(document).valid, true);
+  assert.ok(BUTTON_ACTIVATION_ANIMATION_PRESETS.some((preset) =>
+    preset.id === "star-wars-lightsaber" && preset.label === "Star Wars Lightsaber"
+  ));
+  const context = {
+    kind: "button-animation",
+    schemaVersion: 1,
+    mode: "play",
+    requestId: "gif-repeat",
+    buttonId: "animated-button",
+    presetId: "star-wars-lightsaber"
+  };
+  const previousWindow = globalThis.window;
+  try {
+    globalThis.window = { location: new URL(buildWindowContextUrl(context), "http://localhost") };
+    assert.deepEqual(getWindowContextFromLocation(), context);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
+test("Star Wars GIF uses one source cycle and its original aspect ratio without travel padding", () => {
+  assert.equal(getButtonActivationAnimationPreset("star-wars-lightsaber").durationMs, 3010);
+  const bounds = normalizeButtonAnimationEditorBounds("star-wars-lightsaber", {
+    left: 100, top: 200, width: 480, height: 900
+  });
+  assert.deepEqual(bounds, { left: 100, top: 200, width: 480, height: 268 });
+  assert.deepEqual(resolveButtonAnimationPlaybackBounds("star-wars-lightsaber", bounds), bounds);
+  const resized = resizeButtonAnimationEditorBounds({
+    presetId: "star-wars-lightsaber",
+    bounds,
+    direction: "East",
+    cursor: { x: 1060, y: 334 },
+    minimumWidth: 140
+  });
+  assert.deepEqual(resized, { left: 100, top: 66, width: 960, height: 536 });
+});
+
+test("random GIF cadence persists the pending interval and count across sessions", () => {
+  const data = new Map();
+  const session = () => ({
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => data.set(key, value)
+  });
+  const button = makeExecutableButton({
+    presetId: "star-wars-lightsaber",
+    desktopBounds: { left: 0, top: 0, width: 480, height: 268 }
+  });
+  const randomValues = [0, 0.999999, 0.34];
+  let rolls = 0;
+  const random = () => randomValues[rolls++];
+  const firstSession = session();
+  for (let press = 1; press <= 3; press += 1) {
+    assert.equal(consumeButtonAnimationPress(button, firstSession, random), false);
+  }
+  assert.deepEqual(JSON.parse([...data.values()][0]), { interval: 5, presses: 3 });
+  const reopenedSession = session();
+  assert.equal(consumeButtonAnimationPress(button, reopenedSession, random), false);
+  assert.equal(rolls, 1, "reopening must not reroll the pending interval");
+  assert.equal(consumeButtonAnimationPress(button, reopenedSession, random), true);
+  assert.deepEqual(JSON.parse([...data.values()][0]), { interval: 50, presses: 0 });
+  for (let press = 1; press < 50; press += 1) {
+    assert.equal(consumeButtonAnimationPress(button, reopenedSession, random), false);
+  }
+  assert.equal(consumeButtonAnimationPress(button, reopenedSession, random), true);
+  assert.deepEqual(JSON.parse([...data.values()][0]), { interval: 20, presses: 0 });
+  const otherButton = { ...button, id: "another-button" };
+  assert.equal(consumeButtonAnimationPress(otherButton, session(), () => 0), false);
+  assert.equal(data.size, 2, "different Buttons keep separate counters");
+});
+
+test("Plus Rise remains every-press and invalid GIF counters restart safely", () => {
+  const button = makeExecutableButton({
+    presetId: "plus-rise",
+    desktopBounds: { left: 0, top: 0, width: 283, height: 295 }
+  });
+  const unavailableStorage = {
+    getItem: () => { throw new Error("must not read"); },
+    setItem: () => { throw new Error("must not write"); }
+  };
+  assert.equal(consumeButtonAnimationPress(button, unavailableStorage), true);
+  button.activationAnimation.presetId = "star-wars-lightsaber";
+  for (const corrupt of ["broken", "null", "{}", '{"interval":999,"presses":1}', '{"interval":5,"presses":5}']) {
+    let written;
+    assert.equal(consumeButtonAnimationPress(button, {
+      getItem: () => corrupt,
+      setItem: (_key, value) => { written = value; }
+    }, () => 0), false);
+    assert.deepEqual(JSON.parse(written), { interval: 5, presses: 1 });
+  }
 });
 
 test("activation animation bounds use whole physical pixels for native Tauri placement", () => {

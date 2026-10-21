@@ -45,7 +45,13 @@
     aligned: "Bezier: drag either handle to bend the curve; the opposite handle stays in line.",
     free: "Broken: each handle moves on its own, for a sharp kink."
   };
+  const EFFECT_CHANNELS = {
+    highlight: { title: "Highlight", curveKey: "highlightCurve", angleKey: "highlightAngle", screenKey: "highlightScreenTopToBottom", effect: true },
+    glow: { title: "Glow", curveKey: "glowCurve", angleKey: "glowAngle", screenKey: "glowScreenTopToBottom", effect: true }
+  };
+  const EFFECT_SHAPE_KEYS = Object.values(EFFECT_CHANNELS).flatMap(({ curveKey, angleKey, screenKey }) => [curveKey, angleKey, screenKey]);
   const GRADIENT_CHANNELS = {
+    ...EFFECT_CHANNELS,
     fill: {
       title: buttonThemeConfig.fillTitle || "Button Fill",
       colorsKey: "gradientColors",
@@ -75,7 +81,8 @@
     activePackage: {
       path: "",
       name: "",
-      poppedButtonSettings: null
+      poppedButtonSettings: null,
+      poppedButtonAppearance: null
     },
     buttonTheme: {
       revision: null,
@@ -96,6 +103,12 @@
       textAngle: 0,
       textCurve: linearCurve(),
       textScreenTopToBottom: false,
+      highlightCurve: fullStrengthCurve(),
+      highlightAngle: 0,
+      highlightScreenTopToBottom: false,
+      glowCurve: fullStrengthCurve(),
+      glowAngle: 0,
+      glowScreenTopToBottom: false,
       idleEnabled: false,
       idleColor: "#FFFFFFCC",
       idleHighlightAmount: 0,
@@ -125,8 +138,12 @@
   let buttonThemeScanInFlight = false;
   let buttonThemeScanPending = false;
   let buttonThemeScanNote = "";
+  let buttonThemeUpdates = Promise.resolve();
+  let buttonThemeUpdateCount = 0;
+  const pendingButtonParticipation = new Map();
+  let buttonThemeBucketsNode = null;
   // Curve-editor selection and live redraw hooks are view state, never persisted.
-  const curveSelection = { fill: -1, text: -1 };
+  const curveSelection = { fill: -1, text: -1, highlight: -1, glow: -1 };
   const gradientRedraws = new Map();
 
   function cloneValue(value) {
@@ -152,6 +169,10 @@
 
   function linearCurve() {
     return [{ x: 0, y: 0, mode: "auto" }, { x: 1, y: 1, mode: "auto" }];
+  }
+
+  function fullStrengthCurve() {
+    return [{ x: 0, y: 1, mode: "auto" }, { x: 1, y: 1, mode: "auto" }];
   }
 
   function inUnitRange(value, minimum, maximum) {
@@ -359,6 +380,7 @@
     ["button", "input", "select"].forEach((tag) => root.querySelectorAll(tag).forEach((control) => {
       control.disabled = nextBusy ||
         (control.dataset.paletteEdit === "true" && !Number.isSafeInteger(model.buttonTheme.revision)) ||
+        (control.type === "checkbox" && pendingButtonParticipation.has(control.dataset.placementId)) ||
         control.dataset.curveDisabled === "true";
     }));
     if (!nextBusy) startButtonThemeScan();
@@ -374,12 +396,14 @@
   async function requestAction(actionId, payload, progressMessage, withinOperation = false) {
     if ((busy && !withinOperation) || typeof actionId !== "string" || !actionId) return null;
     if (!withinOperation) setBusy(true);
-    if ([buttonThemeActions.apply, buttonThemeActions.refill, buttonThemeActions.toggleText, buttonThemeActions.edit].includes(actionId) ||
-        (actionId === buttonThemeActions.settings && payload?.settings)) {
-      invalidateButtonThemeScan();
-    }
     setStatus(progressMessage || copy.working || "Working…");
     try {
+      await buttonThemeUpdates;
+      if (payload && Object.hasOwn(payload, "expectedRevision")) payload.expectedRevision = model.buttonTheme.revision;
+      if ([buttonThemeActions.apply, buttonThemeActions.refill, buttonThemeActions.toggleText, buttonThemeActions.edit].includes(actionId) ||
+          (actionId === buttonThemeActions.settings && payload?.settings)) {
+        invalidateButtonThemeScan();
+      }
       const response = await pageApi.request(actionId, payload || {});
       const record = objectRecord(response) || {};
       const statusKind = record.changedCount === 0 ? "info" : "success";
@@ -680,12 +704,7 @@
     placements.forEach(({ bucketId }) => counts.set(bucketId, (counts.get(bucketId) || 0) + 1));
     return buckets
       .map((bucket) => ({ ...bucket, count: counts.get(bucket.id) || 0 }))
-      .filter((bucket) => bucket.count > 0)
-      .sort((left, right) => {
-        if (left.kind !== right.kind) return left.kind === "surface" ? -1 : 1;
-        if (left.kind === "surface") return hexLuminance(left.color) - hexLuminance(right.color) || left.color.localeCompare(right.color);
-        return left.id.localeCompare(right.id);
-      });
+      .filter((bucket) => bucket.count > 0);
   }
 
   function scannedButtonThemePalette(value) {
@@ -697,9 +716,7 @@
       if (!placementId) return;
       const color = normalizeHex(placement.color);
       const materialColors = color ? [] : normalizeMaterialColors(placement.materialColors);
-      const bucketId = color
-        ? `surface:${color}`
-        : `material:${materialColors.join("|") || "unresolved"}`;
+      const bucketId = `button:${placementId}`;
       if (!bucketById.has(bucketId)) {
         bucketById.set(bucketId, color
           ? { id: bucketId, kind: "surface", color, materialColors: [] }
@@ -707,6 +724,7 @@
       }
       placementById.set(placementId, {
         placementId, bucketId, color,
+        enabled: placement.enabled !== false,
         label: typeof placement.label === "string" && placement.label.trim() ? placement.label.trim() : "Button",
         groupLabel: typeof placement.groupLabel === "string" ? placement.groupLabel : "Blender",
         textColor: normalizeEffectColor(placement.textColor) || model.buttonTheme.textColor
@@ -719,7 +737,7 @@
     };
   }
 
-  function adoptButtonThemeResponse(response, fromScan = false) {
+  function adoptButtonThemeResponse(response, fromScan = false, renderAfter = true) {
     const record = objectRecord(response);
     if (!record || !Array.isArray(record.placements) || !Number.isSafeInteger(record.revision)) return false;
     if (!fromScan) {
@@ -732,7 +750,7 @@
     model.buttonTheme.buckets = palette.buckets;
     buttonThemeScanNote = "";
     schedulePersistence();
-    render();
+    if (renderAfter) render();
     return true;
   }
 
@@ -750,7 +768,7 @@
   }
 
   function startButtonThemeScan() {
-    if (busy || buttonThemeScanInFlight || !buttonThemeScanPending) return;
+    if (busy || buttonThemeUpdateCount || buttonThemeScanInFlight || !buttonThemeScanPending) return;
     buttonThemeScanPending = false;
     buttonThemeScanInFlight = true;
     const generation = buttonThemeScanGeneration;
@@ -884,12 +902,12 @@
     if (!Number.isSafeInteger(settings.seed)) return null;
     result.seed = settings.seed;
     // Gradient shape keys are optional so packages saved before them stay valid.
-    for (const key of ["angle", "textAngle"]) {
+    for (const key of ["angle", "textAngle", "highlightAngle", "glowAngle"]) {
       if (settings[key] === undefined) continue;
       if (!inUnitRange(settings[key], -360, 360)) return null;
       result[key] = settings[key];
     }
-    for (const key of ["curve", "textCurve"]) {
+    for (const key of ["curve", "textCurve", "highlightCurve", "glowCurve"]) {
       if (settings[key] === undefined) continue;
       const curve = normalizeCurve(settings[key]);
       if (!curve) return null;
@@ -900,26 +918,39 @@
       if (textColors.length < 2 || textColors.length !== settings.textColors?.length) return null;
       result.textColors = textColors;
     }
-    if (settings.textScreenTopToBottom !== undefined) {
-      if (typeof settings.textScreenTopToBottom !== "boolean") return null;
-      result.textScreenTopToBottom = settings.textScreenTopToBottom;
+    for (const key of ["textScreenTopToBottom", "highlightScreenTopToBottom", "glowScreenTopToBottom"]) {
+      if (settings[key] === undefined) continue;
+      if (typeof settings[key] !== "boolean") return null;
+      result[key] = settings[key];
     }
     return result;
   }
 
   function buttonThemeEffects() {
-    return Object.fromEntries([
+    const effects = Object.fromEntries([
       "hoverEnabled", "activeEnabled", "hoverColor", "activeColor",
       "hoverHighlightAmount", "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount",
       "idleEnabled", "idleColor", "idleHighlightAmount", "idleGlowAmount"
     ].map((key) => [key, model.buttonTheme[key]]));
+    for (const { curveKey, angleKey, screenKey } of Object.values(EFFECT_CHANNELS)) {
+      // Omit the legacy-equivalent defaults from portable settings.
+      if (JSON.stringify(model.buttonTheme[curveKey]) !== JSON.stringify(fullStrengthCurve())) effects[curveKey] = cloneValue(model.buttonTheme[curveKey]);
+      if (model.buttonTheme[angleKey] !== 0) effects[angleKey] = model.buttonTheme[angleKey];
+      if (model.buttonTheme[screenKey]) effects[screenKey] = true;
+    }
+    return effects;
   }
 
   function adoptPoppedButtonSettings(value, adoptGradient = true, adoptText = adoptGradient) {
     const settings = normalizePoppedButtonSettings(value);
     if (!settings) return null;
     model.buttonTheme.lastAppliedSettings = cloneValue(settings);
-    for (const key of Object.keys(buttonThemeEffects())) model.buttonTheme[key] = settings[key] ?? ({ idleEnabled: false, idleColor: "#FFFFFFCC", idleHighlightAmount: 0, idleGlowAmount: 0 })[key];
+    for (const key of Object.keys(buttonThemeEffects()).filter((key) => !EFFECT_SHAPE_KEYS.includes(key))) model.buttonTheme[key] = settings[key] ?? ({ idleEnabled: false, idleColor: "#FFFFFFCC", idleHighlightAmount: 0, idleGlowAmount: 0 })[key];
+    for (const { curveKey, angleKey, screenKey } of Object.values(EFFECT_CHANNELS)) {
+      model.buttonTheme[curveKey] = cloneValue(settings[curveKey] || fullStrengthCurve());
+      model.buttonTheme[angleKey] = settings[angleKey] ?? 0;
+      model.buttonTheme[screenKey] = settings[screenKey] === true;
+    }
     if (adoptGradient) {
       model.buttonTheme.gradientColors = settings.colors.length === 1
         ? [settings.colors[0], settings.colors[0]]
@@ -954,12 +985,12 @@
     return settings;
   }
 
-  async function applyPoppedButtonSettings(settings, withinOperation = false, resetOverrides = false, adoptGradient = true) {
+  async function applyPoppedButtonSettings(settings, withinOperation = false, resetOverrides = false, adoptGradient = true, buttonAppearance = null) {
     if (busy && !withinOperation) return null;
     if (!withinOperation) setBusy(true);
     try {
       const response = await requestAction(buttonThemeActions.settings, {
-        settings, ...(resetOverrides ? { resetOverrides: true } : {})
+        settings, ...(resetOverrides ? { resetOverrides: true } : {}), ...(buttonAppearance ? { buttonAppearance } : {})
       }, "Applying Blender popped Button settings…", true);
       if (!response) return null;
       const applied = adoptPoppedButtonSettings(response.settings, adoptGradient);
@@ -982,7 +1013,10 @@
     try {
       const settings = await readPoppedButtonSettings(true);
       // Staged Fill and Text gradients wait for their own Apply buttons.
-      if (settings) await applyPoppedButtonSettings({ ...settings, ...effects }, true, false, false);
+      if (settings) {
+        const base = Object.fromEntries(Object.entries(settings).filter(([key]) => !EFFECT_SHAPE_KEYS.includes(key)));
+        await applyPoppedButtonSettings({ ...base, ...effects }, true, false, false);
+      }
     } finally {
       setBusy(false);
     }
@@ -1022,7 +1056,7 @@
       return;
     }
     const settings = model.activePackage.poppedButtonSettings;
-    if (settings && !await applyPoppedButtonSettings(settings, false, true)) {
+    if (settings && !await applyPoppedButtonSettings(settings, false, true, true, model.activePackage.poppedButtonAppearance)) {
       render();
       return;
     }
@@ -1076,6 +1110,11 @@
       ? state.textScreenTopToBottom
       : model.buttonTheme.textScreenTopToBottom;
     model.buttonTheme.revision = Number.isSafeInteger(state.revision) ? state.revision : null;
+    for (const { curveKey, angleKey, screenKey } of Object.values(EFFECT_CHANNELS)) {
+      model.buttonTheme[curveKey] = normalizeCurve(state[curveKey]) || model.buttonTheme[curveKey];
+      model.buttonTheme[angleKey] = normalizeAngle(finiteNumber(state[angleKey], model.buttonTheme[angleKey]));
+      if (typeof state[screenKey] === "boolean") model.buttonTheme[screenKey] = state[screenKey];
+    }
 
     const bucketById = new Map();
     (Array.isArray(state.buckets) ? state.buckets : []).forEach((entry) => {
@@ -1101,6 +1140,7 @@
       const bucketId = typeof placement?.bucketId === "string" ? placement.bucketId.trim() : "";
       if (placementId && bucketById.has(bucketId)) placementById.set(placementId, {
         placementId, bucketId,
+        enabled: placement.enabled !== false,
         color: normalizeHex(placement.color) || bucketById.get(bucketId).color,
         label: typeof placement.label === "string" && placement.label.trim() ? placement.label.trim() : "Button",
         groupLabel: typeof placement.groupLabel === "string" ? placement.groupLabel : "Blender",
@@ -1164,6 +1204,19 @@
     return response;
   }
 
+  async function placePicture() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const selection = await requestAction(actions.picture.select, {}, copy.selectingPicture, true);
+      if (!selection?.selected) return;
+      patchFields({ [config.picture.pathFieldId]: selection.path });
+      await applyPicture(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function browseTheme() {
     const imageFieldId = config.palette.imageFieldId;
     const selection = await requestAction(
@@ -1208,10 +1261,79 @@
   }
 
   async function rescanButtonTheme() {
+    await drainButtonThemeUpdates();
     if (!busy) queueButtonThemeScan();
   }
 
+  function synchronizeButtonThemeRows() {
+    if (!buttonThemeBucketsNode) return;
+    const buckets = new Map(model.buttonTheme.buckets.map((bucket) => [bucket.id, bucket]));
+    const placements = new Map(model.buttonTheme.placements.map((placement) => [placement.placementId, placement]));
+    for (const row of buttonThemeBucketsNode.children) {
+      const placement = placements.get(row.dataset.placementId);
+      const bucket = placement && buckets.get(placement.bucketId);
+      if (!bucket) continue;
+      row.className = `button-theme-bucket button-theme-bucket--${bucket.kind}`;
+      for (const input of row.querySelectorAll("input")) {
+        if (input.type === "checkbox") input.checked = pendingButtonParticipation.get(placement.placementId) ?? placement.enabled !== false;
+        else if (document.activeElement === input) continue;
+        else if (input.type === "text") input.value = bucket.color || "";
+        else if (input.type === "color" && bucket.color) input.value = bucket.color;
+      }
+    }
+    setBusy(busy);
+  }
+
+  async function drainButtonThemeUpdates() {
+    let pending;
+    do {
+      pending = buttonThemeUpdates;
+      await pending;
+    } while (pending !== buttonThemeUpdates);
+  }
+
+  function queueButtonThemeUpdate(actionId, payload, placementId) {
+    buttonThemeUpdateCount += 1;
+    const job = buttonThemeUpdates.then(async () => {
+      try {
+        if (!Number.isSafeInteger(model.buttonTheme.revision)) throw new Error("Press Rescan before editing Buttons.");
+        const response = await pageApi.request(actionId, { ...payload, expectedRevision: model.buttonTheme.revision });
+        // Preserve edits made while the background request was running.
+        const buckets = new Map(model.buttonTheme.buckets.map((bucket) => [bucket.id, bucket]));
+        const staged = new Map(model.buttonTheme.placements.flatMap((placement) => {
+          const color = buckets.get(placement.bucketId)?.color;
+          return color && color !== placement.color ? [[placement.placementId, color]] : [];
+        }));
+        if (!adoptButtonThemeResponse(response, false, false)) throw new Error("The Button update returned an invalid palette. Press Rescan.");
+        for (const placement of model.buttonTheme.placements) {
+          const color = staged.get(placement.placementId);
+          const bucket = model.buttonTheme.buckets.find((entry) => entry.id === placement.bucketId);
+          if (color && bucket) Object.assign(bucket, { kind: "surface", color });
+        }
+        schedulePersistence();
+        setStatus(responseMessage(response, copy.complete || "Complete."), "success");
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : String(error), "error");
+      } finally {
+        if (actionId === buttonThemeActions.participation) pendingButtonParticipation.delete(placementId);
+        buttonThemeUpdateCount -= 1;
+        synchronizeButtonThemeRows();
+      }
+    });
+    buttonThemeUpdates = job;
+    setBusy(busy);
+    return job;
+  }
+
+  function setButtonThemeParticipation(placementId, enabled) {
+    if (busy || pendingButtonParticipation.has(placementId) || !Number.isSafeInteger(model.buttonTheme.revision)) return;
+    pendingButtonParticipation.set(placementId, enabled);
+    return queueButtonThemeUpdate(buttonThemeActions.participation, { placementIds: [placementId], enabled }, placementId);
+  }
+
   async function applyButtonThemeBuckets() {
+    await drainButtonThemeUpdates();
+    if (busy) return;
     let assignments;
     try {
       assignments = buttonThemeAssignments();
@@ -1371,15 +1493,59 @@
     if (response && response.selected !== false) applySavedFields(response);
   }
 
+  function normalizePoppedButtonAppearance(value) {
+    const record = objectRecord(value);
+    if (!record || record.version !== 1 || !Array.isArray(record.placements)) return null;
+    const seen = new Set();
+    const placements = [];
+    for (const entry of record.placements) {
+      if (!objectRecord(entry) || typeof entry.placementId !== "string" || !entry.placementId.trim() ||
+        typeof entry.buttonId !== "string" || !entry.buttonId.trim()) return null;
+      const key = JSON.stringify([entry.placementId, entry.buttonId]);
+      if (seen.has(key)) return null;
+      seen.add(key);
+      const color = entry.color === undefined ? undefined : normalizeHex(entry.color);
+      const textColor = entry.textColor === undefined ? undefined : normalizeEffectColor(entry.textColor);
+      if (color === null || textColor === null || (entry.lockedAppearance !== undefined && !objectRecord(entry.lockedAppearance))) return null;
+      placements.push({ placementId: entry.placementId, buttonId: entry.buttonId,
+        ...(color ? { color } : {}), ...(textColor ? { textColor } : {}),
+        ...(entry.lockedAppearance ? { lockedAppearance: cloneValue(entry.lockedAppearance) } : {}) });
+    }
+    return { version: 1, placements };
+  }
+
+  function packageButtonAppearance(response) {
+    const appearance = normalizePoppedButtonAppearance(response?.buttonAppearance);
+    if (!appearance || !Array.isArray(response.placementLinks)) throw new Error("Button appearances could not be captured. The package was not saved.");
+    const links = new Map(response.placementLinks.map((entry) => [entry.paletteId, entry]));
+    const records = new Map(appearance.placements.map((entry) => [JSON.stringify([entry.placementId, entry.buttonId]), entry]));
+    const buckets = new Map(model.buttonTheme.buckets.map((bucket) => [bucket.id, bucket]));
+    for (const placement of model.buttonTheme.placements) {
+      const bucket = buckets.get(placement.bucketId);
+      if (bucket?.kind !== "surface" || bucket.color === placement.color) continue;
+      const link = links.get(placement.placementId);
+      if (!link) throw new Error("A changed Button is no longer open. Reopen it and rescan before saving the package.");
+      const key = JSON.stringify([link.placementId, link.buttonId]);
+      const previous = records.get(key);
+      records.set(key, { ...previous, placementId: link.placementId, buttonId: link.buttonId, color: bucket.color,
+        ...(previous?.lockedAppearance ? { lockedAppearance: {
+          ...previous.lockedAppearance, colors: { ...previous.lockedAppearance.colors, surface: bucket.color }
+        } } : {}) });
+    }
+    return { version: 1, placements: [...records.values()] };
+  }
+
   async function savePackage() {
     if (busy) return;
     setBusy(true);
     try {
-      const settings = await readPoppedButtonSettings(true);
+      const captured = await requestAction(buttonThemeActions.settings, { captureAppearance: true }, "Reading Button appearances…", true);
+      const settings = adoptPoppedButtonSettings(captured?.settings, false);
       if (!settings) return;
+      const appearance = packageButtonAppearance(captured);
       const response = await requestAction(
         actions.theme.savePackage,
-        { values: { ...pickFields(config.persistence.packageFieldIds), popped_button_settings: settings } },
+        { values: { ...pickFields(config.persistence.packageFieldIds), popped_button_settings: settings, popped_button_appearance: appearance } },
         copy.savingPackage,
         true
       );
@@ -1387,9 +1553,13 @@
       model.activePackage = {
         path: String(response.packagePath || response.path || ""),
         name: String(response.packageName || response.name || ""),
-        poppedButtonSettings: cloneValue(settings)
+        poppedButtonSettings: cloneValue(settings),
+        poppedButtonAppearance: cloneValue(appearance)
       };
       schedulePersistence();
+      render();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error), "error");
     } finally {
       setBusy(false);
     }
@@ -1410,6 +1580,11 @@
       if (!response || response.selected === false) return;
       const patch = objectRecord(response.fieldPatch) || objectRecord(response.values) || {};
       const savedSettings = normalizePoppedButtonSettings(patch.popped_button_settings);
+      const savedAppearance = normalizePoppedButtonAppearance(patch.popped_button_appearance);
+      if (Object.prototype.hasOwnProperty.call(patch, "popped_button_appearance") && !savedAppearance) {
+        setStatus("This package contains invalid Button appearances. The package was not applied.", "error");
+        return;
+      }
       if (Object.prototype.hasOwnProperty.call(patch, "popped_button_settings") && !savedSettings) {
         setStatus("This package contains invalid popped Button settings. The package was not applied.", "error");
         return;
@@ -1420,13 +1595,14 @@
       model.activePackage = {
         path: String(response.packagePath || response.path || ""),
         name: String(response.packageName || response.name || ""),
-        poppedButtonSettings: cloneValue(previousSettings)
+        poppedButtonSettings: cloneValue(previousSettings),
+        poppedButtonAppearance: cloneValue(savedAppearance)
       };
       schedulePersistence();
       // Popped Buttons apply independently of Blender's picture/theme bridge.
       let settingsError = "";
       if (!model.buttonTheme.lockSettings && savedSettings) {
-        if (!await applyPoppedButtonSettings(savedSettings, true, true)) settingsError = statusNode.textContent;
+        if (!await applyPoppedButtonSettings(savedSettings, true, true, true, savedAppearance)) settingsError = statusNode.textContent;
       }
       let pictureResponse = null;
       if (String(model.fields[config.picture.pathFieldId] || "").trim()) {
@@ -1596,13 +1772,14 @@
   function renderThemeCard() {
     const { section, heading } = makeCard(copy.themeSectionTitle);
     renderPalette(heading);
-    const imageField = fieldById.get(config.palette.imageFieldId);
-    const imageRow = element("div", "theme-row");
+    const imageRow = element("div", "theme-row theme-reference-row");
     imageRow.append(
-      labeledField(imageField, "theme-field--path"),
       actionButton(actions.theme.select, browseTheme),
+      element("span", "theme-package-name", model.activePackage.name),
       actionButton(actions.theme.absorb, absorbTheme),
-      actionButton(localActions.refill, refillTheme)
+      actionButton(localActions.refill, refillTheme),
+      actionButton(actions.picture.clear, () => runPictureAction(actions.picture.clear, {}, copy.clearingPicture)),
+      actionButton(actions.picture.apply, placePicture)
     );
     section.append(imageRow);
 
@@ -1633,7 +1810,7 @@
     const spec = GRADIENT_CHANNELS[channel];
     const colors = () => model.buttonTheme[spec.colorsKey];
     const labelText = gradientStopLabel(channel, index);
-    const control = element("label", "button-theme-gradient__color");
+    const control = element("div", "button-theme-gradient__color");
     control.append(element("span", "button-theme-gradient__label", labelText));
     const inputs = element("span", "button-theme-gradient__color-inputs");
     const picker = document.createElement("input");
@@ -1658,8 +1835,31 @@
       redrawGradientChannel(channel);
     };
     picker.addEventListener("input", () => update(picker.value));
+    picker.addEventListener("change", () => update(picker.value));
     textInput.addEventListener("change", () => update(textInput.value));
-    inputs.append(picker, textInput);
+    const eyedropper = actionButton(buttonThemeActions.pickColor, async () => {
+      if (busy) return;
+      setBusy(true);
+      setStatus("Click a screen color. Escape or right-click cancels.");
+      try {
+        const response = await pageApi.request(buttonThemeActions.pickColor, {});
+        if (response?.selected === false) {
+          setStatus("Color picking canceled.");
+        } else {
+          const color = normalizeHex(response.color);
+          if (!color) throw new Error("The screen picker returned an invalid color.");
+          update(color);
+          setStatus(`${spec.ariaPrefix}${labelText}: ${color}`, "success");
+        }
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : String(error), "error");
+      } finally {
+        setBusy(false);
+      }
+    });
+    eyedropper.className = "button-theme-gradient__pick";
+    eyedropper.setAttribute("aria-label", `${spec.ariaPrefix}${labelText} screen eyedropper`);
+    inputs.append(picker, textInput, eyedropper);
     control.append(inputs);
     return control;
   }
@@ -1704,7 +1904,7 @@
     const key = GRADIENT_CHANNELS[channel].screenKey;
     const control = element("label", "button-theme-gradient__screen-toggle");
     control.title = buttonThemeConfig.screenTopToBottomTooltip ||
-      "Run from the highest visible popped Button to the lowest on each monitor. Angle applies only when Whole Layout is off.";
+      "Span all visible popped Buttons on each monitor along the Angle. Otherwise, span each window separately.";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = model.buttonTheme[key] === true;
@@ -1794,7 +1994,7 @@
   function channelGradient(channel) {
     const spec = GRADIENT_CHANNELS[channel];
     return {
-      colors: model.buttonTheme[spec.colorsKey],
+      colors: spec.effect ? ["#000000", "#FFFFFF"] : model.buttonTheme[spec.colorsKey],
       curve: model.buttonTheme[spec.curveKey],
       angle: model.buttonTheme[spec.angleKey],
       spread: channel === "fill" ? model.buttonTheme.spread : 100
@@ -1879,7 +2079,7 @@
       { x: 0.75, y: 1, mode: "auto" }, { x: 1, y: 0, mode: "auto" }
     ]],
     ["Steps", "Solid bands, one per color, with hard edges.", (channel) => stepsCurve(
-      model.buttonTheme[GRADIENT_CHANNELS[channel].colorsKey].length
+      GRADIENT_CHANNELS[channel].effect ? 4 : model.buttonTheme[GRADIENT_CHANNELS[channel].colorsKey].length
     )]
   ];
 
@@ -2022,13 +2222,20 @@
   function renderGradientCurveEditor(channel) {
     const spec = GRADIENT_CHANNELS[channel];
     const editor = element("div", "gradient-curve");
+    const yMeaning = spec.effect ? `${spec.title} strength` : "Color progression";
+    const axisDescription = `X: Button position from start (0%) to end (100%). Y: ${yMeaning.toLowerCase()} from 0% at the bottom to 100% at the top.`;
     const box = svgElement("svg", {
       class: "gradient-curve__box",
-      viewBox: "-10 -4 114 121",
+      viewBox: "-32 -8 139 146",
       tabindex: "0",
       role: "application",
-      "aria-label": `${spec.title} gradient curve. Click to add a point, drag points or handles, double-click a point to delete it.`
+      "aria-label": `${spec.title} ${spec.effect ? "strength" : "gradient"} curve. ${axisDescription} Click to add a point, drag points or handles, double-click a point to delete it.`
     });
+    const axisLabel = (text, attributes) => {
+      const label = svgElement("text", { class: "gradient-curve__axis", ...attributes });
+      label.textContent = text;
+      return label;
+    };
     const stopsGradient = svgElement("linearGradient", { id: `${channel}-curve-stops`, x1: 0, y1: 1, x2: 0, y2: 0 });
     const resultGradient = svgElement("linearGradient", { id: `${channel}-curve-result`, x1: 0, y1: 0, x2: 1, y2: 0 });
     const defs = svgElement("defs");
@@ -2041,12 +2248,22 @@
       svgElement("line", { class: "gradient-curve__diagonal", x1: 0, y1: 100, x2: 100, y2: 0 }),
       svgElement("rect", { class: "gradient-curve__strip", x: -8.5, y: 0, width: 5, height: 100, rx: 1, fill: `url(#${channel}-curve-stops)` }),
       svgElement("rect", { class: "gradient-curve__strip", x: 0, y: 104, width: 100, height: 10, rx: 1.5, fill: `url(#${channel}-curve-result)` }),
+      axisLabel(`Y · ${yMeaning} (%)`, { x: -26, y: 50, transform: "rotate(-90 -26 50)", "text-anchor": "middle" }),
+      axisLabel("100%", { x: -11, y: 2, "text-anchor": "end" }),
+      axisLabel("0%", { x: -11, y: 100, "text-anchor": "end" }),
+      axisLabel("0% · Start", { x: 0, y: 123 }),
+      axisLabel("End · 100%", { x: 100, y: 123, "text-anchor": "end" }),
+      axisLabel("X · Button position (%)", { x: 50, y: 134, "text-anchor": "middle" }),
       dynamic
     );
 
     const tools = element("div", "gradient-curve__tools");
     const presets = element("div", "gradient-curve__presets");
-    CURVE_PRESETS.forEach(([label, tooltip, build]) => {
+    const presetsForChannel = spec.effect
+      ? [["Full", "Use the full state amount at every position.", fullStrengthCurve],
+        ["Fade", "Full strength at Start, fading to zero at End. At 0 degrees, fade from top to bottom.", () => flippedCurve(linearCurve())], ...CURVE_PRESETS]
+      : CURVE_PRESETS;
+    presetsForChannel.forEach(([label, tooltip, build]) => {
       const button = curveToolButton("", `${label}: ${tooltip}`, () => replaceCurve(channel, build(channel)));
       button.className = "gradient-curve__tool gradient-curve__preset";
       button.setAttribute("aria-label", `${label} curve`);
@@ -2055,11 +2272,12 @@
     });
     const transforms = element("div", "gradient-curve__row");
     transforms.append(
-      curveToolButton("Flip", "Turn the curve upside down so the colors run in reverse.", () =>
+      curveToolButton("Flip", spec.effect ? "Invert the strength: full becomes off and off becomes full." : "Turn the curve upside down so the colors run in reverse.", () =>
         replaceCurve(channel, flippedCurve(editableCurve(channel)))),
       curveToolButton("Mirror", "Mirror the curve left to right.", () =>
         replaceCurve(channel, mirroredCurve(editableCurve(channel)))),
-      curveToolButton("Reset", "Return to a straight line.", () => replaceCurve(channel, linearCurve()))
+      curveToolButton("Reset", spec.effect ? "Use full strength at every position." : "Return to a straight line.", () =>
+        replaceCurve(channel, spec.effect ? fullStrengthCurve() : linearCurve()))
     );
     const pointPanel = element("div", "gradient-curve__point");
     const pointLabel = element("span", "gradient-curve__point-label");
@@ -2078,7 +2296,7 @@
       input.min = "0";
       input.max = "100";
       input.step = "0.1";
-      input.setAttribute("aria-label", `${spec.title} point ${labelText.toLowerCase()} percent`);
+      input.setAttribute("aria-label", `${spec.title} point ${axis === "x" ? "position" : spec.effect ? "strength" : "color progression"} percent`);
       input.addEventListener("change", () => {
         const index = curveSelection[channel];
         const value = Number(input.value) / 100;
@@ -2090,14 +2308,18 @@
       field.append(element("span", "", labelText), input);
       return { field, input };
     };
-    const position = numberField("Position", "x");
-    const value = numberField("Value", "y");
+    const position = numberField("X Position", "x");
+    const value = numberField(spec.effect ? "Y Strength" : "Y Color", "y");
     const remove = curveToolButton("Delete", "Delete the selected point.", () =>
       deleteCurvePoint(channel, curveSelection[channel]));
     const fields = element("div", "gradient-curve__row");
     fields.append(position.field, value.field, remove);
     pointPanel.append(pointLabel, modes, fields);
-    tools.append(presets, transforms, pointPanel, element("p", "gradient-curve__hint",
+    tools.append(element("p", "gradient-curve__axes-help",
+      `Position follows Angle; Whole Layout spans all visible Buttons on each monitor. ${spec.effect
+        ? "Strength: 0% is off; 100% uses the full Regular/Hover/Active amount."
+        : "Color: 0% is the first color; 100% is the last color."}`),
+    presets, transforms, pointPanel, element("p", "gradient-curve__hint",
       "Click the box to add a point. Drag points or handles; double-click or Delete removes a point. Shift snaps, Alt breaks a handle."));
     editor.append(box, tools);
 
@@ -2392,52 +2614,71 @@
   }
 
   function updateButtonThemeBucketColor(bucket, value, picker, textInput) {
+    bucket = model.buttonTheme.buckets.find((entry) => entry.id === bucket.id) || bucket;
     const color = normalizeHex(value);
     if (!color) {
-      textInput.value = bucket.color;
-      return;
+      textInput.value = bucket.color || "";
+      return false;
     }
+    bucket.kind = "surface";
     bucket.color = color;
     picker.value = color;
     textInput.value = color;
     schedulePersistence();
+    return true;
+  }
+
+  function commitButtonThemeColor(bucket, value, picker, textInput) {
+    if (busy || !updateButtonThemeBucketColor(bucket, value, picker, textInput)) return;
+    const placement = model.buttonTheme.placements.find((entry) => entry.bucketId === bucket.id);
+    if (!placement) return;
+    return queueButtonThemeUpdate(buttonThemeActions.edit, {
+      edits: [{ placementId: placement.placementId, color: normalizeHex(value) }]
+    }, placement.placementId);
   }
 
   function renderButtonThemeBucket(bucket) {
     const node = element("div", `button-theme-bucket button-theme-bucket--${bucket.kind}`);
-    const countLabel = `${bucket.count} Button${bucket.count === 1 ? "" : "s"}`;
-    if (bucket.kind === "surface") {
-      node.title = `${bucket.color} is currently present on ${countLabel}.`;
-      node.append(element("div", "button-theme-bucket__label", `Surface · ${countLabel}`));
-      const controls = element("div", "button-theme-bucket__controls");
-      const picker = document.createElement("input");
-      picker.type = "color";
-      picker.value = bucket.color;
-      const textInput = document.createElement("input");
-      textInput.type = "text";
-      textInput.value = bucket.color;
-      picker.addEventListener("input", () => updateButtonThemeBucketColor(bucket, picker.value, picker, textInput));
-      textInput.addEventListener("change", () => updateButtonThemeBucketColor(bucket, textInput.value, picker, textInput));
-      controls.append(picker, textInput);
-      node.append(controls);
-      return node;
+    const placements = model.buttonTheme.placements.filter(({ bucketId }) => bucketId === bucket.id);
+    node.dataset.placementId = placements[0]?.placementId || "";
+    const names = [...new Set(placements.map(({ label }) => label))].join(", ");
+    const labels = element("div", "button-theme-bucket__label");
+    for (const placement of placements) {
+      const label = element("label", "button-theme-bucket__participation");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = pendingButtonParticipation.get(placement.placementId) ?? placement.enabled !== false;
+      checkbox.dataset.paletteEdit = "true";
+      checkbox.dataset.placementId = placement.placementId;
+      checkbox.setAttribute("aria-label", `Apply theme to ${placement.label}`);
+      label.title = "Checked: include this Button in gradients and bulk theme changes. Unchecked: exclude it from those changes. Its own color is always editable.";
+      checkbox.addEventListener("change", () => void setButtonThemeParticipation(placement.placementId, checkbox.checked));
+      label.append(checkbox, element("span", "", placement.label));
+      labels.append(label);
     }
-
-    node.title = copy.buttonThemeMaterialTooltip ||
-      "These exact skin material colors have no single Surface root. Refill creates an editable Surface color.";
-    node.append(element("div", "button-theme-bucket__label", `Skin materials · ${countLabel}`));
-    const swatches = element("div", "button-theme-bucket__materials");
-    if (bucket.materialColors.length === 0) {
-      swatches.append(element("span", "button-theme-bucket__unresolved", "No editable Surface root"));
-    } else {
-      bucket.materialColors.forEach((color) => {
-        const swatch = element("span", "button-theme-bucket__material");
-        swatch.title = color;
-        swatch.style.backgroundColor = color;
-        swatches.append(swatch);
-      });
-    }
-    node.append(swatches);
+    node.append(labels);
+    node.title = `${names}\nEdit only this Button's color, whether its checkbox is checked or unchecked.`;
+    const controls = element("div", "button-theme-bucket__controls");
+    const picker = document.createElement("input");
+    picker.type = "color";
+    // A material-only skin has no single current Surface color. The blank hex
+    // remains unset until the user explicitly chooses one; no color is inferred.
+    picker.value = bucket.color || opaqueButtonThemeColor(bucket.materialColors[0]) || "#FFFFFF";
+    picker.setAttribute("aria-label", `${names} color picker`);
+    const textInput = document.createElement("input");
+    textInput.type = "text";
+    textInput.value = bucket.color || "";
+    textInput.placeholder = "Set color";
+    textInput.setAttribute("aria-label", `${names} color`);
+    for (const input of [picker, textInput]) input.dataset.paletteEdit = "true";
+    picker.addEventListener("input", () => updateButtonThemeBucketColor(bucket, picker.value, picker, textInput));
+    picker.addEventListener("change", () => void commitButtonThemeColor(bucket, picker.value, picker, textInput));
+    textInput.addEventListener("input", () => {
+      if (normalizeHex(textInput.value)) updateButtonThemeBucketColor(bucket, textInput.value, picker, textInput);
+    });
+    textInput.addEventListener("change", () => void commitButtonThemeColor(bucket, textInput.value, picker, textInput));
+    controls.append(picker, textInput);
+    node.append(controls);
     return node;
   }
 
@@ -2480,6 +2721,7 @@
 
     if (model.buttonTheme.buckets.length) {
       const buckets = element("div", "button-theme-buckets");
+      buttonThemeBucketsNode = buckets;
       model.buttonTheme.buckets.forEach((bucket) => buckets.append(renderButtonThemeBucket(bucket)));
       section.append(buckets);
     }
@@ -2526,7 +2768,7 @@
     const heading = element("div", "theme-card__heading");
     heading.append(element("h3", "", "Highlights and Glow"));
     const description = element("p", "button-theme-effects__help",
-      "Set highlights and glow separately for Regular, Hover, and Active buttons. Regular applies while a button is neither hovered nor active. The lock above includes all three groups and both gradients."
+      "Set amounts for Regular, Hover, and Active buttons. Each spatial curve scales those amounts from 0% to 100% across the Button layout. Regular applies while neither hovered nor active. The lock includes both curves."
     );
     const grid = element("div", "button-theme-effects__grid");
     for (const [prefix, label] of [["hover", "Hover"], ["active", "Active"], ["idle", "Regular"]]) {
@@ -2539,7 +2781,17 @@
       );
       grid.append(group);
     }
-    effects.append(heading, description, grid,
+    const curves = element("div", "button-theme-gradients");
+    for (const [channel, spec] of Object.entries(EFFECT_CHANNELS)) {
+      const box = element("section", `button-theme-channel button-theme-channel--${channel}`);
+      const curveHeading = element("div", "theme-card__heading");
+      curveHeading.append(element("h3", "", spec.title));
+      box.append(curveHeading,
+        element("p", "button-theme-effects__help", "Left to right: position along the Angle. Bottom to top: strength. Fade gives full strength at Start and none at End; at 0 degrees that means top to bottom. Whole Layout spans visible Buttons on each monitor and still follows Angle."),
+        renderGradientCurveEditor(channel), renderGradientAngleControl(channel), renderGradientScreenControl(channel));
+      curves.append(box);
+    }
+    effects.append(heading, description, grid, curves,
       actionButton(buttonThemeActions.settings, applyButtonThemeEffects));
     return effects;
   }
@@ -2565,28 +2817,6 @@
       controls.append(field);
     });
     return controls;
-  }
-
-  function renderPictureCard() {
-    const { section } = makeCard(copy.pictureSectionTitle);
-    const pathField = fieldById.get(config.picture.pathFieldId);
-    const pathRow = element("div", "theme-row");
-    pathRow.append(
-      labeledField(pathField, "theme-field--path"),
-      actionButton(actions.picture.select, () => selectFile(
-        actions.picture.select,
-        pathField.id,
-        copy.selectingPicture
-      ))
-    );
-    section.append(pathRow);
-    const row = element("div", "theme-row theme-row--actions");
-    row.append(
-      actionButton(actions.picture.apply, applyPicture),
-      actionButton(actions.picture.clear, () => runPictureAction(actions.picture.clear, {}, copy.clearingPicture))
-    );
-    section.append(row);
-    return section;
   }
 
   function renderEnvironmentCard() {
@@ -2642,11 +2872,11 @@
   function render() {
     controlsByFieldId.clear();
     gradientRedraws.clear();
+    buttonThemeBucketsNode = null;
     root.replaceChildren();
     root.append(
       renderThemeCard(),
       renderButtonThemeCard(),
-      renderPictureCard(),
       renderEnvironmentCard()
     );
     setBusy(busy);
@@ -2676,7 +2906,8 @@
       model.activePackage = {
         path: typeof activePackage.path === "string" ? activePackage.path : "",
         name: typeof activePackage.name === "string" ? activePackage.name : "",
-        poppedButtonSettings: normalizePoppedButtonSettings(activePackage.poppedButtonSettings)
+        poppedButtonSettings: normalizePoppedButtonSettings(activePackage.poppedButtonSettings),
+        poppedButtonAppearance: normalizePoppedButtonAppearance(activePackage.poppedButtonAppearance)
       };
     }
     hydrateButtonThemeState(state.buttonTheme);

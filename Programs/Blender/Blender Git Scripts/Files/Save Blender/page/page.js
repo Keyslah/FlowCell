@@ -83,6 +83,7 @@
 
   const settings = {
     baseFolder: "",
+    lastBrowseFolder: "",
     profileId: ""
   };
   let profiles = [];
@@ -157,6 +158,7 @@
     );
     return {
       baseFolder: typeof state.baseFolder === "string" ? state.baseFolder.trim() : "",
+      lastBrowseFolder: typeof state.lastBrowseFolder === "string" ? state.lastBrowseFolder.trim() : "",
       profileId: typeof state.profileId === "string" && state.profileId.trim()
         ? state.profileId.trim().toLocaleLowerCase("en")
         : (legacyProfileMatch?.[1] || "").toLocaleLowerCase("en")
@@ -168,6 +170,7 @@
       state: {
         schemaVersion: 1,
         baseFolder: settings.baseFolder,
+        lastBrowseFolder: settings.lastBrowseFolder,
         profileId: settings.profileId
       }
     });
@@ -178,9 +181,12 @@
     setBusy(true);
     setStatus("Choosing the parent folder…");
     try {
-      const response = objectRecord(await pageApi.request(actions.selectParentFolder, {})) || {};
+      const response = objectRecord(await pageApi.request(actions.selectParentFolder, {
+        initialDirectory: settings.lastBrowseFolder || settings.baseFolder
+      })) || {};
       if (response.selected === true && typeof response.path === "string" && response.path.trim()) {
         settings.baseFolder = response.path.trim();
+        settings.lastBrowseFolder = settings.baseFolder;
         await writeSettings();
         syncSettings();
         setStatus("Parent folder saved.", "success");
@@ -200,10 +206,14 @@
     setStatus("Choosing an existing project folder…");
     try {
       const response = objectRecord(
-        await pageApi.request(actions.selectExistingProjectFolder, {})
+        await pageApi.request(actions.selectExistingProjectFolder, {
+          initialDirectory: settings.lastBrowseFolder || settings.baseFolder
+        })
       ) || {};
       if (response.selected === true && typeof response.path === "string" && response.path.trim()) {
         existingProjectRoot = response.path.trim();
+        settings.lastBrowseFolder = existingProjectRoot;
+        await writeSettings();
         existingProjectFolderInput.value = existingProjectRoot;
         setStatus("Existing project folder selected.", "success");
       } else {

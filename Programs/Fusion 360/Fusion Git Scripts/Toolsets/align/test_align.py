@@ -44,12 +44,19 @@ ALIGN = _load_module()
 
 
 class AlignTests(unittest.TestCase):
-    def test_manifest_mirrors_all_seventeen_blender_actions(self):
+    def test_manifest_mirrors_the_blender_align_layout(self):
         manifest = json.loads((HERE / "flowcell.toolset.json").read_text(encoding="utf-8"))
         slots = [child["slot"] for child in manifest["children"]]
-        self.assertEqual(len(slots), 17)
-        self.assertEqual(set(slots), set(ALIGN.SLOT_PAYLOADS))
+        self.assertEqual(len(slots), 18)
+        self.assertEqual(set(slots) - {"group"}, set(ALIGN.SLOT_PAYLOADS))
         self.assertEqual(manifest["program"], "Fusion 360")
+        labels = [child["label"] for child in manifest["children"]]
+        self.assertEqual(labels[:5], ["X Min", "Center", "X Max", "Surface", "Origin"])
+        self.assertEqual(labels[-3:], ["All", "X-Y", "Group"])
+        layout = manifest["layout"]
+        self.assertEqual(layout["childBehaviors"]["group"], {"toggleFields": ["group"], "execute": False})
+        self.assertTrue(layout["updatePolicy"]["appendMissingChildSlots"])
+        self.assertEqual(set(layout["placements"]), set(slots))
 
     def test_min_center_max_and_origin_deltas(self):
         target = ((1.0, 3.0, 5.0), (5.0, 9.0, 13.0))
@@ -67,44 +74,75 @@ class AlignTests(unittest.TestCase):
             ALIGN._alignment_translation(target, reference, origin, "Z", "MAX", ""),
             (0.0, 0.0, 57.0),
         )
+        # Origin sends the origin to the opposite Min/Max face, like Blender.
         self.assertEqual(
-            ALIGN._alignment_translation(target, reference, origin, "X", "CENTER", "ORIGIN"),
-            (23.0, 0.0, 0.0),
+            ALIGN._alignment_translation(target, reference, origin, "X", "CENTER", "GEOCENTER"),
+            (28.0, 0.0, 0.0),
+        )
+        above = (40.0, 4.0, 6.0)
+        self.assertEqual(
+            ALIGN._alignment_translation(target, reference, above, "X", "CENTER", "GEOCENTER"),
+            (-20.0, 0.0, 0.0),
         )
 
-    def test_surface_places_target_against_opposing_reference_face(self):
+    def test_alt_center_aligns_origins(self):
+        target = ((1.0, 3.0, 5.0), (5.0, 9.0, 13.0))
+        reference = ((20.0, 30.0, 40.0), (30.0, 50.0, 70.0))
+        self.assertEqual(
+            ALIGN._alignment_translation(
+                target, reference, (2.0, 4.0, 6.0), "Z", "CENTER", "",
+                reference_origin=(21.0, 31.0, 41.0), origin_center=True,
+            ),
+            (0.0, 0.0, 35.0),
+        )
+
+    def test_surface_crosses_to_the_opposite_reference_face(self):
         reference = ((0.0, 0.0, 0.0), (10.0, 10.0, 10.0))
         below = ((-4.0, 2.0, 2.0), (-2.0, 4.0, 4.0))
         above = ((12.0, 2.0, 2.0), (14.0, 4.0, 4.0))
         self.assertEqual(
             ALIGN._alignment_translation(below, reference, (0, 0, 0), "X", "CENTER", "SURFACE"),
-            (2.0, 0.0, 0.0),
+            (14.0, 0.0, 0.0),
         )
         self.assertEqual(
             ALIGN._alignment_translation(above, reference, (0, 0, 0), "X", "CENTER", "SURFACE"),
-            (-2.0, 0.0, 0.0),
+            (-14.0, 0.0, 0.0),
         )
 
     def test_slot_payload_cannot_override_canonical_axis_or_mode(self):
-        payload = ALIGN._normalize_payload({"command": "x_min", "axis": "Z", "mode": "MAX"})
+        payload = ALIGN._normalize_payload({"command": "x_min", "axis": "Z", "mode": "MAX", "group": True})
         self.assertEqual(payload["command"], "align_axis")
         self.assertEqual(payload["axis"], "X")
         self.assertEqual(payload["mode"], "MIN")
+        self.assertTrue(payload["group"])
 
-    def test_design_history_and_component_body_boundaries_fail_closed(self):
-        root = object()
-        ALIGN._require_parametric_design(types.SimpleNamespace(designType="parametric"))
-        with self.assertRaisesRegex(ValueError, "Capture Design History"):
-            ALIGN._require_parametric_design(types.SimpleNamespace(designType="direct"))
+    def test_combined_bounds_cover_every_group_member(self):
+        self.assertEqual(
+            ALIGN._combined_bounds([((0, 1, 2), (3, 4, 5)), ((-1, 2, 0), (1, 9, 4))]),
+            ((-1, 1, 0), (3, 9, 5)),
+        )
 
-        safe_body = types.SimpleNamespace(assemblyContext=None, parentComponent=root)
-        ALIGN._require_instance_safe_bodies([{"kind": "body", "entity": safe_body}], types.SimpleNamespace(rootComponent=root))
-        proxy_body = types.SimpleNamespace(assemblyContext=object(), parentComponent=root)
-        with self.assertRaisesRegex(ValueError, "Select the occurrence"):
-            ALIGN._require_instance_safe_bodies([{"kind": "body", "entity": proxy_body}], types.SimpleNamespace(rootComponent=root))
-        component_body = types.SimpleNamespace(assemblyContext=None, parentComponent=object())
-        with self.assertRaisesRegex(ValueError, "root-component"):
-            ALIGN._require_instance_safe_bodies([{"kind": "body", "entity": component_body}], types.SimpleNamespace(rootComponent=root))
+    def test_faces_count_as_their_body_and_the_last_pick_is_the_reference(self):
+        fusion = sys.modules["adsk.fusion"]
+        fusion.BRepFace = type("BRepFace", (), {"cast": staticmethod(
+            lambda entity: entity if getattr(entity, "fake_kind", "") == "face" else None)})
+        try:
+            body_a = types.SimpleNamespace(fake_kind="body", entityToken="A", name="A")
+            body_b = types.SimpleNamespace(fake_kind="body", entityToken="B", name="B")
+            face = lambda body, token: types.SimpleNamespace(fake_kind="face", body=body, entityToken=token, name=token)
+            picks = [face(body_b, "fb1"), face(body_a, "fa1"), face(body_a, "fa2"), face(body_b, "fb2")]
+
+            class Selections:
+                count = len(picks)
+
+                def item(self, index):
+                    return types.SimpleNamespace(entity=picks[index])
+
+            records = ALIGN._selected_records(types.SimpleNamespace(activeSelections=Selections()))
+            self.assertEqual([record["token"] for record in records], ["A", "B"])
+            self.assertTrue(all(record["kind"] == "body" for record in records))
+        finally:
+            del fusion.BRepFace
 
     def test_precise_bounds_are_preferred(self):
         precise = types.SimpleNamespace(

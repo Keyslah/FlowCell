@@ -150,6 +150,7 @@ export function ButtonPopoutRenderer({
   );
   const [fieldState, setFieldState] = useState(() => incomingFieldState);
   const [fieldError, setFieldError] = useState<string | null>(null);
+  const [stateQueryResponse, setStateQueryResponse] = useState<unknown>(null);
   const fieldEditRevision = useRef(0);
   useEffect(() => {
     setFieldState((current) => reconcileToolFieldRuntimeState(current, incomingFieldState));
@@ -189,7 +190,10 @@ export function ButtonPopoutRenderer({
     // replace a choice the user made while opening the popout.
     void queryToolsetState({ programName: stateProgram, panelName: statePanel, fileName: stateFile })
       .then((response) => {
-        if (cancelled || revision !== fieldEditRevision.current || response?.status === "error") return;
+        if (cancelled || response?.status === "error") return;
+        // Program-owned Button states (e.g. lock cycles) always follow the reply.
+        setStateQueryResponse(response);
+        if (revision !== fieldEditRevision.current) return;
         const patch = responseFieldPatch(response, fields);
         if (Object.keys(patch).length === 0) return;
         setFieldState((current) => {
@@ -203,10 +207,20 @@ export function ButtonPopoutRenderer({
 
   const applyExecutionResult = useCallback(
     (result: ButtonExecutionResult) => {
-      acceptFieldValues(result.fieldValues);
+      // Merge only what this execution changed. result.fieldValues is the
+      // snapshot from when it started, so adopting it would undo any field
+      // the user changed while the program was still answering.
+      const patch = result.fieldPatch ?? {};
+      if (Object.keys(patch).length > 0) {
+        fieldEditRevision.current += 1;
+        setFieldState((current) => {
+          const active = reconcileToolFieldRuntimeState(current, incomingFieldState);
+          return { ...active, values: { ...active.values, ...patch } };
+        });
+      }
       setFieldError(result.message ?? null);
     },
-    [acceptFieldValues]
+    [incomingFieldState]
   );
   const savedOwnerPlacement = useMemo(
     () => resolveSavedOwnerPlacement(document, unit),
@@ -319,6 +333,7 @@ export function ButtonPopoutRenderer({
           mode="run"
           ownerPlacementId={authoredFan ? savedOwnerPlacement?.id : undefined}
           resetResultMappedActivationStateOnMount={unit.kind === "tool-set"}
+          stateQueryResponse={stateQueryResponse}
           fields={fields}
           fieldValues={fieldValues}
           onRequestInlineEditorFocus={onRequestInlineEditorFocus}

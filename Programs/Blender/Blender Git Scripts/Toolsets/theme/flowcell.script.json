@@ -105,6 +105,35 @@
         }
       },
       {
+        "id": "button-theme.pick-color",
+        "handler": {
+          "kind": "core",
+          "capability": "color.pick-screen",
+          "options": {}
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "color": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "selected",
+            "color"
+          ]
+        }
+      },
+      {
         "id": "button-theme.scan",
         "handler": {
           "kind": "core",
@@ -151,6 +180,111 @@
                   },
                   "groupLabel": {
                     "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "placementId",
+                  "materialColors",
+                  "label",
+                  "textColor",
+                  "groupLabel"
+                ]
+              }
+            },
+            "buttonCount": {
+              "type": "integer"
+            },
+            "colorCount": {
+              "type": "integer"
+            },
+            "changedCount": {
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "revision",
+            "placements",
+            "buttonCount",
+            "colorCount",
+            "changedCount",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "button-theme.participation",
+        "handler": {
+          "kind": "core",
+          "capability": "button-theme.palette",
+          "options": {
+            "operation": "participation"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "expectedRevision": {
+              "type": "integer"
+            },
+            "placementIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "expectedRevision",
+            "placementIds",
+            "enabled"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "revision": {
+              "type": "integer"
+            },
+            "placements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "placementId": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "string"
+                  },
+                  "materialColors": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "textColor": {
+                    "type": "string"
+                  },
+                  "groupLabel": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -264,6 +398,9 @@
                   },
                   "groupLabel": {
                     "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -460,6 +597,100 @@
                 "textScreenTopToBottom": {
                   "type": "boolean"
                 },
+                "highlightCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "highlightAngle": {
+                  "type": "number"
+                },
+                "highlightScreenTopToBottom": {
+                  "type": "boolean"
+                },
+                "glowCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "glowAngle": {
+                  "type": "number"
+                },
+                "glowScreenTopToBottom": {
+                  "type": "boolean"
+                },
                 "hoverEnabled": {
                   "type": "boolean"
                 },
@@ -554,6 +785,9 @@
                   },
                   "groupLabel": {
                     "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -705,6 +939,9 @@
                   },
                   "groupLabel": {
                     "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -786,6 +1023,9 @@
                   },
                   "groupLabel": {
                     "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -961,6 +1201,100 @@
                 "textScreenTopToBottom": {
                   "type": "boolean"
                 },
+                "highlightCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "highlightAngle": {
+                  "type": "number"
+                },
+                "highlightScreenTopToBottom": {
+                  "type": "boolean"
+                },
+                "glowCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "glowAngle": {
+                  "type": "number"
+                },
+                "glowScreenTopToBottom": {
+                  "type": "boolean"
+                },
                 "hoverEnabled": {
                   "type": "boolean"
                 },
@@ -1018,6 +1352,55 @@
             },
             "resetOverrides": {
               "type": "boolean"
+            },
+            "captureAppearance": {
+              "type": "boolean"
+            },
+            "buttonAppearance": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "version": {
+                  "type": "integer",
+                  "enum": [
+                    1
+                  ]
+                },
+                "placements": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "placementId": {
+                        "type": "string"
+                      },
+                      "buttonId": {
+                        "type": "string"
+                      },
+                      "color": {
+                        "type": "string"
+                      },
+                      "textColor": {
+                        "type": "string"
+                      },
+                      "lockedAppearance": {
+                        "type": "object",
+                        "additionalProperties": true,
+                        "properties": {}
+                      }
+                    },
+                    "required": [
+                      "placementId",
+                      "buttonId"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "version",
+                "placements"
+              ]
             }
           }
         },
@@ -1153,6 +1536,100 @@
                 "textScreenTopToBottom": {
                   "type": "boolean"
                 },
+                "highlightCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "highlightAngle": {
+                  "type": "number"
+                },
+                "highlightScreenTopToBottom": {
+                  "type": "boolean"
+                },
+                "glowCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "corner",
+                          "aligned",
+                          "free"
+                        ]
+                      },
+                      "inX": {
+                        "type": "number"
+                      },
+                      "inY": {
+                        "type": "number"
+                      },
+                      "outX": {
+                        "type": "number"
+                      },
+                      "outY": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "mode"
+                    ]
+                  }
+                },
+                "glowAngle": {
+                  "type": "number"
+                },
+                "glowScreenTopToBottom": {
+                  "type": "boolean"
+                },
                 "hoverEnabled": {
                   "type": "boolean"
                 },
@@ -1213,6 +1690,75 @@
             },
             "message": {
               "type": "string"
+            },
+            "buttonAppearance": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "version": {
+                  "type": "integer",
+                  "enum": [
+                    1
+                  ]
+                },
+                "placements": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "placementId": {
+                        "type": "string"
+                      },
+                      "buttonId": {
+                        "type": "string"
+                      },
+                      "color": {
+                        "type": "string"
+                      },
+                      "textColor": {
+                        "type": "string"
+                      },
+                      "lockedAppearance": {
+                        "type": "object",
+                        "additionalProperties": true,
+                        "properties": {}
+                      }
+                    },
+                    "required": [
+                      "placementId",
+                      "buttonId"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "version",
+                "placements"
+              ]
+            },
+            "placementLinks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "placementId": {
+                    "type": "string"
+                  },
+                  "buttonId": {
+                    "type": "string"
+                  },
+                  "paletteId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "placementId",
+                  "buttonId",
+                  "paletteId"
+                ]
+              }
             }
           },
           "required": [
@@ -1809,7 +2355,8 @@
               "grid_scale",
               "grid_subdivisions",
               "popped_button_settings",
-              "grid_enabled"
+              "grid_enabled",
+              "popped_button_appearance"
             ],
             "assetFields": [
               "theme_image_path",
@@ -2070,6 +2617,100 @@
                     "textScreenTopToBottom": {
                       "type": "boolean"
                     },
+                    "highlightCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "highlightAngle": {
+                      "type": "number"
+                    },
+                    "highlightScreenTopToBottom": {
+                      "type": "boolean"
+                    },
+                    "glowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "glowAngle": {
+                      "type": "number"
+                    },
+                    "glowScreenTopToBottom": {
+                      "type": "boolean"
+                    },
                     "hoverEnabled": {
                       "type": "boolean"
                     },
@@ -2127,6 +2768,52 @@
                 },
                 "grid_enabled": {
                   "type": "boolean"
+                },
+                "popped_button_appearance": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "placements": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "placementId": {
+                            "type": "string"
+                          },
+                          "buttonId": {
+                            "type": "string"
+                          },
+                          "color": {
+                            "type": "string"
+                          },
+                          "textColor": {
+                            "type": "string"
+                          },
+                          "lockedAppearance": {
+                            "type": "object",
+                            "additionalProperties": true,
+                            "properties": {}
+                          }
+                        },
+                        "required": [
+                          "placementId",
+                          "buttonId"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "placements"
+                  ]
                 }
               },
               "required": [
@@ -2223,7 +2910,8 @@
               "grid_scale",
               "grid_subdivisions",
               "popped_button_settings",
-              "grid_enabled"
+              "grid_enabled",
+              "popped_button_appearance"
             ],
             "assetFields": [
               "theme_image_path",
@@ -2490,6 +3178,100 @@
                     "textScreenTopToBottom": {
                       "type": "boolean"
                     },
+                    "highlightCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "highlightAngle": {
+                      "type": "number"
+                    },
+                    "highlightScreenTopToBottom": {
+                      "type": "boolean"
+                    },
+                    "glowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "glowAngle": {
+                      "type": "number"
+                    },
+                    "glowScreenTopToBottom": {
+                      "type": "boolean"
+                    },
                     "hoverEnabled": {
                       "type": "boolean"
                     },
@@ -2547,6 +3329,52 @@
                 },
                 "grid_enabled": {
                   "type": "boolean"
+                },
+                "popped_button_appearance": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "placements": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "placementId": {
+                            "type": "string"
+                          },
+                          "buttonId": {
+                            "type": "string"
+                          },
+                          "color": {
+                            "type": "string"
+                          },
+                          "textColor": {
+                            "type": "string"
+                          },
+                          "lockedAppearance": {
+                            "type": "object",
+                            "additionalProperties": true,
+                            "properties": {}
+                          }
+                        },
+                        "required": [
+                          "placementId",
+                          "buttonId"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "placements"
+                  ]
                 }
               }
             },
@@ -2604,7 +3432,8 @@
               "grid_scale",
               "grid_subdivisions",
               "popped_button_settings",
-              "grid_enabled"
+              "grid_enabled",
+              "popped_button_appearance"
             ],
             "assetFields": [
               "theme_image_path",
@@ -2878,6 +3707,100 @@
                     "textScreenTopToBottom": {
                       "type": "boolean"
                     },
+                    "highlightCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "highlightAngle": {
+                      "type": "number"
+                    },
+                    "highlightScreenTopToBottom": {
+                      "type": "boolean"
+                    },
+                    "glowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "glowAngle": {
+                      "type": "number"
+                    },
+                    "glowScreenTopToBottom": {
+                      "type": "boolean"
+                    },
                     "hoverEnabled": {
                       "type": "boolean"
                     },
@@ -2935,6 +3858,52 @@
                 },
                 "grid_enabled": {
                   "type": "boolean"
+                },
+                "popped_button_appearance": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "placements": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "placementId": {
+                            "type": "string"
+                          },
+                          "buttonId": {
+                            "type": "string"
+                          },
+                          "color": {
+                            "type": "string"
+                          },
+                          "textColor": {
+                            "type": "string"
+                          },
+                          "lockedAppearance": {
+                            "type": "object",
+                            "additionalProperties": true,
+                            "properties": {}
+                          }
+                        },
+                        "required": [
+                          "placementId",
+                          "buttonId"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "placements"
+                  ]
                 }
               }
             },
@@ -2992,7 +3961,8 @@
               "grid_scale",
               "grid_subdivisions",
               "popped_button_settings",
-              "grid_enabled"
+              "grid_enabled",
+              "popped_button_appearance"
             ],
             "assetFields": [
               "theme_image_path",
@@ -3266,6 +4236,100 @@
                     "textScreenTopToBottom": {
                       "type": "boolean"
                     },
+                    "highlightCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "highlightAngle": {
+                      "type": "number"
+                    },
+                    "highlightScreenTopToBottom": {
+                      "type": "boolean"
+                    },
+                    "glowCurve": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "corner",
+                              "aligned",
+                              "free"
+                            ]
+                          },
+                          "inX": {
+                            "type": "number"
+                          },
+                          "inY": {
+                            "type": "number"
+                          },
+                          "outX": {
+                            "type": "number"
+                          },
+                          "outY": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "mode"
+                        ]
+                      }
+                    },
+                    "glowAngle": {
+                      "type": "number"
+                    },
+                    "glowScreenTopToBottom": {
+                      "type": "boolean"
+                    },
                     "hoverEnabled": {
                       "type": "boolean"
                     },
@@ -3323,6 +4387,52 @@
                 },
                 "grid_enabled": {
                   "type": "boolean"
+                },
+                "popped_button_appearance": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "placements": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "placementId": {
+                            "type": "string"
+                          },
+                          "buttonId": {
+                            "type": "string"
+                          },
+                          "color": {
+                            "type": "string"
+                          },
+                          "textColor": {
+                            "type": "string"
+                          },
+                          "lockedAppearance": {
+                            "type": "object",
+                            "additionalProperties": true,
+                            "properties": {}
+                          }
+                        },
+                        "required": [
+                          "placementId",
+                          "buttonId"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "placements"
+                  ]
                 }
               }
             },
@@ -4664,6 +5774,7 @@
       "theme-package-library",
       "file.select",
       "image.sample-palette",
+      "color.pick-screen",
       "button-theme.palette",
       "tool-fields.save",
       "tool-fields.load",
@@ -4726,6 +5837,7 @@
         "resettingEnvironment": "Resetting the HDRI world…"
       },
       "actionLabels": {
+        "button-theme.pick-color": "Eyedropper",
         "theme.image.select": "Browse",
         "theme.image.sample": "Sample",
         "theme.absorb": "Absorb Theme",
@@ -4753,7 +5865,7 @@
         "picture.grid": "Grid",
         "picture.grid.remove": "Remove Grid",
         "picture.startup": "Startup",
-        "picture.clear": "Clear",
+        "picture.clear": "Clear Picture",
         "environment.file.select": "HDRI Browse",
         "environment.apply": "HDRI Apply",
         "environment.clear": "Clear",
@@ -4763,9 +5875,11 @@
         "environment.rotation-z": "Z",
         "environment.strength": "WS",
         "button-theme.settings": "Apply Highlights & Glow",
-        "button-theme.apply-text": "Apply Text Gradient"
+        "button-theme.apply-text": "Apply Text Gradient",
+        "button-theme.participation": "Include Button"
       },
       "actionTooltips": {
+        "button-theme.pick-color": "Pick this gradient color from anywhere on screen. Escape or right-click cancels.",
         "theme.image.select": "Pick an image, sample theme colors, and place it as the Place Picture image.",
         "theme.image.sample": "Sample theme colors from the selected reference image.",
         "theme.absorb": "Read the current Blender theme and stage all visible buckets.",
@@ -4781,15 +5895,15 @@
         "theme.profile.save": "Save the current darkness settings under the entered profile name.",
         "theme.apply": "Apply the currently visible theme role colors.",
         "theme.apply-bucket": "Apply only this theme bucket.",
-        "button-theme.scan": "Collect and group Surface colors from scoped action Buttons in open Blender Pop-out and Fan windows. Fans include their surface owner and members even while collapsed; editor previews remain excluded.",
-        "button-theme.apply": "Apply the edited aggregate Surface buckets back to the same live scanned Buttons; Rescan is required if the open windows changed.",
-        "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Layout anchors vertically to the highest and lowest visible Buttons on each monitor; otherwise Angle applies within each window. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
+        "button-theme.scan": "Collect individual colors from scoped action Buttons in open Blender Pop-out and Fan windows. Each Button has its own editable color; editor previews remain excluded.",
+        "button-theme.apply": "Apply the listed colors to checked Buttons. Individual color edits apply directly, including to unchecked Buttons. Rescan is required if the open windows changed.",
+        "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Layout spans all visible Buttons on each monitor along the Angle; otherwise each window has its own gradient. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
         "button-theme.refill": "Apply the ordered multi-color Surface gradient, with its angle and curve, to scoped Buttons in the currently open Blender Pop-outs and Fans.",
         "button-theme.refill-colors": "Sample the selected number of Gradient Colors from the current Theme image, show them as ordered gradient stops, and apply the gradient to scoped Buttons in open Blender Pop-outs and Fans.",
         "button-theme.scatter": "Redistribute the currently present aggregate colors across the same live scanned Buttons using remembered hidden placement IDs.",
         "button-theme.toggle-text": "Toggle all scoped Button label text in open Blender Pop-outs and Fans between black and white, replacing any text gradient, without changing Surface colors or saved skins.",
         "picture.file.select": "Pick a Place Picture image.",
-        "picture.apply": "Place the picture path in the Blender viewport with the overlay.",
+        "picture.apply": "Choose a picture and place it in the Blender viewport with the overlay.",
         "picture.grid": "Apply Grid Scale and Subdivisions and enable Blender's native viewport grid.",
         "picture.grid.remove": "Hide Blender's native grid; keep any Place Picture image and gizmos active.",
         "picture.startup": "Save the current Place Picture image so Blender restores it on startup.",
@@ -4803,7 +5917,8 @@
         "environment.rotation-z": "Apply the entered Z rotation.",
         "environment.strength": "Apply the entered world strength.",
         "button-theme.settings": "Apply separate Regular, Hover, and Active highlights and glow to Blender buttons. Regular applies only while neither hovered nor active. Saved packages include all three groups.",
-        "button-theme.apply-text": "Apply the Button Text gradient to every Blender popped Button label, independently of the fill. One Text Color keeps the labels solid; more colors run from Start to End along the text Angle and curve."
+        "button-theme.apply-text": "Apply the Button Text gradient to every Blender popped Button label, independently of the fill. One Text Color keeps the labels solid; more colors run from Start to End along the text Angle and curve.",
+        "button-theme.participation": "Unchecked Buttons ignore gradients and bulk theme changes. Their individual colors remain editable and are saved with packages."
       },
       "fields": [
         {
@@ -5219,12 +6334,14 @@
           "applyBucket": "theme.apply-bucket"
         },
         "buttonTheme": {
+          "pickColor": "button-theme.pick-color",
           "scan": "button-theme.scan",
           "apply": "button-theme.apply",
           "refill": "button-theme.refill",
           "toggleText": "button-theme.toggle-text",
           "settings": "button-theme.settings",
-          "edit": "button-theme.edit"
+          "edit": "button-theme.edit",
+          "participation": "button-theme.participation"
         },
         "picture": {
           "select": "picture.file.select",
@@ -5379,7 +6496,7 @@
         "spreadLabel": "Spread",
         "scatterLabel": "Scatter",
         "screenTopToBottomLabel": "Whole Layout",
-        "screenTopToBottomTooltip": "Run from the highest visible popped Button to the lowest on each monitor. Angle applies only when Whole Layout is off.",
+        "screenTopToBottomTooltip": "Span all visible popped Buttons on each monitor along the Angle. Otherwise, span each window separately.",
         "gradientColorCountLabel": "Gradient Colors",
         "gradientColorCountTooltip": "Choose how many colors the Button Fill gradient uses. Every ordered stop appears from Start through End, and Refill samples this many colors from the current Theme image.",
         "fillTitle": "Button Fill",

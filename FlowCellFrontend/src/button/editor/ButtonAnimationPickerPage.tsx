@@ -5,7 +5,8 @@ import type {
 } from "../types";
 import {
   BUTTON_ACTIVATION_ANIMATION_PRESETS,
-  canButtonRunActivationAnimation
+  canButtonRunActivationAnimation,
+  getButtonActivationAnimationPreset
 } from "../animations/buttonActivationAnimations";
 
 export interface ButtonAnimationPickerPageProps {
@@ -40,6 +41,9 @@ export function ButtonAnimationPickerPage({
   const canApplyPreset = Boolean(
     button && (!selectedPresetId || canButtonRunActivationAnimation(button))
   );
+  const appliedPreset = button?.activationAnimation
+    ? getButtonActivationAnimationPreset(button.activationAnimation.presetId)
+    : null;
 
   return (
     <section className="button-animation-picker-page">
@@ -106,8 +110,18 @@ export function ButtonAnimationPickerPage({
             ) : null}
             {setupOpen ? (
               <p className="button-animation-picker-page__hint">
-                This plus is the animation's largest size. Drag it to move; drag any
-                invisible edge or corner to resize at its locked 283:295 shape, then save here.
+                {appliedPreset?.id === "plus-rise"
+                  ? "This plus is the animation's largest size."
+                  : "This preview is the animation's playback size."}{" "}
+                Drag it to move; drag any invisible edge or corner to resize at its locked{" "}
+                {appliedPreset?.spritePixelSize.width}:{appliedPreset?.spritePixelSize.height}{" "}
+                shape, then save here.
+              </p>
+            ) : null}
+            {appliedPreset?.pressInterval ? (
+              <p className="button-animation-picker-page__hint">
+                Plays after a random {appliedPreset.pressInterval.minimum}–{appliedPreset.pressInterval.maximum}{" "}
+                presses. Progress is remembered between sessions.
               </p>
             ) : null}
             {!canButtonRunActivationAnimation(button) ? (

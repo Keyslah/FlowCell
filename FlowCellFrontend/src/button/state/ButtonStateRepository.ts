@@ -31,6 +31,7 @@ import { prepareLastLayoutPanelUpdates } from "./lastLayoutPanelUpdates.js";
 import { readLastLayoutPath } from "../../lib/startupSettings.js";
 import type { LayoutSnapshot } from "../../types.js";
 import { validateInstalledButtonLayout } from "./installedButtonLayoutValidation.js";
+import { resolveInstalledToolFields } from "./installedToolFields.js";
 import {
   validateButtonPlacementFile,
   type ButtonPlacementFile
@@ -937,7 +938,7 @@ function addMigratedToolSet(
     windowFitMode: "surface",
     ownerButtonId: install.ownerButtonId,
     childButtonIds,
-    fields: cloneButtonDocument(layout?.fields ?? [])
+    fields: resolveInstalledToolFields(layout?.fields, install.children)
   };
 }
 

@@ -335,7 +335,7 @@ export async function executeButtonToolField(
   field: ButtonToolField,
   nextValue: JsonValue,
   context: ButtonExecutionContext,
-  eventName: "change" | "activate" = "change"
+  eventName: "change" | "activate" | "input" = "change"
 ): Promise<ButtonExecutionResult> {
   const fieldPatch = { [field.id]: nextValue };
   const fieldValues = { ...(context.fieldValues ?? {}), ...fieldPatch };
@@ -344,6 +344,10 @@ export async function executeButtonToolField(
     return { executed: false, fieldValues, fieldPatch };
   }
   const payload = mapButtonFieldsToPayload(context.fields ?? [], fieldValues);
+  if (field.kind === "range") {
+    // Lets the program tell a live drag step ("input") from the release ("change").
+    payload.fieldEvent = { fieldId: field.id, trigger: eventName };
+  }
   const response = await dispatchTarget(field.serviceTarget, eventName, fieldValues, payload);
   const responsePatch = responseFieldPatch(response, context.fields ?? [], field.id);
   const finalValues = { ...fieldValues, ...responsePatch };

@@ -1,5 +1,6 @@
-import type { FlowCellBounds } from "../types";
-import type { ButtonActivationAnimationPresetId } from "../button/types";
+import type { FlowCellBounds } from "../types.js";
+import type { ButtonActivationAnimationPresetId } from "../button/types.js";
+import { isButtonActivationAnimationPresetId } from "../button/animations/buttonActivationAnimations.js";
 
 export const BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION = 1 as const;
 export const BINDS_PREFILL_EVENT = "flowcell:binds-prefill";
@@ -235,7 +236,7 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
     parsed.requestId.trim() &&
     typeof parsed.buttonId === "string" &&
     parsed.buttonId.trim() &&
-    parsed.presetId === "plus-rise"
+    isButtonActivationAnimationPresetId(parsed.presetId)
   ) {
     return {
       kind: "button-animation",

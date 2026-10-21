@@ -8,8 +8,14 @@ export function withCanonicalProgramPopoutThemes(
 ): ButtonStateDocument {
   if (!canonical || (draft.programPopoutThemes === canonical.programPopoutThemes &&
     draft.programPopoutColorOverrides === canonical.programPopoutColorOverrides &&
+    draft.programPopoutThemeLocks === canonical.programPopoutThemeLocks &&
     draft.programPopoutColorOverrideRevisions === canonical.programPopoutColorOverrideRevisions)) return draft;
   let overrides = canonical.programPopoutColorOverrides;
+  let locks = canonical.programPopoutThemeLocks;
+  for (const [id, appearance] of Object.entries(draft.programPopoutThemeLocks ?? {})) {
+    // Only draft-only placements own their locks; canonical re-enabling must win.
+    if (!canonical.placements[id] && draft.placements[id]) locks = { ...locks, [id]: appearance };
+  }
   const revisions = draft.programPopoutColorOverrideRevisions
     ? { ...draft.programPopoutColorOverrideRevisions, ...canonical.programPopoutColorOverrideRevisions }
     : canonical.programPopoutColorOverrideRevisions;
@@ -37,6 +43,7 @@ export function withCanonicalProgramPopoutThemes(
     ...draft,
     programPopoutThemes: canonical.programPopoutThemes,
     programPopoutColorOverrides: overrides,
+    programPopoutThemeLocks: locks,
     programPopoutColorOverrideRevisions: revisions
   };
 }

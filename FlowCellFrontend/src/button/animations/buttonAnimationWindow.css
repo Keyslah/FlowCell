@@ -43,6 +43,11 @@
   transform: translate3d(0, 67.5%, 0) scale(0.46);
 }
 
+.button-animation-window--play.button-animation-window--gif .button-animation-window__sprite {
+  opacity: 1;
+  transform: none;
+}
+
 .button-animation-window__resize-handle {
   position: absolute;
   z-index: 5;

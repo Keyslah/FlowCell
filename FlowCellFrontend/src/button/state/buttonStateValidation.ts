@@ -26,7 +26,7 @@ import {
   normalizeButtonSkinColor
 } from "../skins/buttonSkinColors.js";
 import { isButtonActivationAnimationPresetId } from "../animations/buttonActivationAnimations.js";
-import { normalizeProgramPopoutColorOverride, normalizeProgramPopoutThemeSettings } from "../../theme/programPopoutTheme.js";
+import { normalizeProgramPopoutColorOverride, normalizeProgramPopoutThemeLock, normalizeProgramPopoutThemeSettings } from "../../theme/programPopoutTheme.js";
 
 export interface ButtonStateValidationIssue {
   path: string;
@@ -499,7 +499,7 @@ function validateToolField(field: unknown, path: string, issues: ButtonStateVali
     addIssue(issues, path, "Tool field must be an object.");
     return false;
   }
-  const kinds = ["text", "number", "select", "toggle", "path", "color", "display"];
+  const kinds = ["text", "number", "range", "select", "toggle", "path", "color", "display"];
   if (!kinds.includes(String(field.kind))) addIssue(issues, `${path}.kind`, "Tool field kind is invalid.");
   if (typeof field.id !== "string" || !field.id || typeof field.payloadKey !== "string") {
     addIssue(issues, path, "Tool fields require stable IDs and payload keys.");
@@ -511,6 +511,28 @@ function validateToolField(field: unknown, path: string, issues: ButtonStateVali
   if (field.hidden !== undefined && typeof field.hidden !== "boolean") addIssue(issues, `${path}.hidden`, "hidden must be boolean.");
   if (field.kind === "toggle" && typeof field.defaultValue !== "boolean") addIssue(issues, `${path}.defaultValue`, "Toggle defaults must be boolean.");
   if (field.kind === "number" && !isFiniteNumber(field.defaultValue)) addIssue(issues, `${path}.defaultValue`, "Number defaults must be finite.");
+  if (field.serviceTrigger !== undefined && !["change", "activate", "input"].includes(String(field.serviceTrigger))) {
+    addIssue(issues, `${path}.serviceTrigger`, "serviceTrigger must be 'change', 'activate', or 'input'.");
+  }
+  if (field.serviceTrigger === "input" && field.kind !== "range") {
+    addIssue(issues, `${path}.serviceTrigger`, "Only range fields may commit on input.");
+  }
+  if (field.kind === "range") {
+    if (!isFiniteNumber(field.minimum) || !isFiniteNumber(field.maximum) || Number(field.minimum) >= Number(field.maximum)) {
+      addIssue(issues, path, "Range fields require finite minimum < maximum.");
+    } else if (!isFiniteNumber(field.defaultValue) || Number(field.defaultValue) < Number(field.minimum) || Number(field.defaultValue) > Number(field.maximum)) {
+      addIssue(issues, `${path}.defaultValue`, "Range defaults must be finite and within minimum..maximum.");
+    }
+    if (field.step !== undefined && (!isFiniteNumber(field.step) || Number(field.step) <= 0)) {
+      addIssue(issues, `${path}.step`, "Range step must be positive.");
+    }
+    if (field.linkToggleField !== undefined && (typeof field.linkToggleField !== "string" || !field.linkToggleField.trim())) {
+      addIssue(issues, `${path}.linkToggleField`, "linkToggleField must name a toggle field.");
+    }
+    if (field.format !== undefined && typeof field.format !== "string") {
+      addIssue(issues, `${path}.format`, "format must be a string.");
+    }
+  }
   if (["text", "path", "color"].includes(String(field.kind)) && typeof field.defaultValue !== "string") addIssue(issues, `${path}.defaultValue`, `${String(field.kind)} defaults must be strings.`);
   if (field.kind === "select") {
     const options = Array.isArray(field.options) ? field.options : [];
@@ -590,7 +612,7 @@ function validateTopLevel(value: unknown, issues: ButtonStateValidationIssue[]):
   if (value.programPopoutThemes !== undefined && !isObject(value.programPopoutThemes)) {
     addIssue(issues, "programPopoutThemes", "Program popout themes must be an object.", "fatal");
   }
-  for (const key of ["programPopoutColorOverrides", "programPopoutColorOverrideRevisions"]) {
+  for (const key of ["programPopoutColorOverrides", "programPopoutColorOverrideRevisions", "programPopoutThemeLocks"]) {
     if (value[key] !== undefined && !isObject(value[key])) addIssue(issues, key, `${key} must be an object.`, "fatal");
   }
   return !issues.some((issue) => issue.severity === "fatal");
@@ -929,6 +951,15 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     }
   }
 
+  for (const [placementId, appearance] of Object.entries(document.programPopoutThemeLocks ?? {})) {
+    const placement = document.placements[placementId];
+    const kind = placement && document.surfaces[placement.surfaceId]?.kind;
+    if (!placement || !["regular-popout", "tool-set-popout", "fan"].includes(kind) ||
+        !normalizeProgramPopoutThemeLock(appearance)) {
+      addIssue(issues, `programPopoutThemeLocks.${placementId}`, "Frozen Button appearance requires a popped placement and valid resolved appearance.");
+    }
+  }
+
   for (const [placementId, override] of Object.entries(document.themeOverrides ?? {})) {
     const path = `themeOverrides.${placementId}`;
     if (!document.placements[placementId]) {
@@ -1168,6 +1199,13 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
         if (!validateToolField(field, `${path}.fields.${index}`, issues)) return;
         if (fieldIds.has(field.id)) addIssue(issues, `${path}.fields.${index}.id`, "Tool field IDs must be unique in a popout.");
         fieldIds.add(field.id);
+      });
+      fields.forEach((field, index) => {
+        if (!isObject(field) || field.kind !== "range" || typeof field.linkToggleField !== "string") return;
+        const linked = fields.find((candidate) => isObject(candidate) && candidate.id === field.linkToggleField);
+        if (!isObject(linked) || linked.kind !== "toggle") {
+          addIssue(issues, `${path}.fields.${index}.linkToggleField`, `Link field '${field.linkToggleField}' is missing or not a toggle.`);
+        }
       });
       const owner = typeof unit.ownerButtonId === "string" ? document.buttons[unit.ownerButtonId] : undefined;
       if (!owner || owner.role !== "tool-set-owner") addIssue(issues, `${path}.ownerButtonId`, "Tool-set popout requires a tool-set owner.");

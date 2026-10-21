@@ -6,12 +6,16 @@ import { validateButtonStateDocument } from "./.compiled-button-system/button/st
 import {
   captureProgramPopoutThemeSettings,
   clearProgramPopoutColorOverrides,
+  normalizeProgramPopoutThemeLock,
   normalizeProgramPopoutThemeSettings,
   resolveProgramPopoutThemeOverride
 } from "./.compiled-button-system/theme/programPopoutTheme.js";
 import {
   programPopoutPaletteTargetsHaveTextColor,
   applyProgramPopoutColorEdits,
+  applyProgramPopoutPaletteTargets,
+  applyProgramPopoutTextColorTargets,
+  applyProgramPopoutThemeLocks,
   gradientProgramPopoutPaletteAssignments,
   normalizedProgramPopoutScreenPositions,
   scanProgramPopoutPaletteTargets
@@ -22,6 +26,10 @@ import {
   programPopoutGradientBoxPosition,
   programPopoutGradientCurveValue
 } from "./.compiled-button-system/theme/programPopoutGradient.js";
+import {
+  aggregateProgramPopoutThemeScreenRange,
+  programPopoutThemeWindowRange
+} from "./.compiled-button-system/button/windows/programPopoutThemeScreenRange.js";
 
 function settings(patch = {}) {
   return {
@@ -77,13 +85,139 @@ test("individual popped fill and text edits override a shared profile for the ex
   assert.equal(resolveProgramPopoutThemeOverride(result.document, "second").colors.surface, "#113355");
   assert.deepEqual(result.placements[0], {
     placementId: "live:first", label: "first", groupLabel: "Blender Tools", textColor: "#102030",
-    color: "#DD6622", materialColors: []
+    color: "#DD6622", materialColors: [], enabled: true
   });
   assert.deepEqual(result.document.programPopoutColorOverrideRevisions.blender, { surface: 0, text: 0 });
   assert.deepEqual(result.document.skins, before.skins);
   assert.deepEqual(result.document.themeOverrides, before.themeOverrides);
   assert.deepEqual(document, before);
   assert.equal(validateButtonStateDocument(result.document).valid, true);
+});
+
+test("unchecked Buttons freeze every appearance channel through settings, bulk colors and package resets", () => {
+  const document = createButtonStateDocument();
+  document.programPopoutThemes = { blender: settings({ idleEnabled: true, idleColor: "#223344", idleHighlightAmount: 29, idleGlowAmount: 12 }) };
+  addPlacement(document, "first", "tools", "regular-popout");
+  addPlacement(document, "second", "tools", "regular-popout", "Blender", 50);
+  const targets = ["first", "second"].map((id) => ({ placementId: id, paletteId: `live:${id}` }));
+  const original = structuredClone(document);
+  const expected = resolveProgramPopoutThemeOverride(document, "first");
+  const frozen = applyProgramPopoutThemeLocks(document, "Blender", targets, [{ placementId: "live:first", enabled: false }]);
+  assert.deepEqual(frozen.document.programPopoutThemeLocks.first, expected);
+  assert.equal(frozen.placements[0].enabled, false);
+  assert.equal(frozen.placements[1].enabled, true);
+  assert.deepEqual(document, original);
+  assert.deepEqual(frozen.document.skins, original.skins);
+  assert.equal(validateButtonStateDocument(frozen.document).valid, true);
+  let changed = structuredClone(frozen.document);
+  changed = applyProgramPopoutPaletteTargets(changed, "Blender", targets, targets.map(({ paletteId }) => ({ placementId: paletteId, color: "#123456" }))).document;
+  changed = applyProgramPopoutTextColorTargets(changed, "Blender", targets, "#000000").document;
+  changed.programPopoutThemes.blender = settings({ colors: ["#AABBCC"], textColor: "#00FF00", hoverEnabled: false, activeGlowAmount: 0 });
+  clearProgramPopoutColorOverrides(changed, "Blender", ["surface", "text"], true);
+  assert.deepEqual(resolveProgramPopoutThemeOverride(changed, "first"), expected);
+  assert.deepEqual(changed.themeOverrides.first, original.themeOverrides.first, "bulk writes cannot modify frozen placement overrides");
+  const restored = JSON.parse(JSON.stringify(changed));
+  assert.deepEqual(resolveProgramPopoutThemeOverride(restored, "first"), expected);
+  const enabled = applyProgramPopoutThemeLocks(restored, "Blender", targets, [{ placementId: "live:first", enabled: true }]);
+  assert.equal(enabled.placements[0].enabled, true);
+  assert.equal(resolveProgramPopoutThemeOverride(enabled.document, "first").colors.surface, "#AABBCC");
+  removeOwnedButtonGraph(changed, "first");
+  assert.equal(changed.programPopoutThemeLocks.first, undefined);
+});
+
+test("explicit individual colors update unchecked Buttons while subsequent bulk updates preserve their edited frozen appearance", () => {
+  const document = createButtonStateDocument();
+  document.programPopoutThemes = { blender: settings({ colors: ["#224466"], idleEnabled: true, idleColor: "#123456", idleHighlightAmount: 17, idleGlowAmount: 12 }) };
+  addPlacement(document, "first", "tools", "regular-popout");
+  addPlacement(document, "second", "tools", "regular-popout", "Blender", 50);
+  const targets = ["first", "second"].map((id) => ({ placementId: id, paletteId: `live:${id}` }));
+  const frozen = applyProgramPopoutThemeLocks(document, "Blender", targets, [{ placementId: "live:first", enabled: false }]).document;
+  const previous = structuredClone(frozen);
+  const expected = { ...frozen.programPopoutThemeLocks.first, colors: { ...frozen.programPopoutThemeLocks.first.colors, surface: "#CC5522", text: "#113355" } };
+  const fill = applyProgramPopoutColorEdits(frozen, "Blender", targets, [{ placementId: "live:first", color: "#CC5522" }]);
+  assert.equal(fill.changedCount, 1);
+  assert.equal(fill.placements[0].enabled, false);
+  assert.equal(fill.placements[0].color, "#CC5522");
+  assert.equal(fill.document.programPopoutThemeLocks.first.colors.text, previous.programPopoutThemeLocks.first.colors.text);
+  const text = applyProgramPopoutColorEdits(fill.document, "Blender", targets, [{ placementId: "live:first", textColor: "#113355" }]);
+  assert.equal(text.changedCount, 1);
+  assert.deepEqual(text.document.programPopoutColorOverrides.first, { surface: "#CC5522", text: "#113355" });
+  assert.deepEqual(resolveProgramPopoutThemeOverride(text.document, "first"), expected);
+  assert.equal(resolveProgramPopoutThemeOverride(text.document, "second").colors.surface, "#224466", "same-color neighbors remain independently editable");
+  assert.deepEqual(frozen, previous, "manual editing does not mutate the source snapshot");
+  assert.deepEqual(text.document.skins, frozen.skins);
+  assert.deepEqual(text.document.themeOverrides, frozen.themeOverrides);
+  assert.equal(validateButtonStateDocument(text.document).valid, true);
+  assert.equal(applyProgramPopoutColorEdits(text.document, "Blender", targets, [{ placementId: "live:first", color: "#CC5522", textColor: "#113355" }]).changedCount, 0);
+  const reset = applyProgramPopoutColorEdits(text.document, "Blender", targets, [{ placementId: "live:first", reset: true }]);
+  assert.equal(reset.changedCount, 0, "reset cannot silently unfreeze or replace excluded appearance");
+  assert.deepEqual(reset.document.programPopoutThemeLocks.first, expected);
+
+  const assignments = gradientProgramPopoutPaletteAssignments(targets.map(({ paletteId }, y) => ({ paletteId, y })), {
+    colors: ["#000000", "#FFFFFF"], spread: 25, scatter: 100, seed: 97
+  });
+  let changed = applyProgramPopoutPaletteTargets(text.document, "Blender", targets, assignments).document;
+  changed = applyProgramPopoutTextColorTargets(changed, "Blender", targets, "#000000").document;
+  changed.programPopoutThemes.blender = settings({ colors: ["#ABCDEF"], textColor: "#FF00FF", hoverGlowAmount: 100, activeHighlightAmount: 800 });
+  clearProgramPopoutColorOverrides(changed, "Blender", ["surface", "text"], true);
+  assert.deepEqual(resolveProgramPopoutThemeOverride(changed, "first"), expected);
+  assert.deepEqual(resolveProgramPopoutThemeOverride(JSON.parse(JSON.stringify(changed)), "first"), expected, "edited frozen colors persist with the package/state snapshot");
+});
+
+test("freezing Whole Layout captures independent live Fill, Text, Highlight and Glow angles exactly", () => {
+  const document = createButtonStateDocument();
+  const curve = [{ x: 0, y: 1, mode: "corner" }, { x: 1, y: 0, mode: "corner" }];
+  document.programPopoutThemes = { blender: settings({
+    screenTopToBottom: true, angle: 27, textColors: ["#123456", "#FFFFFF"], textAngle: -41, textScreenTopToBottom: true,
+    highlightCurve: curve, highlightAngle: 90, highlightScreenTopToBottom: true,
+    glowCurve: curve, glowAngle: -30, glowScreenTopToBottom: true,
+    idleEnabled: true, idleHighlightAmount: 37, idleGlowAmount: 23
+  }) };
+  for (const [id, x, y] of [["first", 0, 0], ["middle", 100, 35], ["last", 30, 120]]) {
+    addPlacement(document, id, "tools", "regular-popout", "Blender", y);
+    document.placements[id].x = x;
+  }
+  const targets = ["first", "middle", "last"].map((id) => ({ placementId: id, paletteId: `live:${id}` }));
+  const positions = targets.map(({ paletteId, placementId }) => {
+    const placement = document.placements[placementId];
+    return { paletteId, x: placement.x + 10, y: placement.y + 10, screenId: "screen" };
+  });
+  const geometry = {
+    visibleBounds: { Left: 0, Top: 0, Width: 200, Height: 200 }, envelope: { x: 0, y: 0, width: 200, height: 200 },
+    monitorWorkArea: { Left: 0, Top: 0, Width: 200, Height: 200 },
+    screenRange: { minimumX: 10, maximumX: 110, minimumY: 10, maximumY: 130, centers: positions.map(({ x, y }) => ({ x, y })) }
+  };
+  const expected = resolveProgramPopoutThemeOverride(document, "middle", geometry);
+  const frozen = applyProgramPopoutThemeLocks(document, "Blender", targets, [{ placementId: "live:middle", enabled: false }], positions);
+  assert.deepEqual(frozen.document.programPopoutThemeLocks.middle, expected);
+  assert.equal(validateButtonStateDocument(frozen.document).valid, true);
+  const collapsed = structuredClone(frozen.document);
+  addPlacement(collapsed, "collapsed", "collapsed", "tool-set-popout");
+  collapsed.placements.collapsed.buttonId = "middle";
+  assert.deepEqual(resolveProgramPopoutThemeOverride(collapsed, "collapsed", undefined, undefined, "middle"), expected);
+  assert.throws(() => applyProgramPopoutThemeLocks(document, "Blender", targets, [{ placementId: "live:middle", enabled: false }]), /screen appearance is unavailable/);
+});
+
+test("frozen appearance accepts fractional resolved effects but rejects malformed and stale targets atomically", () => {
+  const document = createButtonStateDocument();
+  addPlacement(document, "first", "tools", "regular-popout");
+  const targets = [{ placementId: "first", paletteId: "live:first" }];
+  const appearance = { ...document.themeOverrides.first, hoverHighlightAmount: 83.5, activeGlowAmount: 2.125, idleGlowAmount: 0.25 };
+  assert.deepEqual(normalizeProgramPopoutThemeLock(appearance), appearance);
+  assert.equal(normalizeProgramPopoutThemeLock({ ...appearance, highlightAmount: 275.5 }).highlightAmount, 275.5);
+  for (const patch of [{ colors: { surface: "var(--bad)" } }, { idleGlowAmount: NaN }, { activeGlowAmount: 100.1 }, { hoverEnabled: "true" }, { unknown: 1 }]) {
+    assert.equal(normalizeProgramPopoutThemeLock({ ...appearance, ...patch }), null);
+  }
+  const before = structuredClone(document);
+  for (const edits of [[], [{ placementId: "live:first", enabled: "false" }], [{ placementId: "stale", enabled: false }],
+    [{ placementId: "live:first", enabled: false }, { placementId: "live:first", enabled: true }]]) {
+    assert.throws(() => applyProgramPopoutThemeLocks(document, "Blender", targets, edits));
+  }
+  assert.deepEqual(document, before);
+  delete document.themeOverrides.first;
+  const frozen = applyProgramPopoutThemeLocks(document, "Blender", targets, [{ placementId: "live:first", enabled: false }]);
+  assert.deepEqual(frozen.document.programPopoutThemeLocks.first.colors, {});
+  assert.equal(frozen.document.programPopoutThemeLocks.first.hoverEnabled, null, "unthemed skins retain inherited behavior");
 });
 
 test("individual color edits reject duplicate, stale, malformed and other-program targets atomically", () => {
@@ -426,6 +560,48 @@ test("tilted fill gradients project each center along the angle while 0 degrees 
   assert.deepEqual(assignments.map(({ color }) => color), ["#000000", "#ffffff"]);
 });
 
+test("spatial Highlight and Glow scale all states independently with legacy and scope compatibility", () => {
+  const document = createButtonStateDocument();
+  for (const [id, x, y] of [["tl", 0, 0], ["tr", 100, 0], ["bl", 0, 100], ["br", 100, 100]]) addGridPlacement(document, id, x, y);
+  const effects = settings({ idleEnabled: true, idleHighlightAmount: 200, idleGlowAmount: 10,
+    highlightCurve: LINEAR_CURVE, highlightAngle: 90,
+    glowCurve: [{ x: 0, y: 1, mode: "auto" }, { x: 1, y: 0, mode: "auto" }] });
+  document.programPopoutThemes = { blender: effects };
+  assert.deepEqual(normalizeProgramPopoutThemeSettings(JSON.parse(JSON.stringify(effects))), effects);
+  const resolved = ["tl", "tr", "bl", "br"].map((id) => resolveProgramPopoutThemeOverride(document, id));
+  for (const prefix of ["idle", "hover", "active"]) {
+    assert.deepEqual(resolved.map(r => r[prefix + "HighlightAmount"]), [0, effects[prefix + "HighlightAmount"], 0, effects[prefix + "HighlightAmount"]]);
+    assert.deepEqual(resolved.map(r => r[prefix + "GlowAmount"]), [effects[prefix + "GlowAmount"], effects[prefix + "GlowAmount"], 0, 0]);
+  }
+  addPlacement(document, "other", "other", "regular-popout", "Krita");
+  addPlacement(document, "main", "main", "panel");
+  assert.equal(resolveProgramPopoutThemeOverride(document, "other").hoverHighlightAmount, 108);
+  assert.equal(resolveProgramPopoutThemeOverride(document, "main").hoverHighlightAmount, 108);
+  document.programPopoutThemes.blender = settings();
+  assert.equal(resolveProgramPopoutThemeOverride(document, "tl").hoverHighlightAmount, 66);
+  for (const patch of [{ highlightCurve: [] }, { glowCurve: null }, { glowAngle: 361 }, { highlightScreenTopToBottom: 1 }]) {
+    assert.equal(normalizeProgramPopoutThemeSettings(settings(patch)), null);
+  }
+});
+
+test("legacy Y-only Whole Layout geometry keeps vertical effects and single-position Start", () => {
+  const document = createButtonStateDocument();
+  const profile = settings({ colors: ["#123456"], highlightCurve: LINEAR_CURVE, glowCurve: LINEAR_CURVE,
+    highlightAngle: 90, glowAngle: -90, highlightScreenTopToBottom: true, glowScreenTopToBottom: true });
+  document.programPopoutThemes = { blender: profile };
+  for (const [id, kind] of [["pop", "regular-popout"], ["fan", "fan"]]) {
+    addPlacement(document, id, id, kind, "Blender", 40);
+    const geometry = { visibleBounds: { Top: 100, Height: 200 }, envelope: { y: 0, height: 100 },
+      monitorWorkArea: { Top: 0, Height: 800 }, screenRange: { minimumY: 150, maximumY: 350 } };
+    const effect = resolveProgramPopoutThemeOverride(document, id, geometry);
+    assert.ok(Math.abs(effect.hoverHighlightAmount - 66 * 0.25) < 1e-8);
+    assert.ok(Math.abs(effect.activeGlowAmount - 42 * 0.25) < 1e-8);
+    assert.equal(effect.colors.surface, "#123456");
+    geometry.screenRange = { minimumY: 200, maximumY: 200 };
+    assert.equal(resolveProgramPopoutThemeOverride(document, id, geometry).activeGlowAmount, 0, "single-position layouts sample Start");
+  }
+});
+
 test("text gradients resolve per Button independently of the fill, and a solid text color stays solid", () => {
   const document = createButtonStateDocument();
   for (const [id, x, y] of [["tl", 0, 0], ["tr", 100, 0], ["bl", 0, 100]]) addGridPlacement(document, id, x, y);
@@ -437,7 +613,7 @@ test("text gradients resolve per Button independently of the fill, and a solid t
   assert.equal(resolved("tr").text, "#123456");
 });
 
-test("Whole Layout ignores saved angles and scans match the occupied vertical range", () => {
+test("Whole Layout honors saved angles and scans match the occupied projected range", () => {
   const document = createButtonStateDocument();
   document.programPopoutThemes = { blender: settings({ screenTopToBottom: true, angle: 90 }) };
   addPlacement(document, "popped", "screen", "regular-popout", "Blender", 40);
@@ -445,10 +621,11 @@ test("Whole Layout ignores saved angles and scans match the occupied vertical ra
     visibleBounds: { Left: 100, Top: 100, Width: 200, Height: 200 },
     envelope: { x: 0, y: 0, width: 100, height: 100 },
     monitorWorkArea: { Left: 0, Top: 0, Width: 1000, Height: 800 },
-    screenRange: { minimumY: 150, maximumY: 350, minimumX: 100, maximumX: 300 }
+    screenRange: { minimumY: 150, maximumY: 350, minimumX: 100, maximumX: 300,
+      centers: [{ x: 100, y: 150 }, { x: 120, y: 200 }, { x: 300, y: 350 }] }
   };
   const [expected] = gradientProgramPopoutPaletteAssignments(
-    [{ paletteId: "a", y: 0.25 }], { colors: ["#000000", "#FFFFFF"], spread: 100, scatter: 0, seed: 23 },
+    [{ paletteId: "a", y: 0.1 }], { colors: ["#000000", "#FFFFFF"], spread: 100, scatter: 0, seed: 23 },
     { minimumY: 0, maximumY: 1 }
   );
   const rendered = resolveProgramPopoutThemeOverride(document, "popped", geometry);
@@ -462,7 +639,7 @@ test("Whole Layout ignores saved angles and scans match the occupied vertical ra
   assert.equal(scan.placements[0].color, rendered.colors.surface);
   assert.deepEqual(normalizedProgramPopoutScreenPositions([
     { paletteId: "a", x: 0, y: 0 }, { paletteId: "b", x: 1, y: 0 }, { paletteId: "c", x: 0, y: 1 }
-  ], 90).map(({ y }) => y), [0, 0, 1]);
+  ], 90).map(({ y }) => y), [0, 1, 0]);
   assert.equal(programPopoutGradientBoxPosition({ x: 1, y: 1 }, { minimumX: 0, maximumX: 2, minimumY: 0, maximumY: 2 }, 45), 0.5);
 });
 
@@ -500,7 +677,8 @@ test("Whole Layout anchors staggered Fill and Text to actual top/bottom Buttons 
     visibleBounds: { Left: 0, Top: 0, Width: 1000, Height: 1000 },
     envelope: { x: 0, y: 0, width: 1000, height: 1000 },
     monitorWorkArea: { Left: 0, Top: -200, Width: 3000, Height: 2000 },
-    screenRange: { minimumX: 110, maximumX: 810, minimumY: 110, maximumY: 810 }
+    screenRange: { minimumX: 110, maximumX: 810, minimumY: 110, maximumY: 810,
+      centers: [{ x: 810, y: 110 }, { x: 460, y: 460 }, { x: 110, y: 810 }] }
   };
   assert.deepEqual(["top", "bottom"].map(id => resolveProgramPopoutThemeOverride(document, id, geometry).colors.surface),
     ["#4FB3C9", "#16404B"]);
@@ -509,6 +687,100 @@ test("Whole Layout anchors staggered Fill and Text to actual top/bottom Buttons 
   const scan = scanProgramPopoutPaletteTargets(document, "Blender", ["top", "middle", "bottom"].map(id => ({ placementId: id, paletteId: id })),
     [{ paletteId: "top", x: 810, y: 110 }, { paletteId: "middle", x: 460, y: 460 }, { paletteId: "bottom", x: 110, y: 810 }]);
   assert.deepEqual(scan.placements.map(item => item.color), ["top", "middle", "bottom"].map(id => resolveProgramPopoutThemeOverride(document, id, geometry).colors.surface));
+  assert.deepEqual(scan.placements.map(item => item.textColor), ["top", "middle", "bottom"].map(id => resolveProgramPopoutThemeOverride(document, id, geometry).colors.text));
+});
+
+test("Whole Layout rotates amount falloff with independent Highlight, Glow, Fill and Text angles", () => {
+  const document = createButtonStateDocument();
+  const ids = ["tl", "tr", "bl", "br"];
+  const centers = [{ x: 100, y: 100 }, { x: 300, y: 100 }, { x: 100, y: 300 }, { x: 300, y: 300 }];
+  ids.forEach((id, index) => {
+    addPlacement(document, id, id, index % 2 ? "fan" : "regular-popout", "Blender", centers[index].y - 10);
+    document.placements[id].x = centers[index].x - 10;
+  });
+  const geometry = { visibleBounds: { Left: 0, Top: 0, Width: 500, Height: 500 },
+    envelope: { x: 0, y: 0, width: 500, height: 500 },
+    screenRange: { minimumX: 100, maximumX: 300, minimumY: 100, maximumY: 300, centers } };
+  const fade = [{ x: 0, y: 1, mode: "auto" }, { x: 1, y: 0, mode: "auto" }];
+  const profile = settings({ idleEnabled: true, idleHighlightAmount: 100, idleGlowAmount: 40,
+    highlightCurve: fade, glowCurve: fade, curve: fade, textCurve: fade,
+    textColors: ["#000000", "#FFFFFF"], screenTopToBottom: true, textScreenTopToBottom: true,
+    highlightScreenTopToBottom: true, glowScreenTopToBottom: true });
+  for (const [angle, expected] of [[0, [1, 1, 0, 0]], [90, [1, 0, 1, 0]], [45, [1, 0.5, 0.5, 0]], [180, [0, 0, 1, 1]], [-90, [0, 1, 0, 1]]]) {
+    document.programPopoutThemes = { blender: { ...profile, angle, textAngle: angle, highlightAngle: angle, glowAngle: angle } };
+    ids.forEach((id, index) => {
+      const result = resolveProgramPopoutThemeOverride(document, id, geometry);
+      for (const state of ["idle", "hover", "active"]) {
+        for (const effect of ["Highlight", "Glow"]) {
+          const key = `${state}${effect}Amount`;
+          assert.ok(Math.abs(result[key] - profile[key] * expected[index]) < 1e-8, `${id} ${key} at ${angle}`);
+        }
+      }
+      const gray = Math.round(expected[index] * 255).toString(16).padStart(2, "0").repeat(3).toUpperCase();
+      assert.equal(result.colors.surface, `#${gray}`);
+      assert.equal(result.colors.text, `#${gray}`);
+    });
+  }
+  document.programPopoutThemes.blender = { ...profile, angle: 45, textAngle: 180, highlightAngle: 90, glowAngle: 0 };
+  const independent = ids.map((id) => resolveProgramPopoutThemeOverride(document, id, geometry));
+  assert.deepEqual(independent.map((result) => result.idleHighlightAmount), [100, 0, 100, 0]);
+  assert.deepEqual(independent.map((result) => result.idleGlowAmount), [40, 40, 0, 0]);
+  assert.deepEqual(independent.map((result) => result.colors.text), ["#000000", "#000000", "#FFFFFF", "#FFFFFF"]);
+  const scan = scanProgramPopoutPaletteTargets(document, "Blender", ids.map((id) => ({ placementId: id, paletteId: id })),
+    centers.map((center, index) => ({ ...center, paletteId: ids[index] })));
+  assert.deepEqual(scan.placements.map((item) => item.color), independent.map((result) => result.colors.surface));
+  assert.deepEqual(scan.placements.map((item) => item.textColor), independent.map((result) => result.colors.text));
+});
+
+test("rotated Whole Layout anchors occupied centers, not empty diagonal box corners", () => {
+  const centers = [{ x: 0, y: 100 }, { x: 100, y: 0 }, { x: 80, y: 80 }];
+  const document = createButtonStateDocument();
+  document.programPopoutThemes = { blender: settings({ highlightCurve: LINEAR_CURVE, highlightAngle: 45,
+    highlightScreenTopToBottom: true, screenTopToBottom: true, angle: 45 }) };
+  const geometry = { visibleBounds: { Left: 0, Top: 0, Width: 200, Height: 200 },
+    envelope: { x: 0, y: 0, width: 200, height: 200 },
+    screenRange: { minimumX: 0, maximumX: 100, minimumY: 0, maximumY: 100, centers } };
+  const amounts = centers.map((center, index) => {
+    const id = `triangle-${index}`;
+    addPlacement(document, id, id, "regular-popout", "Blender", center.y - 10);
+    document.placements[id].x = center.x - 10;
+    return resolveProgramPopoutThemeOverride(document, id, geometry).hoverHighlightAmount;
+  });
+  assert.deepEqual(amounts, [0, 0, 66]);
+  const items = centers.map((center, index) => ({ ...center, paletteId: `${index}`, screenId: "left" }));
+  const normalized = normalizedProgramPopoutScreenPositions([
+    ...items, { paletteId: "hidden", screenId: "left", x: 10000, y: 10000, rangeEligible: false },
+    { paletteId: "other-start", screenId: "right", x: -500, y: -500 },
+    { paletteId: "other-end", screenId: "right", x: -100, y: -100 }
+  ], 45);
+  assert.deepEqual(normalized.map((item) => item.y), [0, 0, 1, 1, 0, 1]);
+  assert.deepEqual(normalizedProgramPopoutScreenPositions([
+    { paletteId: "old-top", y: -100 }, { paletteId: "old-bottom", y: 100 }
+  ], 90).map((item) => item.y), [0, 1], "old Y-only scans preserve vertical behavior");
+  geometry.screenRange = { minimumX: 80, maximumX: 80, minimumY: 80, maximumY: 80, centers: [centers[2]] };
+  assert.equal(resolveProgramPopoutThemeOverride(document, "triangle-2", geometry).hoverHighlightAmount, 0);
+});
+
+test("cross-window amounts use shared physical centers on negative-coordinate scaled monitors", () => {
+  const document = createButtonStateDocument();
+  document.programPopoutThemes = { blender: settings({ glowCurve: LINEAR_CURVE, glowAngle: 90, glowScreenTopToBottom: true }) };
+  const monitorWorkArea = { Left: -1920, Top: -600, Width: 1920, Height: 1200 };
+  const geometries = [
+    { visibleBounds: { Left: -1800, Top: -500, Width: 300, Height: 300 }, envelope: { x: -40, y: -10, width: 200, height: 200 }, monitorWorkArea },
+    { visibleBounds: { Left: -1700, Top: -300, Width: 400, Height: 400 }, envelope: { x: 0, y: 0, width: 200, height: 200 }, monitorWorkArea }
+  ];
+  addPlacement(document, "pop", "pop", "regular-popout", "Blender", 0);
+  document.placements.pop.x = -30;
+  addPlacement(document, "fan", "fan", "fan", "Blender", 40);
+  document.placements.fan.x = 10;
+  const ids = ["pop", "fan"];
+  const ranges = ids.map((id, index) => programPopoutThemeWindowRange("Blender", [document.placements[id]], geometries[index]));
+  const screenRange = aggregateProgramPopoutThemeScreenRange(ranges[0], [ranges[1],
+    { ...ranges[1], programName: "krita" }, { ...ranges[1], monitorKey: "other-monitor" }]);
+  assert.deepEqual(screenRange.centers, [{ x: -1770, y: -470 }, { x: -1660, y: -200 }]);
+  assert.deepEqual(ids.map((id, index) => resolveProgramPopoutThemeOverride(document, id, { ...geometries[index], screenRange }).hoverGlowAmount), [0, 16]);
+  document.programPopoutThemes.blender.glowAngle = -90;
+  assert.deepEqual(ids.map((id, index) => resolveProgramPopoutThemeOverride(document, id, { ...geometries[index], screenRange }).hoverGlowAmount), [16, 0]);
 });
 
 test("missing shared layout range falls back to local Buttons instead of monitor edges", () => {

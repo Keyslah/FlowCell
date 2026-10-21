@@ -68,7 +68,10 @@ Theme controls:
   its original explanatory hover tooltip, with behavior-accurate descriptions
   for newer controls.
 - `Browse` selects and samples a reference image through the generic
-  `image.sample-palette` broker capability.
+  `image.sample-palette` broker capability. Its row shows only the active package
+  name next to Browse, not the reference image path. `Clear Picture` and
+  `Place Picture` are in this same row, in that order. Place Picture opens the
+  image chooser and immediately places the selected image; cancel does nothing.
 - `Absorb Theme` reads Blender's current theme into the package fields.
 - `Refill`, `Dark Theme`, `Light Theme`, the tone slider, and named profiles stage colors
   with package-owned tone logic.
@@ -101,7 +104,8 @@ Theme controls:
 - Angle tilts the gradient: 0 degrees runs top to bottom, 90 left to right, 180
   bottom to top and -90 right to left. Drag the dial (Shift snaps to 15 degrees),
   use the slider, or type a value. Tilted gradients project each Button center
-  along the angle, so the corner Buttons of a window hold the Start and End stops.
+  along the angle, so the first and last occupied positions hold the Start and End
+  stops, even in sparse or diagonal layouts.
 - `Lock All Popped Button Settings`, at the top of Popped Button Colors, covers
   both gradients (stops, curves, angles), Spread, Scatter, highlights and glow.
   It temporarily keeps the current popped appearance when opening
@@ -109,11 +113,37 @@ Theme controls:
   Switching packages never writes their files. Older packages without popped
   settings keep the last-used appearance. First use adopts the saved page
   gradient and the common current popout effects, without replacing skins.
-- The per-Button Individual Buttons list was removed in Theme 3.0.20. Aggregate
-  color buckets and `Apply Buckets` remain. Per-occurrence colors left from the
-  old list are cleared when a new fill or text gradient is applied (fill clears
+- Highlight and Glow each have a spatial strength curve, Angle, and Whole Layout
+  control. The curve multiplies all three state's amounts by 0-100% at each Button
+  center. Angle determines direction in both modes: Whole Layout spans visible
+  Buttons on each monitor, while disabling it spans each window independently.
+  A single-position layout samples Start. Fade runs from full strength at Start
+  to zero at End: top to bottom at 0 degrees, left to right at 90 degrees.
+  Full and Reset give constant 100% strength, also the default for older themes.
+  Apply Highlights & Glow commits both curves with the state amounts. Packages
+  and the appearance lock retain the curves, angles, and Whole Layout choices.
+- Theme 3.0.34 gives every Button its own named color row and checkbox, even when
+  multiple Buttons have the same color. Color/hex changes apply directly to only
+  that Button. Material-only skins also expose a color control, with an unset
+  hex until a color is explicitly chosen; loading never invents a Surface color.
+  The checkbox defaults checked and controls only participation in gradients and
+  other bulk theme changes. Unchecked Buttons remain individually editable;
+  direct edits update their retained color without changing their retained text
+  or Regular/Hover/Active effects. Exclusions and manual colors persist in
+  Button state and saved packages. Rechecking includes the Button in bulk theme changes again.
+  Checkbox and individual color requests run in order in the background; only a
+  pending checkbox is disabled, and responses preserve in-progress field edits
+  without rebuilding the page. Other Apply/Save operations wait for queued changes.
+  Native visibility/monitor reads run concurrently with fresh stale-state guards.
+  Checked per-occurrence colors are cleared when a new fill or text gradient is applied (fill clears
   Surface overrides, text clears Text overrides); `Toggle Text` also replaces a
   text gradient with solid black or white.
+- Packages also save individual Button color overrides and staged swatch edits,
+  keyed by verified Button/placement identity rather than display names or
+  transient window labels. Loading restores them alongside shared settings;
+  currently unchecked Buttons remain protected from package changes. Save waits
+  for pending manual changes and captures remaining staged edits without issuing
+  an extra live Apply. Legacy packages without these records remain supported.
 - Shared appearance applies directly when switching packages. The buckets remain
   visible and refresh asynchronously; bucket edits are disabled until the refreshed
   scan arrives. `Rescan` remains available. Legacy packages retain the current
@@ -124,8 +154,8 @@ Theme controls:
   interior blends without changing stop anchors. Increasing Gradient Colors
   retains the existing chosen colors and inserts new blends between them.
 - `Whole Layout` spans the visible popped Button centers on each monitor for
-  Fill and Text, from the highest to the lowest visible Button. Angle applies only
-  within individual windows when Whole Layout is off. Its checkbox sits beside
+  Fill, Text, Highlight and Glow along each channel's Angle, including diagonals.
+  It changes the coverage, not the direction. Its checkbox sits beside
   the corresponding Apply button. Moving, collapsing, opening or closing a window
   updates this live range without saving geometry into packages or rescanning on
   package switches. Collapsed hidden members do not move the endpoints. Authored
@@ -146,8 +176,9 @@ Grid controls in Theme Palette:
   grid planes and antialiasing. It refreshes outside Blender's draw engine and
   presents on the following redraw, before native viewport text and gizmos.
 
-Place Picture contains only the picture path, `Browse`, `Place Picture`, and
-`Clear`. Unchecking Grid preserves the picture and fake gizmos.
+The separate bottom Place Picture section has been removed. Picture actions
+are beside the reference Browse controls, with no picture filename/path field.
+Unchecking Grid preserves the picture and fake gizmos.
   Turning the grid off frees this cache and restores the inexpensive picture
   path. Clearing the picture restores the previous viewport settings.
 - `Grid Scale` adjusts Blender's native spacing (0.001–1000). Try 0.1 or 0.01

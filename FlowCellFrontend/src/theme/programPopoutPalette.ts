@@ -17,12 +17,12 @@ import type {
 import type { FlowCellBounds } from "../types.js";
 import {
   normalizeProgramPopoutColorOverride,
+  normalizeProgramPopoutThemeLock,
   normalizeProgramPopoutThemeSettings,
   resolveProgramPopoutThemeOverride
 } from "./programPopoutTheme.js";
 import {
   normalizeProgramPopoutGradientCurve,
-  programPopoutGradientBoxPosition,
   programPopoutGradientColor,
   programPopoutGradientProjection
 } from "./programPopoutGradient.js";
@@ -51,6 +51,12 @@ export interface ProgramPopoutPaletteScannedPlacement extends ProgramPopoutPalet
   label: string;
   textColor: string;
   groupLabel: string;
+  enabled: boolean;
+}
+
+export interface ProgramPopoutThemeParticipationEdit {
+  placementId: string;
+  enabled: boolean;
 }
 
 export interface ProgramPopoutColorEdit {
@@ -84,7 +90,7 @@ export interface ProgramPopoutPaletteTarget {
 export interface ProgramPopoutPaletteGradientItem {
   paletteId: string;
   y: number;
-  /** Horizontal center in the same units as y; absent contributes no horizontal extent. */
+  /** Horizontal center in the same units as y; old Y-only screens stay vertical. */
   x?: number;
   screenId?: string;
   rangeEligible?: boolean;
@@ -104,29 +110,31 @@ export interface ProgramPopoutPaletteScreenPositionArgs {
 }
 
 /**
- * Normalize only occupied rows, independently per screen; hidden members do not anchor the range.
- * Whole Layout anchors vertically to actual Buttons; local gradients retain their angle.
+ * Project occupied Button centers independently per screen. Hidden members and
+ * empty bounding-box corners never anchor the range, at any angle.
  */
 export function normalizedProgramPopoutScreenPositions(
   items: readonly ProgramPopoutPaletteGradientItem[],
-  _angle = 0
+  angle = 0
 ): ProgramPopoutPaletteGradientItem[] {
-  const boxes = new Map<string, { minimumX: number; maximumX: number; minimumY: number; maximumY: number }>();
+  const screens = new Map<string, ProgramPopoutPaletteGradientItem[]>();
   for (const item of items) {
-    if (item.rangeEligible === false) continue;
+    if (item.rangeEligible === false || !Number.isFinite(item.y)) continue;
     const key = item.screenId ?? "";
-    const box = boxes.get(key);
-    const x = item.x ?? 0;
-    boxes.set(key, {
-      minimumX: Math.min(box?.minimumX ?? x, x),
-      maximumX: Math.max(box?.maximumX ?? x, x),
-      minimumY: Math.min(box?.minimumY ?? item.y, item.y),
-      maximumY: Math.max(box?.maximumY ?? item.y, item.y)
-    });
+    const screen = screens.get(key) ?? [];
+    screen.push(item);
+    screens.set(key, screen);
   }
+  const ranges = new Map([...screens].map(([key, members]) => {
+    const screenAngle = members.every((item) => Number.isFinite(item.x)) ? angle : 0;
+    const projections = members.map((item) => programPopoutGradientProjection({ x: item.x ?? 0, y: item.y }, screenAngle));
+    return [key, { angle: screenAngle, minimum: Math.min(...projections), maximum: Math.max(...projections) }];
+  }));
   return items.map((item) => {
-    const box = boxes.get(item.screenId ?? "");
-    return { ...item, y: box ? programPopoutGradientBoxPosition({ x: item.x ?? 0, y: item.y }, box, 0) : 0 };
+    const range = ranges.get(item.screenId ?? "");
+    const projected = programPopoutGradientProjection({ x: item.x ?? 0, y: item.y }, range?.angle);
+    return { ...item, y: range && range.maximum > range.minimum && Number.isFinite(projected)
+      ? Math.min(1, Math.max(0, (projected - range.minimum) / (range.maximum - range.minimum))) : 0 };
   });
 }
 
@@ -247,8 +255,10 @@ export function scanProgramPopoutPaletteTargets(
   screenPositions?: readonly ProgramPopoutPaletteGradientItem[]
 ): ProgramPopoutPaletteScan {
   const programKey = programName.normalize("NFC").trim().toLocaleLowerCase("en");
-  const fillAngle = normalizeProgramPopoutThemeSettings(document.programPopoutThemes?.[programKey])?.angle;
-  const screenPositionByPaletteId = new Map(screenPositions && normalizedProgramPopoutScreenPositions(screenPositions, fillAngle)
+  const settings = normalizeProgramPopoutThemeSettings(document.programPopoutThemes?.[programKey]);
+  const screenPositionByPaletteId = new Map(screenPositions && normalizedProgramPopoutScreenPositions(screenPositions, settings?.angle)
+    .map(({ paletteId, y }) => [paletteId, y]));
+  const textScreenPositionByPaletteId = new Map(screenPositions && normalizedProgramPopoutScreenPositions(screenPositions, settings?.textAngle)
     .map(({ paletteId, y }) => [paletteId, y]));
   const placements = resolvedProgramPopoutPaletteTargets(document, programName, targets).map(({
     paletteId,
@@ -257,11 +267,13 @@ export function scanProgramPopoutPaletteTargets(
     const button = document.buttons[placement.buttonId];
     const skin = button && document.skins[placement.skinOverrideId ?? button.defaultSkinId];
     const profileText = skin && collectButtonSkinProfileColors(skin).find(({ role }) => role === "text")?.color;
-    const override = resolveProgramPopoutThemeOverride(document, placement.id);
+    const override = resolveProgramPopoutThemeOverride(document, placement.id, undefined, undefined, undefined,
+      textScreenPositionByPaletteId.get(paletteId));
     return {
       placementId: paletteId,
       label: button?.label ?? placement.buttonId,
       groupLabel: document.surfaces[placement.surfaceId].name,
+      enabled: !document.programPopoutThemeLocks?.[placement.id],
       textColor: normalizedOpaqueColor(override?.colors.text ?? profileText ?? (skin && readButtonSkinTextColor(skin))) ?? "#FFFFFF",
       ...effectiveSurfaceColor(document, placement, screenPositionByPaletteId.get(paletteId))
     };
@@ -274,6 +286,59 @@ export function scanProgramPopoutPaletteTargets(
     buttonCount: placements.length,
     colorCount: colors.size
   };
+}
+
+/** Checkbox changes capture resolved live appearance once, without changing the assigned skin. */
+export function applyProgramPopoutThemeLocks(
+  document: ButtonStateDocument,
+  programName: string,
+  targets: readonly ProgramPopoutPaletteTarget[],
+  edits: readonly ProgramPopoutThemeParticipationEdit[],
+  screenPositions?: readonly ProgramPopoutPaletteGradientItem[]
+): ProgramPopoutPaletteApplyResult {
+  const targetById = new Map(resolvedProgramPopoutPaletteTargets(document, programName, targets)
+    .map(({ paletteId, placement }) => [paletteId, placement.id]));
+  if (!Array.isArray(edits) || !edits.length) throw new Error("Choose at least one popped Button to enable or freeze.");
+  const seen = new Set<string>();
+  const resolved = edits.map((edit) => {
+    if (!edit || typeof edit !== "object" || Array.isArray(edit) || typeof edit.placementId !== "string" ||
+        typeof edit.enabled !== "boolean" || Object.keys(edit).some((key) => !["placementId", "enabled"].includes(key))) {
+      throw new Error("A popped Button participation change is invalid.");
+    }
+    const placementId = targetById.get(edit.placementId);
+    if (!placementId || seen.has(edit.placementId)) throw new Error("Popped Buttons are stale or duplicated. Press Rescan and try again.");
+    seen.add(edit.placementId);
+    return { ...edit, paletteId: edit.placementId, placementId };
+  });
+  const settings = normalizeProgramPopoutThemeSettings(document.programPopoutThemes?.[programName.normalize("NFC").trim().toLocaleLowerCase("en")]);
+  const needsScreen = settings && (settings.screenTopToBottom || settings.textScreenTopToBottom ||
+    settings.highlightScreenTopToBottom || settings.glowScreenTopToBottom);
+  const positions = (angle?: number) => new Map((screenPositions ? normalizedProgramPopoutScreenPositions(screenPositions, angle) : [])
+    .map(({ paletteId, y }) => [paletteId, y]));
+  const fill = positions(settings?.angle);
+  const text = positions(settings?.textAngle);
+  const highlight = positions(settings?.highlightAngle);
+  const glow = positions(settings?.glowAngle);
+  const next = cloneButtonDocument(document);
+  let changedCount = 0;
+  for (const { placementId, paletteId, enabled } of resolved) {
+    if (enabled) {
+      if (next.programPopoutThemeLocks?.[placementId]) {
+        delete next.programPopoutThemeLocks[placementId];
+        changedCount += 1;
+      }
+    } else if (!next.programPopoutThemeLocks?.[placementId]) {
+      if (needsScreen && !fill.has(paletteId)) throw new Error("The Button's screen appearance is unavailable. Reopen it and press Rescan.");
+      const snapshot = resolveProgramPopoutThemeOverride(document, placementId, undefined, fill.get(paletteId), undefined,
+        text.get(paletteId), { highlight: highlight.get(paletteId), glow: glow.get(paletteId) }) ?? emptyButtonThemeOverride();
+      const locked = normalizeProgramPopoutThemeLock(snapshot);
+      if (!locked) throw new Error("The Button's current appearance could not be frozen.");
+      next.programPopoutThemeLocks ??= {};
+      next.programPopoutThemeLocks[placementId] = locked;
+      changedCount += 1;
+    }
+  }
+  return { document: next, changedCount, ...scanProgramPopoutPaletteTargets(next, programName, targets, screenPositions) };
 }
 
 /** Edits an exact nonempty subset; every edit is checked before the source is cloned or changed. */
@@ -312,10 +377,16 @@ export function applyProgramPopoutColorEdits(
   next.programPopoutColorOverrides ??= {};
   let changedCount = 0;
   for (const { placementId, colors, reset } of resolved) {
-    const before = JSON.stringify(next.programPopoutColorOverrides[placementId] ?? null);
+    const locked = next.programPopoutThemeLocks?.[placementId];
+    if (locked && reset) continue;
+    const before = JSON.stringify([next.programPopoutColorOverrides[placementId] ?? null, locked ?? null]);
     if (reset) delete next.programPopoutColorOverrides[placementId];
-    else next.programPopoutColorOverrides[placementId] = { ...next.programPopoutColorOverrides[placementId], ...colors };
-    if (JSON.stringify(next.programPopoutColorOverrides[placementId] ?? null) !== before) changedCount += 1;
+    else {
+      next.programPopoutColorOverrides[placementId] = { ...next.programPopoutColorOverrides[placementId], ...colors };
+      // An explicit individual edit remains available while bulk Theme updates are excluded.
+      if (locked) locked.colors = { ...locked.colors, ...colors };
+    }
+    if (JSON.stringify([next.programPopoutColorOverrides[placementId] ?? null, locked ?? null]) !== before) changedCount += 1;
   }
   return { document: next, changedCount, ...scanProgramPopoutPaletteTargets(next, programName, targets) };
 }
@@ -363,7 +434,7 @@ export function applyProgramPopoutPaletteTargets(
   let changedCount = 0;
   for (const { placementId, color } of resolved.values()) {
     const placement = next.placements[placementId];
-    if (!placement || color === null) continue;
+    if (!placement || color === null || next.programPopoutThemeLocks?.[placementId]) continue;
     const underlyingColor = skinSurfaceColor(next, placement).color;
     const current = next.themeOverrides?.[placementId];
     const before = JSON.stringify(current ?? null);
@@ -400,7 +471,7 @@ export function programPopoutPaletteTargetsHaveTextColor(
   textColor: ProgramPopoutTextColor
 ): boolean {
   const color = validatedProgramPopoutTextColor(textColor);
-  return resolvedProgramPopoutPaletteTargets(document, programName, targets).every(({ placement }) =>
+  return resolvedProgramPopoutPaletteTargets(document, programName, targets).filter(({ placement }) => !document.programPopoutThemeLocks?.[placement.id]).every(({ placement }) =>
     normalizedOpaqueColor(resolveProgramPopoutThemeOverride(document, placement.id)?.colors.text) === color
   );
 }
@@ -416,6 +487,7 @@ export function applyProgramPopoutTextColorTargets(
   const next = cloneButtonDocument(document);
   let changedCount = 0;
   for (const { placement } of resolved) {
+    if (next.programPopoutThemeLocks?.[placement.id]) continue;
     const current = next.themeOverrides?.[placement.id];
     const before = JSON.stringify(current ?? null);
     const override = structuredClone(current ?? emptyButtonThemeOverride());

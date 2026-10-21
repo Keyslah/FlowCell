@@ -18,6 +18,7 @@ import type {
   ButtonRecord
 } from "../types";
 import {
+  consumeButtonAnimationPress,
   getButtonAnimationAspectRatio,
   normalizeButtonAnimationDesktopBounds,
   normalizeButtonAnimationEditorBounds,
@@ -312,6 +313,7 @@ export async function coordinateButtonActivationAnimationRequest(
       ? BUTTON_EDITOR_COORDINATOR_LABEL
       : eligibleLabels[0];
   if (!coordinatorLabel || currentLabel !== coordinatorLabel) return;
+  if (!consumeButtonAnimationPress(button, window.localStorage)) return;
   await playButtonActivationAnimation(button);
 }
 

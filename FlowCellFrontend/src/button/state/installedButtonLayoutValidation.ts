@@ -86,9 +86,14 @@ function validateServiceTarget(value: unknown, path: string): void {
       ["kind", "programName", "panelName", "ownerFileName", "command", "payload", "events"],
       path
     );
-    requireNonemptyString(value.programName, `${path}.programName`);
-    requireNonemptyString(value.panelName, `${path}.panelName`);
-    requireNonemptyString(value.ownerFileName, `${path}.ownerFileName`);
+    // Omitting all three routing keys targets the installing tool set itself;
+    // resolveInstalledToolFields fills them from the owner's children.
+    const selfTarget = ["programName", "panelName", "ownerFileName"].every((key) => value[key] === undefined);
+    if (!selfTarget) {
+      requireNonemptyString(value.programName, `${path}.programName`);
+      requireNonemptyString(value.panelName, `${path}.panelName`);
+      requireNonemptyString(value.ownerFileName, `${path}.ownerFileName`);
+    }
     requireNonemptyString(value.command, `${path}.command`);
   } else {
     invalid(`${path}.kind`, "must be 'core-action' or 'tool-set-action'.");
@@ -126,6 +131,7 @@ function validateToolField(value: unknown, path: string): { id: string; kind: st
   const kindKeys: Record<string, readonly string[]> = {
     text: ["placeholder"],
     number: ["minimum", "maximum", "step"],
+    range: ["minimum", "maximum", "step", "linkToggleField", "format"],
     select: ["options"],
     toggle: [],
     path: ["pathKind", "filter"],
@@ -144,9 +150,13 @@ function validateToolField(value: unknown, path: string): { id: string; kind: st
   if (
     value.serviceTrigger !== undefined &&
     value.serviceTrigger !== "change" &&
-    value.serviceTrigger !== "activate"
+    value.serviceTrigger !== "activate" &&
+    value.serviceTrigger !== "input"
   ) {
-    invalid(`${path}.serviceTrigger`, "must be 'change' or 'activate'.");
+    invalid(`${path}.serviceTrigger`, "must be 'change', 'activate', or 'input'.");
+  }
+  if (value.serviceTrigger === "input" && value.kind !== "range") {
+    invalid(`${path}.serviceTrigger`, "may be 'input' only for range fields.");
   }
   if (value.serviceTarget !== undefined) {
     validateServiceTarget(value.serviceTarget, `${path}.serviceTarget`);
@@ -197,6 +207,23 @@ function validateToolField(value: unknown, path: string): { id: string; kind: st
       });
       if (!optionValues.some((candidate) => Object.is(candidate, value.defaultValue))) {
         invalid(`${path}.defaultValue`, "must match one option value.");
+      }
+      break;
+    }
+    case "range": {
+      const minimum = requireFiniteNumber(value.minimum, `${path}.minimum`);
+      const maximum = requireFiniteNumber(value.maximum, `${path}.maximum`);
+      if (minimum >= maximum) invalid(`${path}.minimum`, "must be less than maximum.");
+      const defaultValue = requireFiniteNumber(value.defaultValue, `${path}.defaultValue`);
+      if (defaultValue < minimum || defaultValue > maximum) {
+        invalid(`${path}.defaultValue`, "must be within minimum..maximum.");
+      }
+      if (value.step !== undefined && requireFiniteNumber(value.step, `${path}.step`) <= 0) {
+        invalid(`${path}.step`, "must be positive.");
+      }
+      if (value.linkToggleField !== undefined) requireNonemptyString(value.linkToggleField, `${path}.linkToggleField`);
+      if (value.format !== undefined && typeof value.format !== "string") {
+        invalid(`${path}.format`, "must be a string.");
       }
       break;
     }
@@ -367,6 +394,12 @@ export function validateInstalledButtonLayout<T>(layout: T): T {
       const normalizedId = id.toLocaleLowerCase("en-US");
       if (fieldKinds.has(normalizedId)) invalid(`fields.${index}.id`, "must be unique.");
       fieldKinds.set(normalizedId, kind);
+    });
+    layout.fields.forEach((field, index) => {
+      if (!isRecord(field) || field.kind !== "range" || typeof field.linkToggleField !== "string") return;
+      if (fieldKinds.get(field.linkToggleField.toLocaleLowerCase("en-US")) !== "toggle") {
+        invalid(`fields.${index}.linkToggleField`, `must name a toggle field, not '${field.linkToggleField}'.`);
+      }
     });
   }
 

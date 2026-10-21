@@ -28,13 +28,13 @@ const globalActions = new Set([
   "empty-sublayers",
   "empty-trash",
   "copy-live",
-  "rename"
+  "rename",
+  "archive"
 ]);
 const directOpenTreeActions = new Set(["new-sub", "delete-sublayer"]);
 const nonmutatingTreeActions = new Set([
   "3d",
   "add-to-live",
-  "archive",
   "back",
   "flatten-top-sub",
   "restore",
@@ -195,11 +195,147 @@ function resolverFixture(helper) {
   };
 }
 
+function archiveFixture() {
+  const document = { typename: "Document", name: "Archive regression", selection: [] };
+  const alerts = [];
+  const layers = (parent) => {
+    const collection = [];
+    collection.add = () => {
+      const layer = {
+        typename: "Layer", name: "Layer", parent, locked: false, visible: true, pageItems: [],
+        remove() { parent.layers.splice(parent.layers.indexOf(this), 1); },
+        move() { throw new Error("Archive must never move a source layer"); }
+      };
+      layer.layers = layers(layer);
+      collection.unshift(layer);
+      return layer;
+    };
+    return collection;
+  };
+  document.layers = layers(document);
+  const layer = (parent, name) => Object.assign(parent.layers.add(), { name });
+  const item = (parent, name, options = {}) => {
+    const result = {
+      typename: "PathItem", parent, name, locked: false, hidden: false, ...options,
+      duplicate(destination) {
+        let ancestor = this.parent;
+        while (ancestor.typename === "Layer") {
+          assert.equal(ancestor.locked, false);
+          assert.equal(ancestor.visible, true);
+          ancestor = ancestor.parent;
+        }
+        assert.equal(this.locked, false);
+        assert.equal(this.hidden, false);
+        if (this.failCopy) throw new Error("fixture duplicate failure");
+        return item(destination, this.name, { locked: this.locked, hidden: this.hidden });
+      }
+    };
+    parent.pageItems.unshift(result);
+    return result;
+  };
+  function LogFile() {}
+  LogFile.prototype.open = () => true;
+  LogFile.prototype.writeln = LogFile.prototype.close = () => {};
+  const context = {
+    app: {
+      documents: [document], activeDocument: document,
+      redraw() {
+        if (document.selection.length) document.activeLayer = document.selection[0].parent;
+      }
+    },
+    File: LogFile, Folder: { temp: { fsName: "temp" } },
+    $: { writeln() {} }, alert: (message) => alerts.push(message),
+    ElementPlacement: { PLACEATBEGINNING: "beginning" }
+  };
+  return {
+    document, layer, item, alerts,
+    run() { vm.runInNewContext(readActionSource("archive").replace(/^#target[^\r\n]*\r?\n/gm, ""), context); }
+  };
+}
+
+test("Archive copies complete native selection owner layers and retains originals and closed descendants", () => {
+  const f = archiveFixture();
+  const live = f.layer(f.document, "Live");
+  const source = f.layer(live, "Artwork");
+  source.opacity = 65;
+  const selected = f.item(source, "selected");
+  f.item(source, "unselected sibling");
+  const nested = f.layer(source, "Hidden child");
+  f.item(nested, "locked nested art", { hidden: true, locked: true });
+  nested.visible = false;
+  nested.locked = true;
+  const unrelated = f.layer(live, "Unrelated active layer");
+  f.item(unrelated, "do not archive");
+  const trash = f.layer(f.document, "Trash");
+  f.document.activeLayer = unrelated;
+  f.document.selection = [selected, selected];
+  f.run();
+  assert.deepEqual(f.alerts, []);
+  const archive = f.document.layers.find(({ name }) => name === "Archive");
+  const family = archive.layers[0];
+  const copy = family.layers[0];
+  assert.equal(family.name, "Artwork");
+  assert.equal(family.layers.length, 1, "duplicate selections must produce only one owner copy");
+  assert.equal(copy.name, "A1");
+  assert.equal(copy.opacity, 65);
+  assert.deepEqual(copy.pageItems.map(({ name }) => name), ["unselected sibling", "selected"]);
+  assert.equal(copy.layers[0].name, "Hidden child");
+  assert.equal(copy.layers[0].visible, false);
+  assert.equal(copy.layers[0].locked, true);
+  assert.equal(copy.layers[0].pageItems[0].hidden, true);
+  assert.equal(copy.layers[0].pageItems[0].locked, true);
+  assert.equal(source.parent, live);
+  assert.equal(source.name, "Artwork");
+  assert.equal(source.pageItems.length, 2);
+  assert.equal(nested.visible, false);
+  assert.equal(nested.locked, true);
+  assert.equal(nested.pageItems[0].hidden, true);
+  assert.equal(nested.pageItems[0].locked, true);
+  assert.equal(trash.visible, true);
+  assert.equal(trash.locked, false);
+  assert.equal(archive.visible, false);
+  assert.equal(archive.locked, true);
+  assert.equal(f.document.activeLayer, unrelated);
+  f.run();
+  assert.deepEqual(family.layers.map(({ name }) => name), ["A2", "A1"]);
+});
+
+test("Archive restores source ancestors and removes only the incomplete copy on duplication failure", () => {
+  const f = archiveFixture();
+  const live = f.layer(f.document, "Live");
+  live.locked = true;
+  live.visible = false;
+  const source = f.layer(live, "Artwork");
+  const selected = f.item(source, "failure", { hidden: true, locked: true, failCopy: true });
+  f.document.selection = [selected];
+  f.document.activeLayer = source;
+  f.run();
+  assert.match(f.alerts[0], /fixture duplicate failure/);
+  assert.equal(source.parent, live);
+  assert.equal(source.pageItems[0], selected);
+  assert.equal(selected.hidden, true);
+  assert.equal(selected.locked, true);
+  assert.equal(live.locked, true);
+  assert.equal(live.visible, false);
+  const archive = f.document.layers.find(({ name }) => name === "Archive");
+  assert.equal(archive.layers[0].layers.length, 0);
+  assert.equal(archive.locked, true);
+  assert.equal(archive.visible, false);
+});
+
+test("Archive with no artwork selection creates no layers and reports the required selection", () => {
+  const f = archiveFixture();
+  f.document.activeLayer = f.layer(f.document, "Unselected");
+  f.run();
+  assert.equal(f.document.layers.length, 1);
+  assert.match(f.alerts[0], /select artwork/);
+});
+
 test("all 20 Layers Builder actions are ordinary manifest packages", () => {
   assert.equal(contributions.length, 20);
-  assert.equal(globalActions.size, 10);
+  assert.equal(globalActions.size, 11);
   assert.equal(directOpenTreeActions.size, 2);
-  assert.equal(nonmutatingTreeActions.size, 7);
+  assert.equal(nonmutatingTreeActions.size, 6);
   assert.equal(
     globalActions.size + directOpenTreeActions.size + nonmutatingTreeActions.size + 1,
     contributions.length
@@ -241,6 +377,7 @@ test("all 20 Layers Builder actions are ordinary manifest packages", () => {
       contribution.version,
       actionName === "snapshot"
         ? "3.1.4"
+        : actionName === "archive" ? "3.1.3"
         : actionName === "new-sub" || actionName === "3d" || actionName === "sort" || actionName === "copy-live" || actionName === "rename" || actionName === "add-to-live"
           ? "3.1.2"
           : "3.1.1"
@@ -321,7 +458,7 @@ test("all 20 Layers Builder actions are ordinary manifest packages", () => {
   }
 
   assert.equal(classifiedActions.size, 20);
-  assert.equal(helpers.length, 10, "only tree-driven and hybrid actions include the resolver");
+  assert.equal(helpers.length, 9, "only tree-driven and hybrid actions include the resolver");
   assert.equal(new Set(helpers.map(digest)).size, 1, "every included resolver must be identical");
 });
 

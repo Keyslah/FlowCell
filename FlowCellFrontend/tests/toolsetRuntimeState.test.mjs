@@ -221,3 +221,60 @@ test("Blender Align Surface and Origin execute every click without latching or d
     assert.equal(executions,36);
   } finally { unregister(); }
 });
+
+const fusionToolsetsRoot = join(frontendRoot, "..", "Programs", "Fusion 360", "Fusion Git Scripts", "Toolsets");
+
+test("Fusion Align, Rotate, and Scale layouts pass installed-layout validation", () => {
+  for (const name of ["align", "rotate", "scale"]) {
+    const manifest = JSON.parse(readFileSync(join(fusionToolsetsRoot, name, "flowcell.toolset.json"), "utf8"));
+    assert.doesNotThrow(() => validateInstalledButtonLayout(manifest.layout), name);
+    for (const slot of Object.keys(manifest.layout.placements ?? {})) {
+      assert.ok(manifest.children.some((child) => child.slot === slot), `${name}.${slot}`);
+    }
+  }
+});
+
+test("Range fields reject live input on other kinds and links to non-toggles", () => {
+  const range = {
+    id: "scale_x", kind: "range", label: "X", payloadKey: "scale_x", defaultValue: 100,
+    minimum: 1, maximum: 200, step: 1, linkToggleField: "link", serviceTrigger: "input",
+    serviceTarget: { kind: "tool-set-action", command: "refresh" },
+    x: 0, y: 0, width: 200, height: 30, zIndex: 0
+  };
+  const link = { id: "link", kind: "toggle", label: "Link", payloadKey: "link", defaultValue: true, x: 0, y: 40, width: 60, height: 30, zIndex: 0 };
+  assert.doesNotThrow(() => validateInstalledButtonLayout({ mode: "grid", fields: [range, link] }));
+  assert.throws(() => validateInstalledButtonLayout({ mode: "grid", fields: [{ ...range, linkToggleField: "scale_x" }, link] }), /toggle/);
+  assert.throws(() => validateInstalledButtonLayout({ mode: "grid", fields: [{ ...range, defaultValue: 500 }, link] }), /minimum\.\.maximum/);
+  assert.throws(() => validateInstalledButtonLayout({ mode: "grid", fields: [{ ...numberField(), serviceTrigger: "input" }] }), /range/);
+});
+
+test("Linked range fields move together and clamp as a group", async () => {
+  const { linkedRangePatch, formatRangeValue } = await import("./.compiled-button-system/button/popout/rangeFieldLink.js");
+  const slider = (id, value) => ({ id, kind: "range", label: id, payloadKey: id, defaultValue: value, minimum: 1, maximum: 200, step: 1, linkToggleField: "link", x: 0, y: 0, width: 10, height: 10, zIndex: 0 });
+  const fields = [slider("x", 100), slider("y", 100), slider("z", 100),
+    { id: "link", kind: "toggle", label: "Link", payloadKey: "link", defaultValue: true, x: 0, y: 0, width: 10, height: 10, zIndex: 0 }];
+  assert.deepEqual(linkedRangePatch(fields, { x: 100, y: 100, z: 100, link: true }, "y", 140), { x: 140, y: 140, z: 140 });
+  assert.deepEqual(linkedRangePatch(fields, { x: 100, y: 100, z: 100, link: false }, "y", 140), { y: 140 });
+  // z is already near the top, so the shared step stops where z reaches its maximum.
+  assert.deepEqual(linkedRangePatch(fields, { x: 100, y: 100, z: 190, link: true }, "x", 150), { x: 110, y: 110, z: 200 });
+  assert.equal(formatRangeValue({ ...slider("x", 100), format: "{value}%" }, 125), "125%");
+  // Per-axis link toggles: only the checked axes move with a checked slider.
+  const perAxis = ["x", "y", "z"].map((axis) => ({ ...slider(axis, 100), linkToggleField: `link_${axis}` }));
+  const perAxisValues = { x: 100, y: 100, z: 100, link_x: true, link_y: true, link_z: false };
+  assert.deepEqual(linkedRangePatch(perAxis, perAxisValues, "x", 130), { x: 130, y: 130 });
+  assert.deepEqual(linkedRangePatch(perAxis, perAxisValues, "z", 70), { z: 70 });
+});
+
+test("Self-targeted tool fields route to their own tool set", async () => {
+  const { resolveInstalledToolFields } = await import("./.compiled-button-system/button/state/installedToolFields.js");
+  const route = { kind: "tool-set-action", programName: "Fusion 360", panelName: "Tool Sets", ownerFileName: "owner.flowcell-source.json", command: "refresh" };
+  const fields = [{
+    id: "scale_x", kind: "range", label: "X", payloadKey: "scale_x", defaultValue: 100, minimum: 1, maximum: 200,
+    serviceTarget: { kind: "tool-set-action", command: "refresh", payload: { command: "slide" } },
+    x: 0, y: 0, width: 10, height: 10, zIndex: 0
+  }];
+  const [resolved] = resolveInstalledToolFields(fields, [{ executionTarget: route }]);
+  assert.deepEqual(resolved.serviceTarget, { ...route, payload: { command: "slide" } });
+  assert.equal(fields[0].serviceTarget.programName, undefined);
+  assert.throws(() => resolveInstalledToolFields(fields, [{ executionTarget: null }]), /no action children/);
+});

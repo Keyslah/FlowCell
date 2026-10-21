@@ -732,6 +732,25 @@ test("Button placement loading rejects identity drift without mutating the draft
   assert.deepEqual(document, before);
 });
 
+test("Button settings preserve the Star Wars animation when saved and reloaded", () => {
+  const { document, surface } = validArrangementFixture();
+  surface.kind = "panel";
+  const animation = {
+    presetId: "star-wars-lightsaber",
+    desktopBounds: { left: 100, top: 120, width: 480, height: 268 }
+  };
+  document.buttons["button-b"].activationAnimation = animation;
+  const settings = buildButtonSettingsFile(document, surface.id, {
+    programName: "Blender", panelName: "Utility"
+  });
+  assert.equal(validateButtonSettingsFile(settings).valid, true);
+  document.buttons["button-b"].activationAnimation = null;
+  const loaded = applyButtonSettingsFile(document, surface.id, settings, {
+    programName: "Blender", panelName: "Utility"
+  });
+  assert.deepEqual(loaded.buttons["button-b"].activationAnimation, animation);
+});
+
 test("Button settings save and restore exact membership, text, skin, size, highlights, behavior, and animation", () => {
   const { document, surface } = validArrangementFixture();
   surface.kind = "panel";
@@ -951,6 +970,33 @@ test("individual popped colors survive settings export, import, and transient pl
   delete file.entries[0].popoutColorOverride;
   assert.equal(applyButtonSettingsFile(document, surface.id, file, context).programPopoutColorOverrides[originalId], undefined);
   file.entries[0].popoutColorOverride = { surface: "var(--unknown)" };
+  assert.equal(validateButtonSettingsFile(file).valid, false);
+});
+
+test("frozen appearance survives settings files and transient ID remapping without inheriting a stale lock", () => {
+  const { document, surface } = regularPopSettingsFixture();
+  const context = { programName: "Windows", panelName: "Files" };
+  const originalId = surface.placementIds[0];
+  const appearance = {
+    colors: { surface: "#CC5522", text: "#102030" }, hoverEnabled: true, activeEnabled: false,
+    hoverColor: "#FFFFFFCC", activeColor: null, hoverGlowAmount: 17.25, activeHighlightAmount: 14.75,
+    idleEnabled: true, idleColor: "#123456", idleHighlightAmount: 23.5, idleGlowAmount: 4.5
+  };
+  document.programPopoutThemeLocks = { [originalId]: appearance };
+  const file = buildButtonSettingsFile(document, surface.id, context);
+  assert.deepEqual(file.entries[0].popoutThemeLock, appearance);
+  assert.equal(validateButtonSettingsFile(file).valid, true);
+  const imported = applyButtonSettingsFile(document, surface.id, JSON.parse(JSON.stringify(file)), context);
+  assert.deepEqual(imported.programPopoutThemeLocks[originalId], appearance);
+  const opened = buildTransientButtonPopoutSettingsDocument(document, file, context, "frozen-appearance");
+  const unit = opened.document.popoutUnits[opened.popoutUnitId];
+  const transientId = opened.document.surfaces[unit.surfaceId].placementIds[0];
+  assert.notEqual(transientId, originalId);
+  assert.deepEqual(opened.document.programPopoutThemeLocks[transientId], appearance);
+  assert.equal(validateButtonStateDocument(opened.document).valid, true);
+  delete file.entries[0].popoutThemeLock;
+  assert.equal(applyButtonSettingsFile(document, surface.id, file, context).programPopoutThemeLocks[originalId], undefined);
+  file.entries[0].popoutThemeLock = { ...appearance, idleGlowAmount: -1 };
   assert.equal(validateButtonSettingsFile(file).valid, false);
 });
 

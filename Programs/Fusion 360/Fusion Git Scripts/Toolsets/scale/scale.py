@@ -1,13 +1,24 @@
-"""FlowCell Scale for Autodesk Fusion.
+"""FlowCell Scale for Autodesk Fusion, modeled on the Blender Smart Axis tool set.
 
-The action is intentionally limited to selected native BRep bodies owned by the
-root component.  That boundary keeps non-uniform dimensions and pin correction
-unambiguous: Fusion creates a Scale feature at the root origin followed by a
-Move feature that holds each requested MIN, MAX, or center plane stationary.
+Base stores the selected bodies' bounds. X, Y, and Z each cycle the side that
+stays put while scaling: none (scale around the center), Min ("X-"), or Max
+("X+"); a locked side holds the stored Base edge, or the current edge when no
+Base is stored. Live makes the X/Y/Z sliders update Fusion while dragging;
+with Live off the drag applies when released.
+
+Each slider drag is one scale step relative to the selection's size when the
+drag started: one non-uniform Scale feature plus one Move feature that places
+the locked sides, edited in place for the whole drag. On release the sliders
+return to 100%, and a drag that ends at 100% deletes its features. Typed sizes
+resize the selection exactly.
+
+The axis modes, Live, and Base are stored on the design, and every response
+reports them so the X/Y/Z and Live Buttons show the real state.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import traceback
 
@@ -15,25 +26,17 @@ import adsk.core
 import adsk.fusion
 
 
-COMMAND_ID = "flowcell_fusion_scale_command"
 AXES = ("X", "Y", "Z")
 PIN_MODES = ("NONE", "MIN", "MAX")
+NEXT_MODE = {"NONE": "MIN", "MIN": "MAX", "MAX": "NONE"}
 EPSILON_CM = 1.0e-7
+MIN_FACTOR = 0.01
+SCALE_FIELDS = ("scale_x", "scale_y", "scale_z")
+SIZE_FIELDS = ("size_x", "size_y", "size_z")
+ATTRIBUTE_GROUP = "FlowCellScale"
 
-_last_state = {
-    "x": 0.0,
-    "y": 0.0,
-    "z": 0.0,
-    "aspect_lock": True,
-    "free_axis": "X",
-    "x_pin": "NONE",
-    "y_pin": "NONE",
-    "z_pin": "NONE",
-}
-_pending_command = None
-_command_definition = None
-_definition_handler = None
-_sessions = []
+# The active slider drag.
+_gesture = None
 
 
 def _result(status="FINISHED", message="", **extra):
@@ -45,6 +48,8 @@ def _result(status="FINISHED", message="", **extra):
 def _as_bool(value, fallback=False):
     if isinstance(value, bool):
         return value
+    if isinstance(value, (int, float)):
+        return bool(value)
     if isinstance(value, str):
         text = value.strip().lower()
         if text in {"true", "1", "yes", "on"}:
@@ -54,12 +59,12 @@ def _as_bool(value, fallback=False):
     return fallback
 
 
-def _finite_positive(value, fallback=0.0):
+def _finite(value, fallback=0.0):
     try:
         number = float(value)
     except (TypeError, ValueError):
         return fallback
-    return number if math.isfinite(number) and number > 0.0 else fallback
+    return number if math.isfinite(number) else fallback
 
 
 def _pin_mode(value):
@@ -67,126 +72,73 @@ def _pin_mode(value):
     return mode if mode in PIN_MODES else "NONE"
 
 
-def _normalize_state(data=None, fallback=None):
-    source = data if isinstance(data, dict) else {}
-    base = dict(fallback or _last_state)
-    state = {
-        "x": _finite_positive(source.get("x"), _finite_positive(base.get("x"))),
-        "y": _finite_positive(source.get("y"), _finite_positive(base.get("y"))),
-        "z": _finite_positive(source.get("z"), _finite_positive(base.get("z"))),
-        "aspect_lock": _as_bool(source.get("aspect_lock"), _as_bool(base.get("aspect_lock"), True)),
-        "free_axis": str(source.get("free_axis") or base.get("free_axis") or "X").upper(),
-        "x_pin": _pin_mode(source.get("x_pin", base.get("x_pin"))),
-        "y_pin": _pin_mode(source.get("y_pin", base.get("y_pin"))),
-        "z_pin": _pin_mode(source.get("z_pin", base.get("z_pin"))),
-    }
-    if state["free_axis"] not in AXES:
-        state["free_axis"] = "X"
-    return state
-
-
-def _field_patch(state):
+def _slider_factors(payload):
     return {
-        "x": round(float(state["x"]), 9),
-        "y": round(float(state["y"]), 9),
-        "z": round(float(state["z"]), 9),
-        "aspect_lock": bool(state["aspect_lock"]),
-        "free_axis": state["free_axis"],
-        "x_pin": state["x_pin"],
-        "y_pin": state["y_pin"],
-        "z_pin": state["z_pin"],
+        axis: max(MIN_FACTOR, _finite(payload.get(field), 100.0) / 100.0)
+        for axis, field in zip(AXES, SCALE_FIELDS)
     }
 
 
-def _cycle_pin(mode):
-    return {"NONE": "MIN", "MIN": "MAX", "MAX": "NONE"}.get(_pin_mode(mode), "MIN")
+# --- Design-stored state (modes, Live, Base) ---------------------------------
+
+def _read_attribute(design, name, default):
+    try:
+        attribute = design.attributes.itemByName(ATTRIBUTE_GROUP, name)
+        return json.loads(attribute.value) if attribute is not None else default
+    except Exception:
+        return default
 
 
-def _bounding_box_for_bodies(bodies):
-    if not bodies:
-        raise ValueError("Select at least one BRep body.")
-    minimum = [math.inf, math.inf, math.inf]
-    maximum = [-math.inf, -math.inf, -math.inf]
-    precise = True
-    for body in bodies:
-        box = None
+def _write_attribute(design, name, value, ui=None):
+    """Store state on the design; Fusion clears the selection on attribute writes, so restore it."""
+    entities = []
+    if ui is not None:
         try:
-            box = body.preciseBoundingBox
+            selections = ui.activeSelections
+            entities = [selections.item(index).entity for index in range(selections.count)]
         except Exception:
-            precise = False
-        if box is None:
-            precise = False
-            box = body.boundingBox
-        if box is None:
-            raise ValueError("Fusion could not calculate a body bounding box.")
-        low = box.minPoint
-        high = box.maxPoint
-        coordinates_low = (low.x, low.y, low.z)
-        coordinates_high = (high.x, high.y, high.z)
-        for index in range(3):
-            minimum[index] = min(minimum[index], float(coordinates_low[index]))
-            maximum[index] = max(maximum[index], float(coordinates_high[index]))
-    dimensions = [maximum[index] - minimum[index] for index in range(3)]
-    if any((not math.isfinite(value)) or value <= EPSILON_CM for value in dimensions):
-        raise ValueError("Each selected-body XYZ extent must be greater than zero.")
+            entities = []
+    design.attributes.add(ATTRIBUTE_GROUP, name, json.dumps(value))
+    if entities:
+        try:
+            selections = ui.activeSelections
+            if selections.count == 0:
+                for entity in entities:
+                    if getattr(entity, "isValid", True):
+                        selections.add(entity)
+        except Exception:
+            pass
+
+
+def _modes(design):
+    stored = _read_attribute(design, "modes", {})
+    stored = stored if isinstance(stored, dict) else {}
+    return {axis: _pin_mode(stored.get(axis)) for axis in AXES}
+
+
+def _live(design):
+    return _as_bool(_read_attribute(design, "live", True), True)
+
+
+def _baselines(design):
+    stored = _read_attribute(design, "baseline", {})
+    return stored if isinstance(stored, dict) else {}
+
+
+def _state(design):
+    modes = _modes(design)
     return {
-        "min": tuple(minimum),
-        "max": tuple(maximum),
-        "center": tuple((minimum[index] + maximum[index]) * 0.5 for index in range(3)),
-        "dimensions": tuple(dimensions),
-        "precise": precise,
+        "modes": modes,
+        "active_axes": [axis for axis in AXES if modes[axis] != "NONE"],
+        "live_enabled": _live(design),
     }
 
 
-def _selected_root_bodies(ui, design):
-    selections = ui.activeSelections
-    bodies = []
-    non_body_count = 0
-    proxy_count = 0
-    non_root_count = 0
-    seen = set()
-    for index in range(selections.count):
-        selection = selections.item(index)
-        entity = getattr(selection, "entity", None)
-        body = adsk.fusion.BRepBody.cast(entity)
-        if body is None:
-            non_body_count += 1
-            continue
-        if getattr(body, "assemblyContext", None) is not None:
-            proxy_count += 1
-            continue
-        if body.parentComponent != design.rootComponent:
-            non_root_count += 1
-            continue
-        if getattr(body, "isTransient", False):
-            non_body_count += 1
-            continue
-        token = str(body.entityToken)
-        if token not in seen:
-            seen.add(token)
-            bodies.append(body)
-    if non_body_count:
-        raise ValueError("Select BRep bodies only; faces, sketches, meshes, and components are not scaled.")
-    if proxy_count or non_root_count:
-        raise ValueError("Select native root-component BRep bodies; occurrence proxies and component-owned bodies are rejected for non-uniform correctness.")
-    if not bodies:
-        raise ValueError("Select at least one native root-component BRep body.")
-    return bodies
-
+# --- Fusion helpers ----------------------------------------------------------
 
 def _document_units(design):
     units = design.unitsManager
     return units, str(units.defaultLengthUnits)
-
-
-def _require_parametric_design(design):
-    design_types = getattr(adsk.fusion, "DesignTypes", None)
-    parametric = getattr(design_types, "ParametricDesignType", None)
-    current = getattr(design, "designType", None)
-    if parametric is not None and current is not None and current != parametric:
-        raise ValueError(
-            "Scale requires Capture Design History so Fusion can create reversible Scale and Move features."
-        )
 
 
 def _to_document_units(design, centimeters):
@@ -199,90 +151,176 @@ def _to_centimeters(design, document_value):
     return float(units.convert(float(document_value), unit_name, "cm"))
 
 
-def _state_from_bounds(design, state, bounds):
-    updated = dict(state)
-    for index, axis in enumerate(AXES):
-        updated[axis.lower()] = _to_document_units(design, bounds["dimensions"][index])
-    return updated
+def _is_parametric(design):
+    design_types = getattr(adsk.fusion, "DesignTypes", None)
+    parametric = getattr(design_types, "ParametricDesignType", None)
+    current = getattr(design, "designType", None)
+    return parametric is None or current is None or current == parametric
 
 
-def _desired_dimensions_cm(design, state, baseline):
-    desired = {}
-    for index, axis in enumerate(AXES):
-        requested = _finite_positive(state.get(axis.lower()))
-        desired[axis] = _to_centimeters(design, requested) if requested > 0.0 else baseline["dimensions"][index]
-    if state["aspect_lock"]:
-        free_axis = state["free_axis"]
-        index = AXES.index(free_axis)
-        factor = desired[free_axis] / baseline["dimensions"][index]
-        desired = {axis: baseline["dimensions"][i] * factor for i, axis in enumerate(AXES)}
-    return desired
+def _require_parametric_design(design):
+    if not _is_parametric(design):
+        raise ValueError(
+            "Scale requires Capture Design History so Fusion can create reversible Scale and Move features."
+        )
 
 
-def _scale_plan(baseline, desired_cm, state):
-    factors = {}
-    anchors = {}
-    translations = {}
-    for index, axis in enumerate(AXES):
-        factor = float(desired_cm[axis]) / float(baseline["dimensions"][index])
-        if not math.isfinite(factor) or factor <= 0.0:
-            raise ValueError("Scale dimensions must produce positive finite factors.")
-        mode = _pin_mode(state.get(axis.lower() + "_pin"))
-        if mode == "MIN":
-            anchor = baseline["min"][index]
-        elif mode == "MAX":
-            anchor = baseline["max"][index]
-        else:
-            anchor = baseline["center"][index]
-        factors[axis] = factor
-        anchors[axis] = anchor
-        translations[axis] = (1.0 - factor) * anchor
-    return {"factors": factors, "anchors": anchors, "translations": translations}
+def _context_occurrence(body, design):
+    context = getattr(body, "assemblyContext", None)
+    if context is not None:
+        return context
+    parent = getattr(body, "parentComponent", None)
+    if parent is None or parent == design.rootComponent:
+        return None
+    active = getattr(design, "activeOccurrence", None)
+    if active is not None and getattr(active, "component", None) == parent:
+        return active
+    raise ValueError("Select bodies from the root component or from a component's occurrence.")
 
 
-def _resolve_bodies(design, tokens):
+def _translation_only(occurrence):
+    """World offset of an occurrence whose placement has no rotation or scale."""
+    if occurrence is None:
+        return (0.0, 0.0, 0.0)
+    _origin, x_axis, y_axis, z_axis = occurrence.transform2.getAsCoordinateSystem()
+    expected = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    for axis, wanted in zip((x_axis, y_axis, z_axis), expected):
+        if any(abs(value - target) > 1.0e-9 for value, target in zip((axis.x, axis.y, axis.z), wanted)):
+            raise ValueError(
+                "Scale works along world X/Y/Z, so it skips components that are rotated. "
+                "Select bodies in an unrotated component or in the root component."
+            )
+    translation = occurrence.transform2.translation
+    return (float(translation.x), float(translation.y), float(translation.z))
+
+
+def _selected_bodies(ui, design):
+    selections = ui.activeSelections
     bodies = []
-    for token in tokens:
-        matches = design.findEntityByToken(token)
-        body = None
-        for entity in matches or []:
-            candidate = adsk.fusion.BRepBody.cast(entity)
-            if candidate is not None:
-                body = candidate
-                break
-        if body is None or not getattr(body, "isValid", True):
-            raise RuntimeError("A selected body is no longer valid. Reopen Scale from FlowCell.")
-        if getattr(body, "assemblyContext", None) is not None or body.parentComponent != design.rootComponent:
-            raise RuntimeError("Scale can only continue with native root-component BRep bodies.")
+    seen = set()
+    skipped = 0
+    for index in range(selections.count):
+        body = adsk.fusion.BRepBody.cast(getattr(selections.item(index), "entity", None))
+        if body is None or getattr(body, "isTransient", False):
+            skipped += 1
+            continue
+        token = str(body.entityToken)
+        if token in seen:
+            continue
+        seen.add(token)
         bodies.append(body)
+    if skipped:
+        raise ValueError("Scale works on bodies only. Deselect faces, sketches, meshes, and components.")
+    if not bodies:
+        raise ValueError("Select one or more bodies to scale.")
     return bodies
 
 
-def _object_collection(entities):
+def _bounds(bodies):
+    minimum = [math.inf, math.inf, math.inf]
+    maximum = [-math.inf, -math.inf, -math.inf]
+    for body in bodies:
+        box = None
+        try:
+            box = body.preciseBoundingBox
+        except Exception:
+            box = None
+        if box is None:
+            box = body.boundingBox
+        if box is None:
+            raise ValueError("Fusion could not measure a selected body.")
+        low = (box.minPoint.x, box.minPoint.y, box.minPoint.z)
+        high = (box.maxPoint.x, box.maxPoint.y, box.maxPoint.z)
+        for index in range(3):
+            minimum[index] = min(minimum[index], float(low[index]))
+            maximum[index] = max(maximum[index], float(high[index]))
+    dimensions = [maximum[index] - minimum[index] for index in range(3)]
+    if any((not math.isfinite(value)) or value <= EPSILON_CM for value in dimensions):
+        raise ValueError("Every selected body needs a nonzero size on X, Y, and Z.")
+    return {
+        "min": tuple(minimum),
+        "max": tuple(maximum),
+        "center": tuple((minimum[index] + maximum[index]) * 0.5 for index in range(3)),
+        "dimensions": tuple(dimensions),
+    }
+
+
+def _stored_baseline(design, tokens):
+    """Combined Base bounds for the selection, or None unless every body has one."""
+    stored = _baselines(design)
+    entries = [stored.get(token) for token in tokens]
+    if not entries or any(not isinstance(entry, dict) for entry in entries):
+        return None
+    try:
+        return {
+            "min": tuple(min(float(entry["min"][index]) for entry in entries) for index in range(3)),
+            "max": tuple(max(float(entry["max"][index]) for entry in entries) for index in range(3)),
+        }
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+
+def _side_plan(start, modes, baseline):
+    """Per axis: (start coordinate that must land on target, target coordinate)."""
+    plan = {}
+    for index, axis in enumerate(AXES):
+        mode = modes[axis]
+        if mode == "MIN":
+            side = start["min"][index]
+            target = baseline["min"][index] if baseline else side
+        elif mode == "MAX":
+            side = start["max"][index]
+            target = baseline["max"][index] if baseline else side
+        else:
+            side = target = start["center"][index]
+        plan[axis] = (side, target)
+    return plan
+
+
+def _pin_translation(group, factors, plan):
+    """Component-space move placing each planned side after scaling about the component origin."""
+    translation = []
+    for index, axis in enumerate(AXES):
+        side, target = plan[axis]
+        offset = group["offset"][index]
+        translation.append((target - offset) - factors[axis] * (side - offset))
+    return tuple(translation)
+
+
+def _scale_groups(design, bodies):
+    """Bodies grouped by owning component; each group gets its own features."""
+    groups = {}
+    for body in bodies:
+        native = getattr(body, "nativeObject", None) or body
+        component = native.parentComponent
+        context = _context_occurrence(body, design)
+        offset = _translation_only(context)
+        key = (str(getattr(component, "id", "") or id(component)), str(getattr(context, "entityToken", "") or ""))
+        group = groups.setdefault(key, {"component": component, "offset": offset, "natives": []})
+        group["natives"].append(native)
+    return list(groups.values())
+
+
+def _collection(entities):
     collection = adsk.core.ObjectCollection.create()
     for entity in entities:
         collection.add(entity)
     return collection
 
 
-def _real_value(number):
+def _real(number):
     return adsk.core.ValueInput.createByReal(float(number))
 
 
-def _apply_scale_features(design, bodies, baseline, desired_cm, state):
-    plan = _scale_plan(baseline, desired_cm, state)
-    factors = plan["factors"]
-    if all(abs(factors[axis] - 1.0) <= 1.0e-10 for axis in AXES):
-        return {"changed": False, "features": []}
-
-    component = design.rootComponent
-    features = component.features
-    scale_features = features.scaleFeatures
-    input_entities = _object_collection(bodies)
-    scale_input = scale_features.createInput(input_entities, component.originConstructionPoint, _real_value(factors["X"]))
+def _create_features(group, factors, plan):
+    component = group["component"]
+    scale_features = component.features.scaleFeatures
+    scale_input = scale_features.createInput(
+        _collection(group["natives"]), component.originConstructionPoint, _real(1.0)
+    )
     if scale_input is None:
         raise RuntimeError("Fusion could not create the Scale feature input.")
-    if not scale_input.setToNonUniform(_real_value(factors["X"]), _real_value(factors["Y"]), _real_value(factors["Z"])):
+    if not scale_input.setToNonUniform(_real(factors["X"]), _real(factors["Y"]), _real(factors["Z"])):
         raise RuntimeError("Fusion rejected non-uniform body scaling.")
     scale_feature = scale_features.add(scale_input)
     if scale_feature is None:
@@ -292,437 +330,337 @@ def _apply_scale_features(design, bodies, baseline, desired_cm, state):
     except Exception:
         pass
 
-    created = [scale_feature]
-    translations = plan["translations"]
-    if any(abs(translations[axis]) > EPSILON_CM for axis in AXES):
-        move_features = features.moveFeatures
-        create_input2 = getattr(move_features, "createInput2", None)
-        if not callable(create_input2):
-            raise RuntimeError("This Fusion build lacks MoveFeatures.createInput2 (January 2023+ required for pinned scaling).")
-        move_input = create_input2(_object_collection(bodies))
-        if move_input is None:
-            raise RuntimeError("Fusion could not create the pin-correction Move input.")
-        defined = move_input.defineAsTranslateXYZ(
-            _real_value(translations["X"]),
-            _real_value(translations["Y"]),
-            _real_value(translations["Z"]),
-            False,
-        )
-        if not defined:
-            raise RuntimeError("Fusion rejected the pin-correction translation.")
-        move_feature = move_features.add(move_input)
-        if move_feature is None:
-            raise RuntimeError("Fusion did not create the pin-correction Move feature.")
+    translation = _pin_translation(group, factors, plan)
+    move_features = component.features.moveFeatures
+    move_input = move_features.createInput2(_collection(group["natives"]))
+    if move_input is None:
+        raise RuntimeError("Fusion could not create the pin Move input.")
+    if not move_input.defineAsTranslateXYZ(_real(translation[0]), _real(translation[1]), _real(translation[2]), False):
+        raise RuntimeError("Fusion rejected the pin translation.")
+    move_feature = move_features.add(move_input)
+    if move_feature is None:
+        raise RuntimeError("Fusion did not create the pin Move feature.")
+    try:
+        move_feature.name = "FlowCell Scale Pins"
+    except Exception:
+        pass
+    return {"scale": scale_feature, "move": move_feature}
+
+
+def _update_features(group, features, factors, plan):
+    scale_feature = features["scale"]
+    for axis, parameter in zip(AXES, (scale_feature.xScale, scale_feature.yScale, scale_feature.zScale)):
+        if abs(float(parameter.value) - factors[axis]) > 1.0e-12:
+            parameter.value = factors[axis]
+    translation = _pin_translation(group, factors, plan)
+    definition = adsk.fusion.MoveFeatureTranslateXYZDefinition.cast(features["move"].definition)
+    if definition is None:
+        raise RuntimeError("The pin Move feature is no longer a translate move.")
+    for value, parameter in zip(translation, (definition.xDistance, definition.yDistance, definition.zDistance)):
+        if abs(float(parameter.value) - value) > 1.0e-12:
+            parameter.value = value
+
+
+def _delete_features(features):
+    for key in ("move", "scale"):
+        feature = features.get(key)
         try:
-            move_feature.name = "FlowCell Scale Pins"
+            if feature is not None and feature.isValid:
+                feature.deleteMe()
         except Exception:
             pass
-        created.append(move_feature)
-    return {"changed": True, "features": created, "plan": plan}
 
 
-def _axis_vectors(axis, reverse):
-    sign = -1.0 if reverse else 1.0
-    if axis == "X":
-        return ((sign, 0, 0), (0, 1, 0), (0, 0, sign))
-    if axis == "Y":
-        return ((sign, 0, 0), (0, sign, 0), (0, 0, 1))
-    return ((1, 0, 0), (0, sign, 0), (0, 0, sign))
-
-
-def _triad_transform(baseline, state):
-    origin = []
-    for index, axis in enumerate(AXES):
-        mode = state[axis.lower() + "_pin"]
-        if mode == "MIN":
-            origin.append(baseline["min"][index])
-        elif mode == "MAX":
-            origin.append(baseline["max"][index])
-        else:
-            origin.append(baseline["center"][index])
-    free_axis = state["free_axis"]
-    reverse = state[free_axis.lower() + "_pin"] == "MAX"
-    vectors = _axis_vectors(free_axis, reverse)
-    matrix = adsk.core.Matrix3D.create()
-    matrix.setWithCoordinateSystem(
-        adsk.core.Point3D.create(*origin),
-        adsk.core.Vector3D.create(*vectors[0]),
-        adsk.core.Vector3D.create(*vectors[1]),
-        adsk.core.Vector3D.create(*vectors[2]),
-    )
-    return matrix
-
-
-def _selected_list_value(drop_down, fallback):
-    items = drop_down.listItems
-    for index in range(items.count):
-        item = items.item(index)
-        if item.isSelected:
-            return str(item.name).upper()
-    return fallback
-
-
-def _selected_pin_value(drop_down, fallback):
-    label = _selected_list_value(drop_down, fallback).upper()
-    if label in {"CENTER", "NONE"}:
-        return "NONE"
-    if label in {"MIN", "MINIMUM SIDE"}:
-        return "MIN"
-    if label in {"MAX", "MAXIMUM SIDE"}:
-        return "MAX"
-    return _pin_mode(fallback)
-
-
-def _add_dropdown(inputs, input_id, name, values, selected):
-    drop_down = inputs.addDropDownCommandInput(input_id, name, adsk.core.DropDownStyles.TextListDropDownStyle)
-    for value, label in values:
-        drop_down.listItems.add(label, value == selected, "")
-    return drop_down
-
-
-class _ScaleCommandSession:
-    def __init__(self, command, pending):
-        self.command = command
-        self.design = pending["design"]
-        self.tokens = list(pending["tokens"])
-        self.baseline = dict(pending["baseline"])
-        self.state = dict(pending["state"])
-        self.syncing = False
-        self.inputs = {}
-        self.handlers = []
-        self._build_inputs()
-        self._wire_events()
-
-    def _build_inputs(self):
-        inputs = self.command.commandInputs
-        inputs.addTextBoxCommandInput(
-            "selection_summary",
-            "Bodies",
-            "{} native root-component BRep bod{}".format(len(self.tokens), "y" if len(self.tokens) == 1 else "ies"),
-            1,
-            True,
-        )
-        _units, unit_name = _document_units(self.design)
-        for index, axis in enumerate(AXES):
-            value_cm = _to_centimeters(self.design, self.state[axis.lower()])
-            self.inputs[axis.lower()] = inputs.addValueInput(
-                axis.lower() + "_dimension",
-                axis + " dimension",
-                unit_name,
-                _real_value(value_cm),
-            )
-        self.inputs["aspect_lock"] = inputs.addBoolValueInput(
-            "aspect_lock", "Lock aspect", True, "", bool(self.state["aspect_lock"])
-        )
-        self.inputs["free_axis"] = _add_dropdown(
-            inputs,
-            "free_axis",
-            "Free drag axis",
-            [("X", "X"), ("Y", "Y"), ("Z", "Z")],
-            self.state["free_axis"],
-        )
-        pin_values = [("NONE", "Center"), ("MIN", "Minimum side"), ("MAX", "Maximum side")]
-        for axis in AXES:
-            key = axis.lower() + "_pin"
-            self.inputs[key] = _add_dropdown(inputs, key, axis + " pin", pin_values, self.state[key])
-
-        triad_group = inputs.addGroupCommandInput("triad_group", "Drag the free axis")
-        triad_group.isExpanded = True
-        self.inputs["triad"] = triad_group.children.addTriadCommandInput(
-            "scale_triad", _triad_transform(self.baseline, self.state)
-        )
-        # Fusion rejects scale-factor assignments while command inputs are
-        # still being constructed.  Configure the visible handle now and set
-        # its factor from the command's activate event.
-        self._configure_triad(apply_factor=False)
-
-    def _wire_events(self):
-        activate_handler = _ActivateHandler(self)
-        input_handler = _InputChangedHandler(self)
-        preview_handler = _PreviewHandler(self)
-        execute_handler = _ExecuteHandler(self)
-        validate_handler = _ValidateHandler(self)
-        destroy_handler = _DestroyHandler(self)
-        self.command.activate.add(activate_handler)
-        self.command.inputChanged.add(input_handler)
-        self.command.executePreview.add(preview_handler)
-        self.command.execute.add(execute_handler)
-        self.command.validateInputs.add(validate_handler)
-        self.command.destroy.add(destroy_handler)
-        self.handlers.extend(
-            [activate_handler, input_handler, preview_handler, execute_handler, validate_handler, destroy_handler]
-        )
-
-    def _sync_triad_factor(self):
-        axis = self.state["free_axis"]
-        factor = self.inputs[axis.lower()].value / self.baseline["dimensions"][AXES.index(axis)]
-        setattr(self.inputs["triad"], axis.lower() + "ScaleFactor", factor)
-
-    def _configure_triad(self, apply_factor=True):
-        triad = self.inputs["triad"]
-        triad.hideAll()
-        axis = self.state["free_axis"]
-        if axis == "X":
-            triad.isXScalingInXYVisible = True
-        elif axis == "Y":
-            triad.isYScalingInXYVisible = True
-        else:
-            triad.isZScalingInXZVisible = True
-        triad.transform = _triad_transform(self.baseline, self.state)
-        triad.isEnabled = True
-        triad.isVisible = True
-        if apply_factor:
-            self._sync_triad_factor()
-
-    def _sync_dimensions_from_factor(self, factor, changed_axis):
-        if not math.isfinite(factor) or factor <= 0.0:
-            return
-        if self.state["aspect_lock"]:
-            for index, axis in enumerate(AXES):
-                self.inputs[axis.lower()].value = self.baseline["dimensions"][index] * factor
-        else:
-            index = AXES.index(changed_axis)
-            self.inputs[changed_axis.lower()].value = self.baseline["dimensions"][index] * factor
-
-    def input_changed(self, changed_input):
-        if self.syncing:
-            return
-        self.syncing = True
-        try:
-            input_id = str(changed_input.id)
-            if input_id in {"x_dimension", "y_dimension", "z_dimension"}:
-                axis = input_id[0].upper()
-                dimension = self.inputs[axis.lower()].value
-                factor = dimension / self.baseline["dimensions"][AXES.index(axis)]
-                self._sync_dimensions_from_factor(factor, axis)
-                free_axis = self.state["free_axis"]
-                free_factor = self.inputs[free_axis.lower()].value / self.baseline["dimensions"][AXES.index(free_axis)]
-                setattr(self.inputs["triad"], free_axis.lower() + "ScaleFactor", free_factor)
-            elif input_id == "scale_triad":
-                triad = self.inputs["triad"]
-                if not triad.isValidExpressions:
-                    return
-                axis = self.state["free_axis"]
-                factor = float(getattr(triad, axis.lower() + "ScaleFactor"))
-                self._sync_dimensions_from_factor(factor, axis)
-            elif input_id == "aspect_lock":
-                self.state["aspect_lock"] = bool(self.inputs["aspect_lock"].value)
-                if self.state["aspect_lock"]:
-                    axis = self.state["free_axis"]
-                    factor = self.inputs[axis.lower()].value / self.baseline["dimensions"][AXES.index(axis)]
-                    self._sync_dimensions_from_factor(factor, axis)
-            elif input_id == "free_axis":
-                self.state["free_axis"] = _selected_list_value(self.inputs["free_axis"], self.state["free_axis"])
-                self._configure_triad()
-            elif input_id in {"x_pin", "y_pin", "z_pin"}:
-                self.state[input_id] = _selected_pin_value(self.inputs[input_id], self.state[input_id])
-                self._configure_triad()
-        finally:
-            self.syncing = False
-
-    def dimensions_cm(self):
-        return {axis: float(self.inputs[axis.lower()].value) for axis in AXES}
-
-    def validate(self):
-        if not self.tokens:
+def _features_valid(gesture, design):
+    try:
+        timeline = design.timeline
+        last = timeline.item(timeline.count - 1)
+        last_move = gesture["features"][-1]["move"]
+        if last.entity is None or not last_move.isValid:
             return False
-        for axis in AXES:
-            value = self.inputs[axis.lower()].value
-            if not math.isfinite(value) or value <= EPSILON_CM:
-                return False
-        return bool(self.inputs["triad"].isValidExpressions)
-
-    def execute(self):
-        global _last_state
-        bodies = _resolve_bodies(self.design, self.tokens)
-        desired = self.dimensions_cm()
-        applied = _apply_scale_features(self.design, bodies, self.baseline, desired, self.state)
-        updated = dict(self.state)
-        for axis in AXES:
-            updated[axis.lower()] = _to_document_units(self.design, desired[axis])
-        _last_state = updated
-        return applied
+        if last.entity.entityToken != last_move.entityToken:
+            return False
+        return all(item["scale"].isValid and item["move"].isValid for item in gesture["features"])
+    except Exception:
+        return False
 
 
-class _ActivateHandler(adsk.core.CommandEventHandler):
-    def __init__(self, session):
-        super().__init__()
-        self.session = session
-
-    def notify(self, args):
-        del args
-        self.session._sync_triad_factor()
-
-
-class _InputChangedHandler(adsk.core.InputChangedEventHandler):
-    def __init__(self, session):
-        super().__init__()
-        self.session = session
-
-    def notify(self, args):
-        self.session.input_changed(args.input)
+def _bodies_from_tokens(design, tokens):
+    bodies = []
+    for token in tokens:
+        body = None
+        for entity in design.findEntityByToken(token) or []:
+            body = adsk.fusion.BRepBody.cast(entity)
+            if body is not None:
+                break
+        if body is None or not getattr(body, "isValid", True):
+            return None
+        bodies.append(body)
+    return bodies
 
 
-class _PreviewHandler(adsk.core.CommandEventHandler):
-    def __init__(self, session):
-        super().__init__()
-        self.session = session
-
-    def notify(self, args):
-        try:
-            self.session.execute()
-            args.isValidResult = True
-        except Exception:
-            args.isValidResult = False
+def _restore_selection(ui, bodies):
+    try:
+        selections = ui.activeSelections
+        selections.clear()
+        for body in bodies:
+            if getattr(body, "isValid", True):
+                selections.add(body)
+    except Exception:
+        pass
 
 
-class _ExecuteHandler(adsk.core.CommandEventHandler):
-    def __init__(self, session):
-        super().__init__()
-        self.session = session
-
-    def notify(self, args):
-        try:
-            self.session.execute()
-        except Exception as exc:
-            args.executeFailed = True
-            args.executeFailedMessage = str(exc)
+def _size_patch(design, dimensions_cm):
+    _units, unit_name = _document_units(design)
+    patch = {"units": unit_name}
+    for index, (field, legacy) in enumerate(zip(SIZE_FIELDS, ("x", "y", "z"))):
+        value = round(_to_document_units(design, dimensions_cm[index]), 6)
+        patch[field] = value
+        patch[legacy] = value
+    return patch
 
 
-class _ValidateHandler(adsk.core.ValidateInputsEventHandler):
-    def __init__(self, session):
-        super().__init__()
-        self.session = session
-
-    def notify(self, args):
-        args.areInputsValid = self.session.validate()
+def _reset_patch():
+    return {field: 100 for field in SCALE_FIELDS}
 
 
-class _DestroyHandler(adsk.core.CommandEventHandler):
-    def __init__(self, session):
-        super().__init__()
-        self.session = session
-
-    def notify(self, args):
-        del args
-        if self.session in _sessions:
-            _sessions.remove(self.session)
-
-
-class _CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
-    def __init__(self, pending):
-        super().__init__()
-        self.pending = pending
-
-    def notify(self, args):
-        session = _ScaleCommandSession(args.command, self.pending)
-        _sessions.append(session)
+def _runtime():
+    app = adsk.core.Application.get()
+    if app is None:
+        raise RuntimeError("Fusion is not available.")
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if design is None:
+        raise ValueError("Open a Fusion Design before using Scale.")
+    return app.userInterface, design
 
 
-def _launch_native_command(ui, pending):
-    global _command_definition, _definition_handler
-    existing = ui.commandDefinitions.itemById(COMMAND_ID)
-    if existing is not None:
-        try:
-            existing.deleteMe()
-        except Exception:
-            pass
-    _command_definition = ui.commandDefinitions.addButtonDefinition(
-        COMMAND_ID,
-        "FlowCell Scale",
-        "Edit exact XYZ dimensions or drag one scale axis while holding center, minimum, or maximum planes fixed.",
+def _end_gesture():
+    global _gesture
+    _gesture = None
+
+
+# --- Commands ----------------------------------------------------------------
+
+def _status(ui, design, message=None):
+    state = _state(design)
+    _units, unit_name = _document_units(design)
+    try:
+        bodies = _selected_bodies(ui, design)
+        bounds = _bounds(bodies)
+    except ValueError as error:
+        return _result("FINISHED", message or str(error), selected=0,
+                       fieldPatch={**_reset_patch(), "units": unit_name}, **state)
+    return _result(
+        "FINISHED",
+        message or f"Read {len(bodies)} selected bod{'y' if len(bodies) == 1 else 'ies'} in {unit_name}.",
+        selected=len(bodies),
+        units=unit_name,
+        fieldPatch={**_reset_patch(), **_size_patch(design, bounds["dimensions"])},
+        **state,
     )
-    _definition_handler = _CommandCreatedHandler(pending)
-    _command_definition.commandCreated.add(_definition_handler)
-    _command_definition.execute()
+
+
+def _cycle(ui, design, axis):
+    modes = _modes(design)
+    modes[axis] = NEXT_MODE[modes[axis]]
+    _write_attribute(design, "modes", modes, ui)
+    label = {"NONE": "scales around its center", "MIN": "keeps its Min side (X-) fixed", "MAX": "keeps its Max side (X+) fixed"}
+    response = _status(ui, design, f"{axis} {label[modes[axis]].replace('X', axis)}.")
+    response.update({"axis": axis, "mode": modes[axis]})
+    return response
+
+
+def _toggle_live(ui, design):
+    live = not _live(design)
+    _write_attribute(design, "live", live, ui)
+    return _status(ui, design, "Live scaling on: sliders update Fusion while you drag." if live
+                   else "Live scaling off: slider drags apply when you let go.")
+
+
+def _set_baseline(ui, design):
+    bodies = _selected_bodies(ui, design)
+    stored = _baselines(design)
+    for body in bodies:
+        bounds = _bounds([body])
+        stored[str(body.entityToken)] = {"min": list(bounds["min"]), "max": list(bounds["max"])}
+    _write_attribute(design, "baseline", stored, ui)
+    return _status(ui, design, f"Base stored for {len(bodies)} bod{'y' if len(bodies) == 1 else 'ies'}; locked sides hold these edges.")
+
+
+def _slide(ui, design, payload):
+    """Slider step: start or continue this drag's Scale and Move features."""
+    global _gesture
+    _require_parametric_design(design)
+    event = payload.get("fieldEvent") if isinstance(payload.get("fieldEvent"), dict) else {}
+    trigger = str(event.get("trigger") or "change").lower()
+    factors = _slider_factors(payload)
+    state = _state(design)
+
+    if trigger != "change" and not state["live_enabled"]:
+        # Live off: preview the sizes only; the release applies the scale.
+        try:
+            start = _bounds(_selected_bodies(ui, design))
+        except ValueError as error:
+            return _result("FINISHED", str(error), **state)
+        dimensions = tuple(start["dimensions"][index] * factors[axis] for index, axis in enumerate(AXES))
+        return _result("FINISHED", "Release to apply the scale.", fieldPatch=_size_patch(design, dimensions), **state)
+
+    gesture = _gesture
+    current_tokens = []
+    try:
+        current_tokens = sorted(str(body.entityToken) for body in _selected_bodies(ui, design))
+    except ValueError:
+        current_tokens = []
+    if gesture is not None and (
+        gesture["design"] != design
+        or (current_tokens and current_tokens != gesture["tokens"])
+        or not _features_valid(gesture, design)
+    ):
+        gesture = None
+
+    unchanged = all(abs(factors[axis] - 1.0) <= 1.0e-9 for axis in AXES)
+    if gesture is None:
+        if unchanged:
+            _end_gesture()
+            return _status(ui, design)
+        bodies = _selected_bodies(ui, design)
+        body_tokens = [str(body.entityToken) for body in bodies]
+        start = _bounds(bodies)
+        plan = _side_plan(start, state["modes"], _stored_baseline(design, body_tokens))
+        groups = _scale_groups(design, bodies)
+        features = [_create_features(group, factors, plan) for group in groups]
+        gesture = {
+            "design": design,
+            "tokens": sorted(body_tokens),
+            "bodyTokens": body_tokens,
+            "start": start,
+            "plan": plan,
+            "groups": groups,
+            "features": features,
+        }
+        _gesture = gesture
+    else:
+        for group, features in zip(gesture["groups"], gesture["features"]):
+            _update_features(group, features, factors, gesture["plan"])
+
+    bodies = _bodies_from_tokens(design, gesture["bodyTokens"]) or []
+    if bodies:
+        _restore_selection(ui, bodies)
+    dimensions = tuple(gesture["start"]["dimensions"][index] * factors[axis] for index, axis in enumerate(AXES))
+
+    if trigger != "change":
+        return _result("FINISHED", "Scaling...", fieldPatch=_size_patch(design, dimensions), **state)
+
+    _end_gesture()
+    if unchanged:
+        for features in gesture["features"]:
+            _delete_features(features)
+        bodies = _bodies_from_tokens(design, gesture["bodyTokens"]) or []
+        if bodies:
+            _restore_selection(ui, bodies)
+        message = "Scale returned to 100%; nothing changed."
+    else:
+        percent = ", ".join(f"{axis} {factors[axis] * 100:g}%" for axis in AXES)
+        count = len(gesture["bodyTokens"])
+        message = f"Scaled {count} bod{'y' if count == 1 else 'ies'}: {percent}."
+    if bodies:
+        try:
+            dimensions = _bounds(bodies)["dimensions"]
+        except ValueError:
+            pass
+    return _result("FINISHED", message, fieldPatch={**_reset_patch(), **_size_patch(design, dimensions)}, **state)
+
+
+def _requested_sizes(design, payload, keys):
+    sizes = {}
+    for axis, key in zip(AXES, keys):
+        value = _finite(payload.get(key), 0.0)
+        if value > 0.0:
+            sizes[axis] = _to_centimeters(design, value)
+    return sizes
+
+
+def _resize(ui, design, payload, keys, proportional):
+    """Resize the selection to exact typed sizes (document units)."""
+    _require_parametric_design(design)
+    _end_gesture()
+    bodies = _selected_bodies(ui, design)
+    start = _bounds(bodies)
+    requested = _requested_sizes(design, payload, keys)
+    factors = {}
+    changed = []
+    for index, axis in enumerate(AXES):
+        target = requested.get(axis, start["dimensions"][index])
+        factor = target / start["dimensions"][index]
+        factors[axis] = factor
+        if abs(factor - 1.0) > 1.0e-6:
+            changed.append(axis)
+    if proportional and changed:
+        uniform = factors[changed[0]]
+        factors = {axis: uniform for axis in AXES}
+    if all(abs(factors[axis] - 1.0) <= 1.0e-9 for axis in AXES):
+        return _status(ui, design, "Sizes unchanged.")
+    if any(factors[axis] <= 0.0 or not math.isfinite(factors[axis]) for axis in AXES):
+        raise ValueError("Sizes must be greater than zero.")
+    tokens = [str(body.entityToken) for body in bodies]
+    plan = _side_plan(start, _modes(design), _stored_baseline(design, tokens))
+    for group in _scale_groups(design, bodies):
+        _create_features(group, factors, plan)
+    bodies = _bodies_from_tokens(design, tokens) or []
+    if bodies:
+        _restore_selection(ui, bodies)
+    dimensions = _bounds(bodies)["dimensions"] if bodies else tuple(
+        start["dimensions"][index] * factors[axis] for index, axis in enumerate(AXES)
+    )
+    _units, unit_name = _document_units(design)
+    sizes = ", ".join(
+        f"{axis} {round(_to_document_units(design, dimensions[index]), 3):g}" for index, axis in enumerate(AXES)
+    )
+    return _status(ui, design, f"Resized to {sizes} {unit_name}.")
 
 
 def run_flowcell_action(context=None, data=None):
     del context
-    global _last_state, _pending_command
     payload = data if isinstance(data, dict) else {}
     command = str(payload.get("command") or payload.get("action") or "status").strip().lower()
+    ui = design = None
     try:
-        app = adsk.core.Application.get()
-        if app is None:
-            return _result("CANCELLED", "Fusion Application is unavailable.", fieldPatch=_field_patch(_last_state))
-        ui = app.userInterface
-        design = adsk.fusion.Design.cast(app.activeProduct)
-        if design is None:
-            return _result("CANCELLED", "Open a Fusion Design before using Scale.", fieldPatch=_field_patch(_last_state))
-        _require_parametric_design(design)
-
-        state = _normalize_state(payload, _last_state)
-        if command in {"cycle_pin", "cycle_x", "cycle_y", "cycle_z"}:
-            axis = str(payload.get("axis") or (command[-1:] if command.startswith("cycle_") else "X")).upper()
-            if axis not in AXES:
-                return _result("CANCELLED", "Pin axis must be X, Y, or Z.", fieldPatch=_field_patch(state))
-            key = axis.lower() + "_pin"
-            state[key] = _cycle_pin(state[key])
-            _last_state = state
-            return _result(
-                "FINISHED",
-                "{} pin: {}.".format(axis, "CENTER" if state[key] == "NONE" else state[key]),
-                fieldPatch=_field_patch(state),
-                axis=axis,
-                mode=state[key],
-            )
-
-        try:
-            bodies = _selected_root_bodies(ui, design)
-            bounds = _bounding_box_for_bodies(bodies)
-        except Exception as selection_error:
-            status = "FINISHED" if command == "status" else "CANCELLED"
-            return _result(status, str(selection_error), selected=0, fieldPatch=_field_patch(state))
-
+        ui, design = _runtime()
         if command in {"status", "refresh"}:
-            state = _state_from_bounds(design, state, bounds)
-            _last_state = state
-            _units, unit_name = _document_units(design)
-            return _result(
-                "FINISHED",
-                "Read {} selected bod{} in {}.".format(len(bodies), "y" if len(bodies) == 1 else "ies", unit_name),
-                selected=len(bodies),
-                units=unit_name,
-                preciseBounds=bool(bounds["precise"]),
-                fieldPatch=_field_patch(state),
-            )
-
-        if command not in {"apply", "open", "scale"}:
-            return _result("CANCELLED", "Unknown Fusion Scale command: {}".format(command), fieldPatch=_field_patch(state))
-
-        current_state = _state_from_bounds(design, state, bounds)
-        # Keep explicitly typed positive values.  A zero/missing field is
-        # refreshed from the current selection before opening the command.
-        for axis in AXES:
-            key = axis.lower()
-            requested = _finite_positive(payload.get(key))
-            if requested > 0.0:
-                current_state[key] = requested
-        desired_cm = _desired_dimensions_cm(design, current_state, bounds)
-        for axis in AXES:
-            current_state[axis.lower()] = _to_document_units(design, desired_cm[axis])
-        _last_state = current_state
-        _pending_command = {
-            "design": design,
-            "tokens": [str(body.entityToken) for body in bodies],
-            "baseline": bounds,
-            "state": current_state,
-        }
-        _launch_native_command(ui, _pending_command)
-        return _result(
-            "FINISHED",
-            "Opened Fusion's native Scale command for {} selected bod{}. Drag the {} handle, then press Enter to commit or Esc to cancel.".format(
-                len(bodies), "y" if len(bodies) == 1 else "ies", current_state["free_axis"]
-            ),
-            selected=len(bodies),
-            launched=True,
-            fieldPatch=_field_patch(current_state),
-        )
+            _end_gesture()
+            return _status(ui, design)
+        if command in {"cycle_x", "cycle_y", "cycle_z"}:
+            return _cycle(ui, design, command[-1].upper())
+        if command in {"toggle_live", "live"}:
+            return _toggle_live(ui, design)
+        if command in {"baseline", "base"}:
+            return _set_baseline(ui, design)
+        if command == "slide":
+            return _slide(ui, design, payload)
+        if command == "resize":
+            return _resize(ui, design, payload, SIZE_FIELDS, False)
+        if command in {"apply", "open", "scale"}:
+            # Older Scale layouts send exact X/Y/Z sizes with an aspect lock.
+            return _resize(ui, design, payload, ("x", "y", "z"), _as_bool(payload.get("aspect_lock"), False))
+        return _result("CANCELLED", f"Unknown Fusion Scale command: {command}")
     except Exception as exc:
+        gesture = _gesture
+        _end_gesture()
+        if gesture is not None and design is not None:
+            try:
+                _restore_selection(ui, _bodies_from_tokens(design, gesture["bodyTokens"]) or [])
+            except Exception:
+                pass
+        state = {}
+        if design is not None:
+            try:
+                state = _state(design)
+            except Exception:
+                state = {}
         return _result(
             "ERROR",
             str(exc),
             details=traceback.format_exc()[-4000:],
-            fieldPatch=_field_patch(_last_state),
+            fieldPatch=_reset_patch(),
+            **state,
         )

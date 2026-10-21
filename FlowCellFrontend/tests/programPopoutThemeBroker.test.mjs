@@ -10,6 +10,7 @@ import * as palette from "./.compiled-button-system/theme/programPopoutPalette.j
 import * as popoutOperations from "./.compiled-button-system/button/state/buttonPopoutInteractionOperations.js";
 import * as panelOwners from "./.compiled-button-system/button/state/panelOwnerButtonOperations.js";
 import * as windowThemes from "./.compiled-button-system/button/windows/buttonWindowThemeDocument.js";
+import * as themeModel from "./.compiled-button-system/theme/themeModel.js";
 
 const source = readFileSync(new URL("../src/pages/installed-page/installedPageCoreBroker.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, {
@@ -17,7 +18,7 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const identity = { ownerButtonId: "theme-owner", programName: "Blender", panelName: "toolset", fileName: "theme.py", pageId: "blender.theme" };
 
-function harness() {
+function harness(hooks = {}) {
   let document = defaults.createButtonStateDocument();
   const initial = theme.captureProgramPopoutThemeSettings(document, "Blender");
   document.programPopoutThemes = { krita: structuredClone(initial) };
@@ -31,7 +32,11 @@ function harness() {
   const imports = {
     "../../button/state/buttonDefaults": defaults,
     "../../theme/programPopoutTheme.js": theme,
-    "../../theme/programPopoutPalette.js": palette,
+    "../../theme/programPopoutPalette.js": { ...palette, scanProgramPopoutPaletteTargets: (...args) => {
+      hooks.onScan?.();
+      return palette.scanProgramPopoutPaletteTargets(...args);
+    } },
+    "../../theme/themeModel.js": themeModel,
     "../../button/state/buttonPopoutInteractionOperations": popoutOperations,
     "../../button/state/panelOwnerButtonOperations": panelOwners,
     "../../button/windows/buttonWindowThemeDocument": windowThemes,
@@ -39,12 +44,12 @@ function harness() {
     "../../lib/layoutSnapshots.js": { readRegisteredLayoutWindow: (label) => windows.get(label) },
     "@tauri-apps/api/webviewWindow": {
       WebviewWindow: { getAll: async () => [...windows.keys()].map((label) => ({
-        label, isVisible: async () => true, isMinimized: async () => false
+        label, isVisible: async () => { await hooks.beforeVisibility?.(label); return true; }, isMinimized: async () => false
       })) }
     },
     "@tauri-apps/api/window": {
       getCurrentWindow: () => ({ label: "theme-page" }),
-      monitorFromPoint: async () => ({ workArea: { position: { x: 0, y: 0 }, size: { width: 1000, height: 800 } } })
+      monitorFromPoint: async (x, y) => { await hooks.beforeMonitor?.(x, y); return { workArea: { position: { x: 0, y: 0 }, size: { width: 1000, height: 800 } } }; }
     },
     "../../button/state/ButtonStateRepository": {
       loadButtonStateDocument: async () => structuredClone(document),
@@ -298,6 +303,167 @@ test("generic package save/open round-trips complete popout settings independent
   const loaded = await h.run("tool-package.open", options);
   assert.deepEqual(loaded.fieldPatch.popped_button_settings, settings);
   assert.equal(h.saves, 0, "package IO alone never changes Button state");
+});
+
+test("package captures manual colors and restores exact colors without baking the gradient", async () => {
+  const h = harness(); addLivePopout(h); addLiveMember(h, "bottom", 80);
+  const scan = await h.run("button-theme.palette", { operation: "scan" });
+  await h.run("button-theme.palette", { operation: "edit" }, {
+    expectedRevision: scan.revision, edits: [{ placementId: scan.placements[0].placementId, color: "#123456", textColor: "#ABCDEF" }]
+  });
+  const captured = await h.run("button-theme.palette", { operation: "settings" }, { captureAppearance: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(captured.buttonAppearance)), {
+    version: 1, placements: [{ placementId: "owner", buttonId: "owner", color: "#123456", textColor: "#ABCDEF" }]
+  });
+  assert.equal(captured.placementLinks[0].paletteId, scan.placements[0].placementId);
+  const settings = { ...captured.settings, colors: ["#112233", "#334455"] };
+  await h.run("button-theme.palette", { operation: "settings" }, { settings, resetOverrides: true });
+  assert.equal(h.document.programPopoutColorOverrides.owner, undefined);
+  await h.run("button-theme.palette", { operation: "settings" }, {
+    settings: captured.settings, resetOverrides: true, buttonAppearance: captured.buttonAppearance
+  });
+  assert.deepEqual(h.document.programPopoutColorOverrides.owner, { surface: "#123456", text: "#ABCDEF" });
+  assert.equal(h.document.programPopoutColorOverrides.bottom, undefined, "unchanged gradient Buttons stay dynamic");
+  assert.deepEqual(h.document.programPopoutThemes.blender, JSON.parse(JSON.stringify(captured.settings)));
+});
+
+test("participation freezes exact appearance, saves locks, protects current locks and re-enables", async () => {
+  const h = harness(); addLivePopout(h); addLiveMember(h, "bottom", 80);
+  let scan = await h.run("button-theme.palette", { operation: "scan" });
+  assert.equal(scan.placements[0].enabled, true);
+  scan = await h.run("button-theme.palette", { operation: "participation" }, {
+    expectedRevision: scan.revision, placementIds: [scan.placements[0].placementId], enabled: false
+  });
+  assert.equal(scan.placements[0].enabled, false);
+  const frozen = structuredClone(h.document.programPopoutThemeLocks.owner);
+  const captured = await h.run("button-theme.palette", { operation: "settings" }, { captureAppearance: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(captured.buttonAppearance.placements[0].lockedAppearance)), frozen);
+  await h.run("button-theme.palette", { operation: "settings" }, {
+    settings: { ...captured.settings, colors: ["#FF0000"] }, resetOverrides: true,
+    buttonAppearance: { version: 1, placements: [{ placementId: "owner", buttonId: "owner", color: "#00FF00" }] }
+  });
+  assert.deepEqual(h.document.programPopoutThemeLocks.owner, frozen);
+  scan = await h.run("button-theme.palette", { operation: "scan" });
+  assert.equal(scan.placements[0].color, frozen.colors.surface);
+  scan = await h.run("button-theme.palette", { operation: "participation" }, {
+    expectedRevision: scan.revision, placementIds: [scan.placements[0].placementId], enabled: true
+  });
+  assert.equal(scan.placements[0].enabled, true);
+  assert.equal(scan.placements[0].color, "#FF0000");
+  await h.run("button-theme.palette", { operation: "settings" }, {
+    settings: captured.settings, resetOverrides: true, buttonAppearance: captured.buttonAppearance
+  });
+  assert.deepEqual(h.document.programPopoutThemeLocks.owner, frozen, "saved unchecked participation is restored");
+});
+
+test("appearance restore rejects malformed records atomically and never hits a renamed identity", async () => {
+  const h = harness(); addLivePopout(h);
+  const before = structuredClone(h.document);
+  const settings = h.document.programPopoutThemes.blender;
+  await assert.rejects(h.run("button-theme.palette", { operation: "settings" }, { settings, resetOverrides: true,
+    buttonAppearance: { version: 1, placements: [{ placementId: "owner", buttonId: "owner", color: "bad" }] }
+  }));
+  assert.deepEqual(h.document, before);
+  await h.run("button-theme.palette", { operation: "settings" }, { settings, resetOverrides: true,
+    buttonAppearance: { version: 1, placements: [{ placementId: "owner", buttonId: "different", color: "#AABBCC" }] }
+  });
+  assert.equal(h.document.programPopoutColorOverrides?.owner, undefined);
+});
+
+test("package capture and restore include closed canonical Buttons and live draft-only identities", async () => {
+  const h = harness(); addLivePopout(h, { draftSessionId: "draft" });
+  const draft = h.drafts.get("draft");
+  draft.buttons.transient = { ...draft.buttons.owner, id: "transient", label: "Transient" };
+  draft.placements.transient = { ...draft.placements.owner, id: "transient", buttonId: "transient", y: 80 };
+  draft.surfaces.pop.placementIds.push("transient");
+  draft.popoutUnits.unit.memberPlacementIds.push("transient");
+  let scan = await h.run("button-theme.palette", { operation: "scan" });
+  scan = await h.run("button-theme.palette", { operation: "edit" }, {
+    expectedRevision: scan.revision, edits: scan.placements.map(({ placementId }, index) => ({ placementId, color: index ? "#334455" : "#112233" }))
+  });
+  scan = await h.run("button-theme.palette", { operation: "participation" }, {
+    expectedRevision: scan.revision, placementIds: [scan.placements[1].placementId], enabled: false
+  });
+  assert.equal(h.document.programPopoutThemeLocks?.transient, undefined, "draft-only identity never invents canonical placements");
+  const captured = await h.run("button-theme.palette", { operation: "settings" }, { captureAppearance: true });
+  assert.equal(captured.buttonAppearance.placements.length, 2);
+  assert.equal(captured.buttonAppearance.placements.find(({ placementId }) => placementId === "transient").lockedAppearance.colors.surface, "#334455");
+  // Re-enable the draft Button, then restoring the package reinstates its saved unchecked state.
+  await h.run("button-theme.palette", { operation: "participation" }, {
+    expectedRevision: scan.revision, placementIds: [scan.placements[1].placementId], enabled: true
+  });
+  await h.run("button-theme.palette", { operation: "settings" }, { settings: captured.settings, resetOverrides: true, buttonAppearance: captured.buttonAppearance });
+  assert.equal(h.drafts.get("draft").programPopoutThemeLocks.transient.colors.surface, "#334455");
+  h.windows.clear();
+  const closed = await h.run("button-theme.palette", { operation: "settings" }, { captureAppearance: true });
+  assert.equal(closed.buttonAppearance.placements.find(({ placementId }) => placementId === "owner").color, "#112233");
+  await h.run("button-theme.palette", { operation: "settings" }, { settings: captured.settings, resetOverrides: true });
+  await h.run("button-theme.palette", { operation: "settings" }, { settings: captured.settings, resetOverrides: true, buttonAppearance: closed.buttonAppearance });
+  assert.equal(h.document.programPopoutColorOverrides.owner.surface, "#112233");
+});
+
+test("checkbox scope probes native windows concurrently and reuses its rendered response for the revision guard", async () => {
+  let hold = true;
+  const visibility = [], monitors = [];
+  let scans = 0;
+  const h = harness({
+    beforeVisibility: (label) => hold ? new Promise((resolve) => visibility.push({ label, resolve })) : undefined,
+    beforeMonitor: (x, y) => hold ? new Promise((resolve) => monitors.push({ x, y, resolve })) : undefined,
+    onScan: () => { scans += 1; }
+  });
+  addLivePopout(h);
+  for (const suffix of ["-b", "-a"]) {
+    const doc = h.document;
+    const id = `owner${suffix}`, surfaceId = `pop${suffix}`, unitId = `unit${suffix}`;
+    doc.buttons[id] = { ...doc.buttons.owner, id, label: id };
+    doc.placements[id] = { ...doc.placements.owner, id, buttonId: id, surfaceId };
+    doc.surfaces[surfaceId] = { ...doc.surfaces.pop, id: surfaceId, placementIds: [id] };
+    doc.popoutUnits[unitId] = { ...doc.popoutUnits.unit, id: unitId, surfaceId, ownerPlacementId: id, ownerButtonId: id };
+    h.windows.set(`live${suffix}`, { ...h.windows.get("live"), buttonPopoutUnitId: unitId });
+  }
+  const pending = h.run("button-theme.palette", { operation: "scan" });
+  await new Promise(setImmediate);
+  assert.equal(visibility.length, 3, "all visibility checks start before any resolves");
+  for (const entry of [...visibility].reverse()) entry.resolve();
+  await new Promise(setImmediate);
+  assert.equal(monitors.length, 3, "all independent monitor queries start before any resolves");
+  for (const entry of [...monitors].reverse()) entry.resolve();
+  const scan = await pending;
+  assert.deepEqual(JSON.parse(JSON.stringify(scan.placements.map(({ label }) => label))), ["Tools", "owner-a", "owner-b"]);
+  assert.equal(scans, 1, "scan result and revision fingerprint share one rendered palette");
+  hold = false;
+  scans = 0;
+  const checked = await h.run("button-theme.palette", { operation: "participation" }, {
+    expectedRevision: scan.revision, placementIds: [scan.placements[0].placementId], enabled: false
+  });
+  assert.equal(checked.placements[0].enabled, false);
+  assert.equal(scans, 2, "one fresh guard scan and one shared response/fingerprint scan (the core helper's internal scan is separate)");
+  h.document.placements.owner.y += 2;
+  await assert.rejects(h.run("button-theme.palette", { operation: "participation" }, {
+    expectedRevision: checked.revision, placementIds: [checked.placements[0].placementId], enabled: true
+  }), /changed after the last scan/);
+  assert.ok(h.document.programPopoutThemeLocks.owner, "fresh stale protection is not bypassed for speed");
+});
+
+test("explicit manual edits to an unchecked Button save its updated frozen color", async () => {
+  const h = harness(); addLivePopout(h);
+  let scan = await h.run("button-theme.palette", { operation: "scan" });
+  scan = await h.run("button-theme.palette", { operation: "participation" }, {
+    expectedRevision: scan.revision, placementIds: [scan.placements[0].placementId], enabled: false
+  });
+  scan = await h.run("button-theme.palette", { operation: "edit" }, {
+    expectedRevision: scan.revision, edits: [{ placementId: scan.placements[0].placementId, color: "#123456", textColor: "#ABCDEF" }]
+  });
+  assert.equal(scan.placements[0].enabled, false);
+  assert.equal(scan.placements[0].color, "#123456");
+  const captured = await h.run("button-theme.palette", { operation: "settings" }, { captureAppearance: true });
+  const savedLock = captured.buttonAppearance.placements[0].lockedAppearance;
+  assert.equal(savedLock.colors.surface, "#123456");
+  assert.equal(savedLock.colors.text, "#ABCDEF");
+  await h.run("button-theme.palette", { operation: "settings" }, {
+    settings: { ...captured.settings, colors: ["#FF0000"] }, resetOverrides: true, buttonAppearance: captured.buttonAppearance
+  });
+  assert.deepEqual(h.document.programPopoutThemeLocks.owner, JSON.parse(JSON.stringify(savedLock)));
 });
 
 test("screen scans resolve canonical rules over stale settings-backed drafts", async () => {

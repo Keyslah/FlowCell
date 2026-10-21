@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "id": "fusion-360.scale",
-  "version": "1.0.2",
+  "version": "1.2.0",
   "label": "Scale",
-  "tooltip": "Read and edit selected body dimensions, lock aspect, pin a side or center per axis, then scale with Fusion's native draggable triad.",
+  "tooltip": "Smart Axis scaling: Base stores bounds, X/Y/Z cycle the locked side, Live updates while you drag the X/Y/Z sliders.",
   "kind": "toolset",
   "program": "Fusion 360",
   "source": "scale.py",
   "bridgeData": {},
   "stateQuery": {
-    "slot": "refresh",
+    "slot": "cycle_x",
     "payload": {
       "action": "status",
       "command": "status"
@@ -17,184 +17,364 @@
   },
   "children": [
     {
-      "slot": "x_axis_label",
+      "slot": "baseline",
+      "label": "Base",
+      "tooltip": "Store the selected bodies' bounds; locked sides hold these edges while scaling.",
+      "payload": {
+        "command": "baseline",
+        "action": "baseline"
+      }
+    },
+    {
+      "slot": "cycle_x",
       "label": "X",
-      "tooltip": "X dimension"
+      "tooltip": "Cycle X between no lock (center), X- (Min side fixed), and X+ (Max side fixed).",
+      "payload": {
+        "command": "cycle_x",
+        "action": "cycle_x"
+      }
     },
     {
-      "slot": "x_dimension",
-      "label": "0",
-      "tooltip": "Edit the selected bodies' total X dimension in the current Fusion document units."
-    },
-    {
-      "slot": "y_axis_label",
+      "slot": "cycle_y",
       "label": "Y",
-      "tooltip": "Y dimension"
+      "tooltip": "Cycle Y between no lock (center), Y- (Min side fixed), and Y+ (Max side fixed).",
+      "payload": {
+        "command": "cycle_y",
+        "action": "cycle_y"
+      }
     },
     {
-      "slot": "y_dimension",
-      "label": "0",
-      "tooltip": "Edit the selected bodies' total Y dimension in the current Fusion document units."
-    },
-    {
-      "slot": "z_axis_label",
+      "slot": "cycle_z",
       "label": "Z",
-      "tooltip": "Z dimension"
+      "tooltip": "Cycle Z between no lock (center), Z- (Min side fixed, e.g. the bottom), and Z+ (Max side fixed).",
+      "payload": {
+        "command": "cycle_z",
+        "action": "cycle_z"
+      }
     },
     {
-      "slot": "z_dimension",
-      "label": "0",
-      "tooltip": "Edit the selected bodies' total Z dimension in the current Fusion document units."
+      "slot": "toggle_live",
+      "label": "Live",
+      "tooltip": "Live on: sliders update Fusion while you drag. Live off: the drag applies when you let go.",
+      "payload": {
+        "command": "toggle_live",
+        "action": "toggle_live"
+      }
     },
     {
       "slot": "refresh",
       "label": "Refresh",
-      "tooltip": "Read XYZ dimensions from the currently selected native BRep bodies.",
+      "tooltip": "Read the selected bodies' sizes and reset the sliders to 100%.",
       "payload": {
-        "action": "refresh",
-        "command": "refresh"
+        "command": "refresh",
+        "action": "refresh"
       }
     },
     {
-      "slot": "free_axis",
-      "label": "Free Axis",
-      "tooltip": "Choose the single free axis shown on Fusion's draggable scale triad."
+      "slot": "link_x_button",
+      "label": "Link X",
+      "tooltip": "While lit, dragging any lit slider moves the X slider with it."
     },
     {
-      "slot": "aspect_lock",
-      "label": "Lock Aspect",
-      "tooltip": "Lock XYZ proportions. The chosen free-axis dimension drives all three dimensions."
+      "slot": "link_y_button",
+      "label": "Link Y",
+      "tooltip": "While lit, dragging any lit slider moves the Y slider with it."
     },
     {
-      "slot": "pin_x",
-      "label": "X Center",
-      "tooltip": "Choose whether X scales around its center or holds its minimum or maximum side fixed."
-    },
-    {
-      "slot": "pin_y",
-      "label": "Y Center",
-      "tooltip": "Choose whether Y scales around its center or holds its minimum or maximum side fixed."
-    },
-    {
-      "slot": "pin_z",
-      "label": "Z Center",
-      "tooltip": "Choose whether Z scales around its center or holds its minimum or maximum side fixed."
-    },
-    {
-      "slot": "apply",
-      "label": "Scale / Drag",
-      "tooltip": "Open Fusion's native draggable free-axis scale handle; press Enter to commit or Esc to cancel.",
-      "payload": {
-        "action": "apply",
-        "command": "apply"
-      }
+      "slot": "link_z_button",
+      "label": "Link Z",
+      "tooltip": "While lit, dragging any lit slider moves the Z slider with it."
     }
   ],
   "layout": {
     "mode": "grid",
-    "columns": 5,
-    "gap": 8,
-    "padding": 8,
-    "width": 820,
-    "height": 168,
-    "updatePolicy": {
-      "appendMissingChildSlots": true
-    },
+    "width": 628,
+    "height": 186,
     "placements": {
-      "x_axis_label": { "x": 8, "y": 8, "width": 76, "height": 42 },
-      "x_dimension": { "x": 92, "y": 8, "width": 112, "height": 42 },
-      "y_axis_label": { "x": 212, "y": 8, "width": 76, "height": 42 },
-      "y_dimension": { "x": 296, "y": 8, "width": 112, "height": 42 },
-      "z_axis_label": { "x": 416, "y": 8, "width": 76, "height": 42 },
-      "z_dimension": { "x": 500, "y": 8, "width": 112, "height": 42 },
-      "refresh": { "x": 620, "y": 8, "width": 88, "height": 42 },
-      "apply": { "x": 716, "y": 8, "width": 96, "height": 92 },
-      "free_axis": { "x": 8, "y": 58, "width": 128, "height": 42 },
-      "aspect_lock": { "x": 144, "y": 58, "width": 128, "height": 42 },
-      "pin_x": { "x": 280, "y": 58, "width": 136, "height": 42 },
-      "pin_y": { "x": 424, "y": 58, "width": 136, "height": 42 },
-      "pin_z": { "x": 568, "y": 58, "width": 144, "height": 42 }
+      "baseline": {
+        "x": 8,
+        "y": 8,
+        "width": 80,
+        "height": 42
+      },
+      "cycle_x": {
+        "x": 96,
+        "y": 8,
+        "width": 80,
+        "height": 42
+      },
+      "cycle_y": {
+        "x": 184,
+        "y": 8,
+        "width": 80,
+        "height": 42
+      },
+      "cycle_z": {
+        "x": 272,
+        "y": 8,
+        "width": 80,
+        "height": 42
+      },
+      "toggle_live": {
+        "x": 360,
+        "y": 9,
+        "width": 120,
+        "height": 40
+      },
+      "refresh": {
+        "x": 488,
+        "y": 8,
+        "width": 80,
+        "height": 42
+      },
+      "link_x_button": {
+        "x": 8,
+        "y": 58,
+        "width": 80,
+        "height": 36
+      },
+      "link_y_button": {
+        "x": 8,
+        "y": 100,
+        "width": 80,
+        "height": 36
+      },
+      "link_z_button": {
+        "x": 8,
+        "y": 142,
+        "width": 80,
+        "height": 36
+      }
     },
     "fields": [
-      { "id": "x", "kind": "number", "label": "X", "payloadKey": "x", "defaultValue": 0, "minimum": 0.000001, "maximum": 1000000000, "step": 0.1, "x": 92, "y": 8, "width": 112, "height": 42, "zIndex": 1, "hidden": true },
-      { "id": "y", "kind": "number", "label": "Y", "payloadKey": "y", "defaultValue": 0, "minimum": 0.000001, "maximum": 1000000000, "step": 0.1, "x": 296, "y": 8, "width": 112, "height": 42, "zIndex": 1, "hidden": true },
-      { "id": "z", "kind": "number", "label": "Z", "payloadKey": "z", "defaultValue": 0, "minimum": 0.000001, "maximum": 1000000000, "step": 0.1, "x": 500, "y": 8, "width": 112, "height": 42, "zIndex": 1, "hidden": true },
       {
-        "id": "free_axis",
-        "kind": "select",
-        "label": "Free Axis",
-        "payloadKey": "free_axis",
-        "defaultValue": "X",
-        "options": [
-          { "id": "x", "label": "Free X", "value": "X" },
-          { "id": "y", "label": "Free Y", "value": "Y" },
-          { "id": "z", "label": "Free Z", "value": "Z" }
-        ],
-        "x": 8, "y": 58, "width": 128, "height": 42, "zIndex": 1, "hidden": true
-      },
-      { "id": "aspect_lock", "kind": "toggle", "label": "Lock Aspect", "payloadKey": "aspect_lock", "defaultValue": true, "x": 144, "y": 58, "width": 128, "height": 42, "zIndex": 1, "hidden": true },
-      {
-        "id": "x_pin",
-        "kind": "select",
-        "label": "X Pin",
-        "payloadKey": "x_pin",
-        "defaultValue": "NONE",
-        "options": [
-          { "id": "center", "label": "X Center", "value": "NONE" },
-          { "id": "min", "label": "X Min", "value": "MIN" },
-          { "id": "max", "label": "X Max", "value": "MAX" }
-        ],
-        "x": 280, "y": 58, "width": 136, "height": 42, "zIndex": 1, "hidden": true
+        "id": "units",
+        "kind": "display",
+        "label": "",
+        "payloadKey": "units",
+        "defaultValue": "",
+        "x": 576,
+        "y": 8,
+        "width": 44,
+        "height": 42,
+        "zIndex": 1
       },
       {
-        "id": "y_pin",
-        "kind": "select",
-        "label": "Y Pin",
-        "payloadKey": "y_pin",
-        "defaultValue": "NONE",
-        "options": [
-          { "id": "center", "label": "Y Center", "value": "NONE" },
-          { "id": "min", "label": "Y Min", "value": "MIN" },
-          { "id": "max", "label": "Y Max", "value": "MAX" }
-        ],
-        "x": 424, "y": 58, "width": 136, "height": 42, "zIndex": 1, "hidden": true
+        "id": "scale_x",
+        "kind": "range",
+        "label": "X",
+        "payloadKey": "scale_x",
+        "defaultValue": 100,
+        "minimum": 1,
+        "maximum": 200,
+        "step": 1,
+        "linkToggleField": "link_x",
+        "format": "{value}%",
+        "serviceTrigger": "input",
+        "serviceTarget": {
+          "kind": "tool-set-action",
+          "command": "refresh",
+          "payload": {
+            "command": "slide",
+            "action": "slide"
+          }
+        },
+        "x": 96,
+        "y": 58,
+        "width": 380,
+        "height": 36,
+        "zIndex": 1
       },
       {
-        "id": "z_pin",
-        "kind": "select",
-        "label": "Z Pin",
-        "payloadKey": "z_pin",
-        "defaultValue": "NONE",
-        "options": [
-          { "id": "center", "label": "Z Center", "value": "NONE" },
-          { "id": "min", "label": "Z Min", "value": "MIN" },
-          { "id": "max", "label": "Z Max", "value": "MAX" }
-        ],
-        "x": 568, "y": 58, "width": 144, "height": 42, "zIndex": 1, "hidden": true
+        "id": "size_x",
+        "kind": "number",
+        "label": "",
+        "payloadKey": "size_x",
+        "defaultValue": 0,
+        "minimum": 0,
+        "step": 0.01,
+        "serviceTrigger": "change",
+        "serviceTarget": {
+          "kind": "tool-set-action",
+          "command": "refresh",
+          "payload": {
+            "command": "resize",
+            "action": "resize"
+          }
+        },
+        "x": 484,
+        "y": 58,
+        "width": 136,
+        "height": 36,
+        "zIndex": 1
+      },
+      {
+        "id": "link_x",
+        "kind": "toggle",
+        "label": "Link X",
+        "payloadKey": "link_x",
+        "defaultValue": true,
+        "x": 8,
+        "y": 58,
+        "width": 80,
+        "height": 36,
+        "zIndex": 0,
+        "hidden": true
+      },
+      {
+        "id": "scale_y",
+        "kind": "range",
+        "label": "Y",
+        "payloadKey": "scale_y",
+        "defaultValue": 100,
+        "minimum": 1,
+        "maximum": 200,
+        "step": 1,
+        "linkToggleField": "link_y",
+        "format": "{value}%",
+        "serviceTrigger": "input",
+        "serviceTarget": {
+          "kind": "tool-set-action",
+          "command": "refresh",
+          "payload": {
+            "command": "slide",
+            "action": "slide"
+          }
+        },
+        "x": 96,
+        "y": 100,
+        "width": 380,
+        "height": 36,
+        "zIndex": 1
+      },
+      {
+        "id": "size_y",
+        "kind": "number",
+        "label": "",
+        "payloadKey": "size_y",
+        "defaultValue": 0,
+        "minimum": 0,
+        "step": 0.01,
+        "serviceTrigger": "change",
+        "serviceTarget": {
+          "kind": "tool-set-action",
+          "command": "refresh",
+          "payload": {
+            "command": "resize",
+            "action": "resize"
+          }
+        },
+        "x": 484,
+        "y": 100,
+        "width": 136,
+        "height": 36,
+        "zIndex": 1
+      },
+      {
+        "id": "link_y",
+        "kind": "toggle",
+        "label": "Link Y",
+        "payloadKey": "link_y",
+        "defaultValue": true,
+        "x": 8,
+        "y": 100,
+        "width": 80,
+        "height": 36,
+        "zIndex": 0,
+        "hidden": true
+      },
+      {
+        "id": "scale_z",
+        "kind": "range",
+        "label": "Z",
+        "payloadKey": "scale_z",
+        "defaultValue": 100,
+        "minimum": 1,
+        "maximum": 200,
+        "step": 1,
+        "linkToggleField": "link_z",
+        "format": "{value}%",
+        "serviceTrigger": "input",
+        "serviceTarget": {
+          "kind": "tool-set-action",
+          "command": "refresh",
+          "payload": {
+            "command": "slide",
+            "action": "slide"
+          }
+        },
+        "x": 96,
+        "y": 142,
+        "width": 380,
+        "height": 36,
+        "zIndex": 1
+      },
+      {
+        "id": "size_z",
+        "kind": "number",
+        "label": "",
+        "payloadKey": "size_z",
+        "defaultValue": 0,
+        "minimum": 0,
+        "step": 0.01,
+        "serviceTrigger": "change",
+        "serviceTarget": {
+          "kind": "tool-set-action",
+          "command": "refresh",
+          "payload": {
+            "command": "resize",
+            "action": "resize"
+          }
+        },
+        "x": 484,
+        "y": 142,
+        "width": 136,
+        "height": 36,
+        "zIndex": 1
+      },
+      {
+        "id": "link_z",
+        "kind": "toggle",
+        "label": "Link Z",
+        "payloadKey": "link_z",
+        "defaultValue": true,
+        "x": 8,
+        "y": 142,
+        "width": 80,
+        "height": 36,
+        "zIndex": 0,
+        "hidden": true
       }
     ],
     "childBehaviors": {
-      "x_axis_label": { "execute": false },
-      "x_dimension": { "inlineEditField": "x", "execute": false },
-      "y_axis_label": { "execute": false },
-      "y_dimension": { "inlineEditField": "y", "execute": false },
-      "z_axis_label": { "execute": false },
-      "z_dimension": { "inlineEditField": "z", "execute": false },
-      "free_axis": { "selectField": "free_axis", "execute": false },
-      "aspect_lock": { "toggleFields": ["aspect_lock"], "execute": false },
-      "pin_x": { "selectField": "x_pin", "execute": false },
-      "pin_y": { "selectField": "y_pin", "execute": false },
-      "pin_z": { "selectField": "z_pin", "execute": false },
-      "refresh": { "execute": true, "payloadTemplate": { "action": "refresh", "command": "refresh" } },
-      "apply": {
+      "refresh": {
         "execute": true,
         "payloadTemplate": {
-          "action": "apply", "command": "apply",
-          "x": { "$field": "x" }, "y": { "$field": "y" }, "z": { "$field": "z" },
-          "aspect_lock": { "$field": "aspect_lock" }, "free_axis": { "$field": "free_axis" },
-          "x_pin": { "$field": "x_pin" }, "y_pin": { "$field": "y_pin" }, "z_pin": { "$field": "z_pin" }
+          "action": "refresh",
+          "command": "refresh"
         }
+      },
+      "link_x_button": {
+        "toggleFields": [
+          "link_x"
+        ],
+        "execute": false
+      },
+      "link_y_button": {
+        "toggleFields": [
+          "link_y"
+        ],
+        "execute": false
+      },
+      "link_z_button": {
+        "toggleFields": [
+          "link_z"
+        ],
+        "execute": false
       }
+    },
+    "updatePolicy": {
+      "appendMissingChildSlots": true
     }
   }
 }

@@ -4,6 +4,7 @@ import { getCurrentWindow, monitorFromPoint } from "@tauri-apps/api/window";
 
 import type {
   ButtonStateDocument,
+  ButtonThemeOverride,
   JsonValue,
   ProgramPopoutGradientCurvePoint,
   ProgramPopoutThemeSettings
@@ -37,11 +38,14 @@ import { showOpenFileDialog, showOpenFolderDialog, showSaveFileDialog } from "..
 import {
   captureProgramPopoutThemeSettings,
   clearProgramPopoutColorOverrides,
+  normalizeProgramPopoutColorOverride,
+  normalizeProgramPopoutThemeLock,
   normalizeProgramPopoutThemeSettings
 } from "../../theme/programPopoutTheme.js";
 import {
   applyProgramPopoutPaletteTargets,
   applyProgramPopoutColorEdits,
+  applyProgramPopoutThemeLocks,
   applyProgramPopoutTextColorTargets,
   gradientProgramPopoutPaletteAssignments,
   normalizedProgramPopoutScreenPositions,
@@ -57,6 +61,7 @@ import {
   type ProgramPopoutPaletteTarget,
   type ProgramPopoutTextColor
 } from "../../theme/programPopoutPalette.js";
+import { placementMatchesThemeTarget } from "../../theme/themeModel.js";
 
 export interface InstalledPageCoreActionPlan {
   kind: "core-action";
@@ -237,13 +242,22 @@ async function runFileSelect(options: Readonly<Record<string, JsonValue>>) {
   return { selected: Boolean(path), path };
 }
 
-async function runFolderSelect(options: Readonly<Record<string, JsonValue>>) {
+async function runFolderSelect(
+  options: Readonly<Record<string, JsonValue>>,
+  payload: Readonly<Record<string, JsonValue>>
+) {
   const paths = await showOpenFolderDialog({
     title: stringValue(options, "dialogTitle", "Choose a folder"),
+    initialDirectory: stringValue(payload, "initialDirectory") || undefined,
     multiselect: false
   });
   const path = paths[0]?.trim() ?? "";
   return { selected: Boolean(path), path };
+}
+
+async function runScreenColorPick() {
+  const { color } = await invoke<{ color: string | null }>("pick_screen_color");
+  return { selected: color !== null, color: color ?? "" };
 }
 
 async function runSamplePalette(
@@ -350,13 +364,14 @@ function popoutPaletteResponse(
   warnings: readonly string[] = []
 ): Record<string, JsonValue> {
   return {
-    placements: scan.placements.map(({ placementId, color, materialColors = [], label, textColor, groupLabel }) => ({
+    placements: scan.placements.map(({ placementId, color, materialColors = [], label, textColor, groupLabel, enabled }) => ({
       placementId,
       ...(color ? { color } : {}),
       materialColors,
       label,
       textColor,
-      groupLabel
+      groupLabel,
+      enabled: enabled !== false
     })),
     revision,
     buttonCount: scan.buttonCount,
@@ -582,20 +597,20 @@ async function liveProgramPopoutPaletteScope(
     left.label.localeCompare(right.label)
   );
   const candidates: LiveProgramPopoutPaletteCandidate[] = [];
-  for (const handle of handles) {
+  await Promise.all(handles.map(async (handle) => {
     const registered = readRegisteredLayoutWindow(handle.label);
     if (
       !registered ||
       !programNamesMatch(registered.programName, programName) ||
       (registered.kind !== "button-popout" && registered.kind !== "button-fan")
     ) {
-      continue;
+      return;
     }
     const [visible, minimized] = await Promise.all([
       handle.isVisible().catch(() => false),
       handle.isMinimized().catch(() => false)
     ]);
-    if (!visible || minimized) continue;
+    if (!visible || minimized) return;
     if (registered.kind === "button-popout") {
       const popoutUnitId = registered.buttonPopoutUnitId?.trim();
       const displayMode = registered.buttonDisplayMode;
@@ -604,7 +619,7 @@ async function liveProgramPopoutPaletteScope(
       }
       const draftSessionId = registered.buttonDraftSessionId?.trim();
       if (draftSessionId && !registered.buttonPopoutSettingsPath?.trim()) {
-        continue;
+        return;
       }
       if (!draftSessionId && registered.buttonPopoutSettingsPath?.trim()) {
         throw new Error("An open Blender Pop-out lost its live settings session. Reopen it and press Rescan.");
@@ -617,11 +632,11 @@ async function liveProgramPopoutPaletteScope(
         draftSessionId,
         snapshotBounds: registered.snapshotBounds
       });
-      continue;
+      return;
     }
 
     if (registered.buttonDraftSessionId?.trim()) {
-      continue;
+      return;
     }
     const fanSetupId = registered.buttonFanSetupId?.trim();
     if (!fanSetupId) {
@@ -634,7 +649,8 @@ async function liveProgramPopoutPaletteScope(
       displayMode: registered.buttonDisplayMode === "expanded" ? "expanded" : "collapsed",
       snapshotBounds: registered.snapshotBounds
     });
-  }
+  }));
+  candidates.sort((left, right) => left.windowLabel.localeCompare(right.windowLabel));
 
   const requesterLabel = getCurrentWindow().label;
   const draftDocuments = new Map<string, ButtonStateDocument>();
@@ -649,7 +665,7 @@ async function liveProgramPopoutPaletteScope(
   const groups = new Map<string, LiveProgramPopoutPaletteGroup>();
   const screenPositions: ProgramPopoutPaletteGradientItem[] = [];
   let windowCount = 0;
-  for (const candidate of candidates) {
+  await Promise.all(candidates.map(async (candidate) => {
     const document = candidate.draftSessionId
       ? draftDocuments.get(candidate.draftSessionId)
       : current;
@@ -666,7 +682,7 @@ async function liveProgramPopoutPaletteScope(
         );
       }
       if (candidate.displayMode === "collapsed" && popoutUnit.interactionMode !== "fan") {
-        continue;
+        return;
       }
     }
     const placementIds = candidate.windowKind === "button-popout"
@@ -748,14 +764,18 @@ async function liveProgramPopoutPaletteScope(
         }
       }
       if (!usableFlowCellBounds(visibleBounds) || !envelope) {
-        continue;
+        return;
       }
-      const monitor = await monitorFromPoint(
-        visibleBounds.Left + visibleBounds.Width / 2,
-        visibleBounds.Top + visibleBounds.Height / 2
-      ).catch(() => null);
+      const centerX = visibleBounds.Left + visibleBounds.Width / 2;
+      const centerY = visibleBounds.Top + visibleBounds.Height / 2;
+      const monitorRequest = monitorFromPoint(centerX, centerY).catch(() => null);
+      const ownerCenterX = collapsedOwner ? collapsedOwner.bounds.Left + collapsedOwner.bounds.Width / 2 : centerX;
+      const ownerCenterY = collapsedOwner ? collapsedOwner.bounds.Top + collapsedOwner.bounds.Height / 2 : centerY;
+      const ownerMonitorRequest = ownerCenterX === centerX && ownerCenterY === centerY ? monitorRequest
+        : monitorFromPoint(ownerCenterX, ownerCenterY).catch(() => null);
+      const monitor = await monitorRequest;
       if (!monitor) {
-        continue;
+        return;
       }
       try {
         screenPositions.push(...programPopoutPaletteScreenPositions({
@@ -773,10 +793,7 @@ async function liveProgramPopoutPaletteScope(
           rangeEligible: candidate.displayMode !== "collapsed"
         })));
         if (collapsedOwner) {
-          const ownerMonitor = await monitorFromPoint(
-            collapsedOwner.bounds.Left + collapsedOwner.bounds.Width / 2,
-            collapsedOwner.bounds.Top + collapsedOwner.bounds.Height / 2
-          ).catch(() => null) ?? monitor;
+          const ownerMonitor = await ownerMonitorRequest ?? monitor;
           const ownerPosition = screenPositions.find(({ paletteId }) => paletteId === collapsedOwner.paletteId);
           if (ownerPosition) {
             ownerPosition.rangeEligible = true;
@@ -797,11 +814,11 @@ async function liveProgramPopoutPaletteScope(
         );
       }
     }
-  }
+  }));
   return {
     groups: [...groups.values()].sort((left, right) => left.backingId.localeCompare(right.backingId)),
     windowCount,
-    screenPositions: screenTopToBottom ? screenPositions : null
+    screenPositions: screenTopToBottom ? screenPositions.sort((left, right) => left.paletteId.localeCompare(right.paletteId)) : null
   };
 }
 
@@ -820,15 +837,14 @@ function scanLiveProgramPopoutPalette(
 
 function liveProgramPopoutPaletteFingerprint(
   scope: LiveProgramPopoutPaletteScope,
-  programName: string
+  programName: string,
+  renderedScan = scanLiveProgramPopoutPalette(scope, programName)
 ): string {
+  const scanByPaletteId = new Map(renderedScan.placements.map((entry) => [entry.placementId, entry]));
   return JSON.stringify({
     windowCount: scope.windowCount,
-    groups: scope.groups.map((group) => {
-    const scanByPaletteId = new Map(
-      scanProgramPopoutPaletteTargets(group.document, programName, group.targets, scope.screenPositions ?? undefined)
-        .placements.map((entry) => [entry.placementId, entry])
-    );
+    // Write-only canonical mirrors are not visible palette groups and disappear on the next scan.
+    groups: scope.groups.filter(({ targets }) => targets.length > 0).sort((a, b) => a.backingId.localeCompare(b.backingId)).map((group) => {
     return {
       backingId: group.backingId,
       revision: group.document.revision,
@@ -849,6 +865,7 @@ function liveProgramPopoutPaletteFingerprint(
             height: placement?.height ?? null,
             color: scan?.color ?? null,
             textColor: scan?.textColor ?? null,
+            enabled: scan?.enabled !== false,
             materialColors: scan?.materialColors ?? []
           };
         })
@@ -1083,6 +1100,100 @@ function withProgramPopoutSettings(
   };
 }
 
+interface PortablePopoutAppearanceEntry {
+  placementId: string;
+  buttonId: string;
+  color?: string;
+  textColor?: string;
+  lockedAppearance?: ButtonThemeOverride;
+}
+
+interface PortablePopoutAppearance {
+  version: 1;
+  placements: PortablePopoutAppearanceEntry[];
+}
+
+function normalizePortablePopoutAppearance(value: unknown): PortablePopoutAppearance {
+  const record = value as Partial<PortablePopoutAppearance> | null;
+  if (!record || record.version !== 1 || !Array.isArray(record.placements) || record.placements.length > 10000) {
+    throw new Error("Package Button appearances are invalid.");
+  }
+  const seen = new Set<string>();
+  const placements = record.placements.map((entry) => {
+    if (!entry || typeof entry.placementId !== "string" || !entry.placementId.trim() ||
+      typeof entry.buttonId !== "string" || !entry.buttonId.trim() ||
+      Object.keys(entry).some((key) => !["placementId", "buttonId", "color", "textColor", "lockedAppearance"].includes(key))) {
+      throw new Error("Package Button identity is invalid.");
+    }
+    const key = JSON.stringify([entry.placementId, entry.buttonId]);
+    if (seen.has(key)) throw new Error("Package Button identities are duplicated.");
+    seen.add(key);
+    const colors = entry.color !== undefined || entry.textColor !== undefined
+      ? normalizeProgramPopoutColorOverride({
+        ...(entry.color !== undefined ? { surface: entry.color } : {}),
+        ...(entry.textColor !== undefined ? { text: entry.textColor } : {})
+      }) : {};
+    const lock = entry.lockedAppearance === undefined ? undefined : normalizeProgramPopoutThemeLock(entry.lockedAppearance);
+    if (!colors || lock === null) throw new Error("Package Button appearance is invalid.");
+    return {
+      placementId: entry.placementId, buttonId: entry.buttonId,
+      ...(colors.surface ? { color: colors.surface } : {}),
+      ...(colors.text ? { textColor: colors.text } : {}),
+      ...(lock ? { lockedAppearance: lock } : {})
+    };
+  });
+  return { version: 1, placements };
+}
+
+function packagePlacementMatches(document: ButtonStateDocument, programName: string, entry: { placementId: string; buttonId: string }): boolean {
+  const placement = document.placements[entry.placementId];
+  return Boolean(placement && placement.buttonId === entry.buttonId &&
+    ["regular-popout", "tool-set-popout", "fan"].includes(document.surfaces[placement.surfaceId]?.kind) &&
+    placementMatchesThemeTarget(document, placement, { kind: "program", programName, panelName: null }));
+}
+
+function capturePortablePopoutAppearance(current: ButtonStateDocument, scope: LiveProgramPopoutPaletteScope, programName: string) {
+  const records = new Map<string, PortablePopoutAppearanceEntry>();
+  for (const document of [current, ...scope.groups.map((group) => group.document)]) {
+    for (const placement of Object.values(document.placements)) {
+      const identity = { placementId: placement.id, buttonId: placement.buttonId };
+      if (!packagePlacementMatches(document, programName, identity)) continue;
+      const colors = normalizeProgramPopoutColorOverride(document.programPopoutColorOverrides?.[placement.id]);
+      const lock = normalizeProgramPopoutThemeLock(document.programPopoutThemeLocks?.[placement.id]);
+      const key = JSON.stringify([placement.id, placement.buttonId]);
+      if (colors || lock) records.set(key, { ...identity,
+        ...(colors?.surface ? { color: colors.surface } : {}),
+        ...(colors?.text ? { textColor: colors.text } : {}),
+        ...(lock ? { lockedAppearance: lock } : {})
+      });
+      else records.delete(key);
+    }
+  }
+  const placementLinks = scope.groups.flatMap(({ document, targets }) => targets.map(({ paletteId, placementId }) => ({
+    paletteId, placementId, buttonId: document.placements[placementId].buttonId
+  })));
+  return { buttonAppearance: { version: 1, placements: [...records.values()] }, placementLinks };
+}
+
+function restorePortablePopoutAppearance(
+  document: ButtonStateDocument, programName: string, appearance: PortablePopoutAppearance,
+  protectedLocks: ButtonStateDocument["programPopoutThemeLocks"]
+): void {
+  for (const entry of appearance.placements) {
+    if (!packagePlacementMatches(document, programName, entry) || protectedLocks?.[entry.placementId]) continue;
+    if (entry.color || entry.textColor) {
+      document.programPopoutColorOverrides ??= {};
+      document.programPopoutColorOverrides[entry.placementId] = {
+        ...(entry.color ? { surface: entry.color } : {}), ...(entry.textColor ? { text: entry.textColor } : {})
+      };
+    }
+    if (entry.lockedAppearance) {
+      document.programPopoutThemeLocks ??= {};
+      document.programPopoutThemeLocks[entry.placementId] = structuredClone(entry.lockedAppearance);
+    }
+  }
+}
+
 async function runProgramPopoutSettings(
   identity: InstalledPageCoreIdentity,
   current: ButtonStateDocument,
@@ -1091,8 +1202,12 @@ async function runProgramPopoutSettings(
   const existing = captureProgramPopoutThemeSettings(current, identity.programName);
   const key = identity.programName.trim().toLocaleLowerCase("en");
   if (payload.settings === undefined) {
+    const appearance = payload.captureAppearance === true
+      ? capturePortablePopoutAppearance(current, await liveProgramPopoutPaletteScope(current, identity.programName, false), identity.programName)
+      : {};
     return {
       settings: existing as unknown as JsonValue,
+      ...appearance as unknown as Record<string, JsonValue>,
       configured: Boolean(current.programPopoutThemes?.[key]),
       message: "Read popped Button settings."
     };
@@ -1101,9 +1216,23 @@ async function runProgramPopoutSettings(
   if (!settings) throw new Error("Popped Button settings are invalid.");
   const stored = normalizeProgramPopoutThemeSettings(current.programPopoutThemes?.[key]);
   const next = cloneButtonDocument(current);
+  const appearance = payload.buttonAppearance === undefined ? null : normalizePortablePopoutAppearance(payload.buttonAppearance);
   const channels = payload.resetOverrides === true ? ["surface", "text"] as const : changedProgramPopoutColorChannels(stored, settings);
   const cleared = channels.length > 0 && clearProgramPopoutColorOverrides(next, identity.programName, [...channels], true);
-  if (cleared || stableJson(stored) !== stableJson(settings)) {
+  if (appearance) {
+    const scope = await liveProgramPopoutPaletteScope(current, identity.programName, false);
+    next.programPopoutThemes = { ...next.programPopoutThemes, [key]: settings };
+    restorePortablePopoutAppearance(next, identity.programName, appearance, current.programPopoutThemeLocks);
+    const groups = scope.groups.filter(({ backingId }) => backingId !== "canonical").map((group) => {
+      const document = cloneButtonDocument(withCanonicalProgramPopoutThemes(group.document, next));
+      restorePortablePopoutAppearance(document, identity.programName, appearance, group.document.programPopoutThemeLocks);
+      return { ...group, document };
+    });
+    groups.push({ backingId: "canonical", document: next, targets: scope.groups.find(({ backingId }) => backingId === "canonical")?.targets ?? [] });
+    const changedCountByBackingId = new Map(groups.map((group) => [group.backingId,
+      stableJson(group.document) === stableJson(group.backingId === "canonical" ? current : scope.groups.find(({ backingId }) => backingId === group.backingId)!.document) ? 0 : 1]));
+    await commitLiveProgramPopoutPalette(current, { scope: { ...scope, groups }, changedCount: 0, changedCountByBackingId });
+  } else if (cleared || stableJson(stored) !== stableJson(settings)) {
     next.programPopoutThemes = { ...next.programPopoutThemes, [key]: settings };
     const saved = await saveButtonStateDocument(next, current.revision);
     await publishButtonCommit(saved);
@@ -1214,13 +1343,15 @@ async function runButtonThemePalette(
   const live = await liveProgramPopoutPaletteScope(
     current,
     identity.programName,
-    settings.screenTopToBottom || incomingSettings?.screenTopToBottom === true || gradientRequest?.screenTopToBottom === true
+    settings.screenTopToBottom || settings.textScreenTopToBottom === true ||
+      settings.highlightScreenTopToBottom === true || settings.glowScreenTopToBottom === true ||
+      incomingSettings?.screenTopToBottom === true || gradientRequest?.screenTopToBottom === true
   );
   if (operation === "scan") {
     const scan = scanLiveProgramPopoutPalette(live, identity.programName);
     const revision = rememberPopoutPaletteScan(
       identity,
-      liveProgramPopoutPaletteFingerprint(live, identity.programName)
+      liveProgramPopoutPaletteFingerprint(live, identity.programName, scan)
     );
     return popoutPaletteResponse(
       scan,
@@ -1243,7 +1374,7 @@ async function runButtonThemePalette(
     const scan = scanLiveProgramPopoutPalette(committed.scope, identity.programName);
     const revision = rememberPopoutPaletteScan(
       identity,
-      liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName)
+      liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName, scan)
     );
     return popoutPaletteResponse(
       scan,
@@ -1253,6 +1384,46 @@ async function runButtonThemePalette(
       committed.warnings
     );
   }
+  if (operation === "participation") {
+    assertRememberedPopoutPaletteScan(identity, numberValue(payload, "expectedRevision", Number.NaN),
+      liveProgramPopoutPaletteFingerprint(live, identity.programName));
+    const ids = payload.placementIds;
+    if (!Array.isArray(ids) || !ids.length || ids.some((id) => typeof id !== "string") ||
+      new Set(ids).size !== ids.length || typeof payload.enabled !== "boolean") throw new Error("Button participation is invalid.");
+    const known = new Set(live.groups.flatMap(({ targets }) => targets.map(({ paletteId }) => paletteId)));
+    if (ids.some((id) => !known.has(id as string))) throw new Error("Popped Button colors are stale. Press Rescan and try again.");
+    const selected = new Set(ids as string[]);
+    const changedCountByBackingId = new Map<string, number>();
+    let changedCount = 0;
+    const groups = live.groups.map((group) => {
+      const edits = group.targets.filter(({ paletteId }) => selected.has(paletteId))
+        .map(({ paletteId }) => ({ placementId: paletteId, enabled: payload.enabled as boolean }));
+      if (!edits.length) return group;
+      const applied = applyProgramPopoutThemeLocks(group.document, identity.programName, group.targets, edits, live.screenPositions ?? undefined);
+      changedCount += applied.changedCount;
+      changedCountByBackingId.set(group.backingId, applied.changedCount);
+      return { ...group, document: applied.document };
+    });
+    let canonical = groups.find(({ backingId }) => backingId === "canonical") ?? { backingId: "canonical", document: cloneButtonDocument(current), targets: [] };
+    for (const group of groups.filter(({ draftSessionId }) => draftSessionId)) {
+      for (const { paletteId, placementId } of group.targets) {
+        if (!selected.has(paletteId) || current.placements[placementId]?.buttonId !== group.document.placements[placementId]?.buttonId) continue;
+        const before = stableJson(canonical.document.programPopoutThemeLocks?.[placementId]);
+        canonical = { ...canonical, document: cloneButtonDocument(canonical.document) };
+        const lock = group.document.programPopoutThemeLocks?.[placementId];
+        if (lock) {
+          canonical.document.programPopoutThemeLocks ??= {};
+          canonical.document.programPopoutThemeLocks[placementId] = structuredClone(lock);
+        } else if (canonical.document.programPopoutThemeLocks) delete canonical.document.programPopoutThemeLocks[placementId];
+        if (before !== stableJson(lock)) changedCountByBackingId.set("canonical", 1);
+      }
+    }
+    const result = { scope: { ...live, groups: [...groups.filter(({ backingId }) => backingId !== "canonical"), canonical] }, changedCount, changedCountByBackingId };
+    const committed = await commitLiveProgramPopoutPalette(current, result);
+    const scan = scanLiveProgramPopoutPalette(committed.scope, identity.programName);
+    const revision = rememberPopoutPaletteScan(identity, liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName, scan));
+    return popoutPaletteResponse(scan, revision, payload.enabled ? "Selected Buttons follow the theme again." : "Selected Buttons keep their current appearance.", changedCount, committed.warnings);
+  }
   if (operation === "edit") {
     assertRememberedPopoutPaletteScan(identity, numberValue(payload, "expectedRevision", Number.NaN),
       liveProgramPopoutPaletteFingerprint(live, identity.programName));
@@ -1260,7 +1431,7 @@ async function runButtonThemePalette(
     const result = applyLiveProgramPopoutColorEdits(current, live, identity.programName, edits);
     const committed = await commitLiveProgramPopoutPalette(current, result);
     const scan = scanLiveProgramPopoutPalette(committed.scope, identity.programName);
-    const revision = rememberPopoutPaletteScan(identity, liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName));
+    const revision = rememberPopoutPaletteScan(identity, liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName, scan));
     return popoutPaletteResponse(scan, revision, `Updated ${result.changedCount} popped Button appearance${result.changedCount === 1 ? "" : "s"}.`,
       result.changedCount, committed.warnings);
   }
@@ -1292,7 +1463,7 @@ async function runButtonThemePalette(
     const scan = scanLiveProgramPopoutPalette(committed.scope, identity.programName);
     const revision = rememberPopoutPaletteScan(
       identity,
-      liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName)
+      liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName, scan)
     );
     return popoutPaletteResponse(
       scan,
@@ -1320,7 +1491,7 @@ async function runButtonThemePalette(
     const scan = scanLiveProgramPopoutPalette(committed.scope, identity.programName);
     const revision = rememberPopoutPaletteScan(
       identity,
-      liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName)
+      liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName, scan)
     );
     return popoutPaletteResponse(
       scan,
@@ -1670,7 +1841,8 @@ export async function runInstalledPageCoreAction(
   const payload = objectValue(plan.payload, "Installed page Core action payload");
   switch (plan.capability) {
     case "file.select": return runFileSelect(options);
-    case "folder.select": return runFolderSelect(options);
+    case "folder.select": return runFolderSelect(options, payload);
+    case "color.pick-screen": return runScreenColorPick();
     case "image.sample-palette": return runSamplePalette(options, payload);
     case "button-theme.palette": return runButtonThemePalette(identity, options, payload);
     case "tool-fields.save": return runSaveFields(options, payload);

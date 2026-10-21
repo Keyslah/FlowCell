@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "illustrator.layers-builder.archive",
   "label": "archive",
-  "tooltip": "Move highlighted eligible layers into numbered Archive entries.",
+  "tooltip": "Copy each layer owning selected Illustrator artwork into a numbered Archive entry; preserve the originals.",
   "program": "Illustrator",
   "source": "archive.jsx"
 }

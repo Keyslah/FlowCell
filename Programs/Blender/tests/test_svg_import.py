@@ -570,6 +570,8 @@ class IllustratorSvgImportTests(unittest.TestCase):
         self.assertEqual(module.thickness_mm_from_filepath("2connect.svg"), 2.0)
         self.assertEqual(module.thickness_mm_from_filepath("9 display.svg"), 9.0)
         self.assertEqual(module.thickness_mm_from_filepath("3.25Part.svg"), 3.25)
+        self.assertEqual(module.thickness_mm_from_name("3 small"), 3.0)
+        self.assertEqual(module.thickness_mm_from_name("3.25 small"), 3.25)
         self.assertEqual(module.thickness_mm_from_filepath("V9 display.svg"), 1.0)
         self.assertEqual(module.thickness_mm_from_filepath("Part (7).svg"), 1.0)
         self.assertEqual(module.thickness_mm_from_filepath(" (9) display.svg"), 1.0)
@@ -621,7 +623,7 @@ class IllustratorSvgImportTests(unittest.TestCase):
         self.assertEqual(curve.data.resolution_u, 24)
         self.assertEqual(curve.data.splines[0].resolution_u, 24)
 
-    def test_batch_imports_one_mesh_per_svg_and_ignores_extrude_field(self):
+    def test_batch_imports_one_mesh_per_svg_using_layer_name_not_transport_fields(self):
         bpy_module, state, context, original, _ = fake_bpy()
         module = load_module(bpy_module)
 
@@ -637,7 +639,7 @@ class IllustratorSvgImportTests(unittest.TestCase):
                     "items": [
                         {
                             "filepath": str(first_path),
-                            "layerName": "2connect",
+                            "layerName": "3 small",
                             "extrudeMm": 999,
                             "widthMm": 25.4,
                             "heightMm": 12.7,
@@ -661,10 +663,10 @@ class IllustratorSvgImportTests(unittest.TestCase):
         self.assertEqual(result["importedCount"], 2)
         self.assertTrue(result["dimensionsPreserved"])
         self.assertTrue(result["relativePositionsPreserved"])
-        self.assertEqual(result["imported_objects"], ["2connect", "14Main stencil"])
+        self.assertEqual(result["imported_objects"], ["3 small", "14Main stencil"])
         self.assertEqual(
             [item["thicknessMm"] for item in result["results"]],
-            [2.0, 14.0],
+            [3.0, 14.0],
         )
         imported = [obj for obj in state.objects if obj is not original]
         self.assertEqual(len(imported), 2)
@@ -680,7 +682,7 @@ class IllustratorSvgImportTests(unittest.TestCase):
         self.assertTrue(all(obj.data.mesh_updated for obj in imported))
         self.assertTrue(all(obj.selected for obj in imported))
         self.assertFalse(original.selected)
-        self.assertAlmostEqual(imported[0].location.z, 0.001)
+        self.assertAlmostEqual(imported[0].location.z, 0.0015)
         self.assertAlmostEqual(imported[1].location.z, 0.007)
         self.assertAlmostEqual(imported[0].dimensions.x, 0.0254)
         self.assertAlmostEqual(imported[0].dimensions.y, 0.0127)
@@ -1166,7 +1168,7 @@ class IllustratorSvgImportTests(unittest.TestCase):
                         {
                             "filepath": str(svg_path),
                             "layerName": "V9 display",
-                            "extrudeMm": 999,
+                            "extrudeMm": 1,
                             "widthMm": 50.0,
                             "heightMm": 25.0,
                             "offsetXmm": 12.5,

@@ -254,6 +254,8 @@ struct ToolsetFieldManifest {
     filter: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    link_toggle_field: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -329,7 +331,18 @@ fn validate_toolset_service_target(target: &Value, subject: &str) -> Result<(), 
             validate_core_execution_target(subject, target)
         }
         Some("tool-set-action") => {
-            for key in ["programName", "panelName", "ownerFileName", "command"] {
+            // Omitting all three routing keys targets the installing tool set
+            // itself; the frontend fills them from the owner's children.
+            let self_target = ["programName", "panelName", "ownerFileName"]
+                .iter()
+                .all(|key| !object.contains_key(*key));
+            let required: &[&str] = if self_target {
+                &["command"]
+            } else {
+                &["programName", "panelName", "ownerFileName", "command"]
+            };
+            for key in required {
+                let key = *key;
                 if object
                     .get(key)
                     .and_then(Value::as_str)
@@ -393,11 +406,21 @@ fn validate_toolset_field(field: &ToolsetFieldManifest, index: usize) -> Result<
         validate_toolset_service_target(target, &format!("{subject}.serviceTarget"))?;
     }
     if let Some(trigger) = field.service_trigger.as_deref() {
-        if trigger != "change" && trigger != "activate" {
+        if trigger != "change" && trigger != "activate" && trigger != "input" {
             return Err(format!(
-                "Tool-set layout {subject}.serviceTrigger must be 'change' or 'activate'."
+                "Tool-set layout {subject}.serviceTrigger must be 'change', 'activate', or 'input'."
             ));
         }
+        if trigger == "input" && field.kind != "range" {
+            return Err(format!(
+                "Tool-set layout {subject}.serviceTrigger may be 'input' only for range fields."
+            ));
+        }
+    }
+    if field.link_toggle_field.is_some() && field.kind != "range" {
+        return Err(format!(
+            "Tool-set layout {subject}.linkToggleField is supported only for range fields."
+        ));
     }
 
     let reject_irrelevant = |present: bool, key: &str| {
@@ -449,6 +472,48 @@ fn validate_toolset_field(field: &ToolsetFieldManifest, index: usize) -> Result<
                     || field.path_kind.is_some()
                     || field.filter.is_some()
                     || field.format.is_some(),
+                "kind-specific property",
+            )?;
+        }
+        "range" => {
+            let value = field.default_value.as_f64().ok_or_else(|| {
+                format!("Tool-set layout {subject}.defaultValue must be a finite number.")
+            })?;
+            validate_toolset_layout_number(value, &format!("{subject}.defaultValue"))?;
+            let (Some(minimum), Some(maximum)) = (field.minimum, field.maximum) else {
+                return Err(format!(
+                    "Tool-set layout {subject} range fields require minimum and maximum."
+                ));
+            };
+            validate_toolset_layout_number(minimum, &format!("{subject}.minimum"))?;
+            validate_toolset_layout_number(maximum, &format!("{subject}.maximum"))?;
+            if minimum >= maximum {
+                return Err(format!(
+                    "Tool-set layout {subject}.minimum must be less than maximum."
+                ));
+            }
+            if value < minimum || value > maximum {
+                return Err(format!(
+                    "Tool-set layout {subject}.defaultValue must be within minimum..maximum."
+                ));
+            }
+            if field.step.is_some_and(|step| !step.is_finite() || step <= 0.0) {
+                return Err(format!("Tool-set layout {subject}.step must be positive."));
+            }
+            if field
+                .link_toggle_field
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+            {
+                return Err(format!(
+                    "Tool-set layout {subject}.linkToggleField cannot be empty."
+                ));
+            }
+            reject_irrelevant(
+                field.placeholder.is_some()
+                    || field.options.is_some()
+                    || field.path_kind.is_some()
+                    || field.filter.is_some(),
                 "kind-specific property",
             )?;
         }
@@ -657,6 +722,36 @@ fn validate_toolset_layout(
             .iter()
             .any(|candidate| candidate.eq_ignore_ascii_case(field_id.trim()))
     };
+    for field in fields {
+        if let Some(link) = field.link_toggle_field.as_deref() {
+            let linked = fields
+                .iter()
+                .find(|candidate| candidate.id.trim().eq_ignore_ascii_case(link.trim()));
+            if linked.map(|candidate| candidate.kind.as_str()) != Some("toggle") {
+                return Err(format!(
+                    "Tool-set layout field '{}' linkToggleField '{link}' must name a toggle field.",
+                    field.id
+                ));
+            }
+        }
+        let self_command = field.service_target.as_ref().and_then(|target| {
+            let object = target.as_object()?;
+            if object.get("kind").and_then(Value::as_str) != Some("tool-set-action")
+                || object.contains_key("programName")
+            {
+                return None;
+            }
+            object.get("command").and_then(Value::as_str)
+        });
+        if let Some(command) = self_command {
+            if !child_exists(command) {
+                return Err(format!(
+                    "Tool-set layout field '{}' service command '{command}' does not name a declared child slot.",
+                    field.id
+                ));
+            }
+        }
+    }
     if let Some(behaviors) = layout.child_behaviors.as_ref() {
         for (slot, behavior) in behaviors {
             if slot.trim().is_empty() || !child_exists(slot) {
@@ -5134,6 +5229,47 @@ mod tests {
         .layout
         .expect("layout");
         assert!(validate_toolset_layout(&unknown_slot, &children).is_err());
+    }
+
+    #[test]
+    fn toolset_layout_accepts_linked_live_range_fields_targeting_their_tool_set() {
+        let children = layout_test_children();
+        let layout_with = |range: Value| {
+            toolset_manifest_with_layout(json!({
+                "mode":"grid",
+                "fields":[
+                    {"id":"link","kind":"toggle","label":"Link","payloadKey":"link","defaultValue":true,
+                     "x":0,"y":0,"width":20,"height":20,"zIndex":0},
+                    range
+                ]
+            }))
+            .expect("typed range layout")
+            .layout
+            .expect("layout")
+        };
+        let range = json!({
+            "id":"scale_x","kind":"range","label":"X","payloadKey":"scale_x","defaultValue":100,
+            "minimum":0,"maximum":200,"step":1,"linkToggleField":"link","format":"{value}%",
+            "serviceTrigger":"input","serviceTarget":{"kind":"tool-set-action","command":"run"},
+            "x":0,"y":20,"width":200,"height":20,"zIndex":0
+        });
+        assert!(validate_toolset_layout(&layout_with(range.clone()), &children).is_ok());
+
+        let mut unknown_command = range.clone();
+        unknown_command["serviceTarget"]["command"] = json!("missing");
+        assert!(validate_toolset_layout(&layout_with(unknown_command), &children).is_err());
+        let mut partial_route = range.clone();
+        partial_route["serviceTarget"]["programName"] = json!("Windows");
+        assert!(validate_toolset_layout(&layout_with(partial_route), &children).is_err());
+        let mut bad_link = range.clone();
+        bad_link["linkToggleField"] = json!("scale_x");
+        assert!(validate_toolset_layout(&layout_with(bad_link), &children).is_err());
+        let mut inverted = range.clone();
+        inverted["minimum"] = json!(300);
+        assert!(validate_toolset_layout(&layout_with(inverted), &children).is_err());
+        let mut out_of_range = range;
+        out_of_range["defaultValue"] = json!(500);
+        assert!(validate_toolset_layout(&layout_with(out_of_range), &children).is_err());
     }
 
     #[test]

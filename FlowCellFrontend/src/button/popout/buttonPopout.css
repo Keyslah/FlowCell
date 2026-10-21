@@ -110,6 +110,24 @@
   gap: 4px;
 }
 
+.button-popout-renderer .button-tool-field--range input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 40px;
+  cursor: ew-resize;
+  accent-color: #8fb8ff;
+}
+
+.button-popout-renderer .button-tool-field--range output {
+  flex: 0 0 auto;
+  min-width: 4.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.button-popout-renderer .button-tool-field--display output {
+  font-variant-numeric: tabular-nums;
+}
+
 .button-popout-renderer .button-tool-field--toggle {
   justify-content: center;
 }

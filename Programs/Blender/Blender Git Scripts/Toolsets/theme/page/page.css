@@ -177,6 +177,20 @@ select:focus-visible {
   flex: 1 1 320px;
 }
 
+.theme-reference-row {
+  align-items: center;
+}
+
+.theme-package-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
 .theme-palette {
   display: flex;
   flex-wrap: wrap;
@@ -431,6 +445,19 @@ select:focus-visible {
   outline: 1px solid var(--accent);
 }
 
+.gradient-curve__axis {
+  fill: var(--text);
+  font-size: 7px;
+  pointer-events: none;
+}
+
+.gradient-curve__axes-help {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
 .gradient-curve__frame {
   fill: rgba(255, 255, 255, 0.025);
   stroke: rgba(255, 255, 255, 0.2);
@@ -682,6 +709,12 @@ select:focus-visible {
   gap: 3px;
 }
 
+.button-theme-gradient__pick {
+  grid-column: 1 / -1;
+  min-height: 24px;
+  padding: 2px 5px;
+}
+
 .button-theme-gradient__color-inputs input[type="color"] {
   width: 28px;
   min-width: 28px;
@@ -758,6 +791,10 @@ select:focus-visible {
   justify-self: start;
 }
 
+.button-theme-effects input[type="range"] {
+  margin-inline: 0;
+}
+
 .button-theme-bucket {
   display: grid;
   gap: 4px;
@@ -775,6 +812,24 @@ select:focus-visible {
 .button-theme-bucket__label {
   color: var(--muted);
   font-size: 0.62rem;
+  overflow-wrap: anywhere;
+}
+
+.button-theme-bucket__participation {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-right: 8px;
+}
+
+.button-theme-bucket__participation input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.button-theme-bucket__participation span {
+  min-width: 0;
 }
 
 .button-theme-bucket__controls {

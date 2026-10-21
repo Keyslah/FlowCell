@@ -109,7 +109,9 @@
         "requestSchema": {
           "type": "object",
           "additionalProperties": false,
-          "properties": {}
+          "properties": {
+            "initialDirectory": { "type": "string" }
+          }
         },
         "responseSchema": {
           "type": "object",
@@ -140,7 +142,9 @@
         "requestSchema": {
           "type": "object",
           "additionalProperties": false,
-          "properties": {}
+          "properties": {
+            "initialDirectory": { "type": "string" }
+          }
         },
         "responseSchema": {
           "type": "object",

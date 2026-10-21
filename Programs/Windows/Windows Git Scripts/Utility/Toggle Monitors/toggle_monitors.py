@@ -3386,20 +3386,28 @@ class ButtonMonitorToggle:
 
     def side_paths(self, side: int) -> tuple[Path, Path]:
         if side == 1:
-            return self.paths["full"], self.paths["full_no_wireless"]
-        if side == 2:
-            return self.paths["reduced"], self.paths["reduced_no_wireless"]
-        raise DisplayConfigError(f"Unknown Toggle Monitors group: {side}")
+            normal_path, no_wireless_path = self.paths["full"], self.paths["full_no_wireless"]
+        elif side == 2:
+            normal_path, no_wireless_path = self.paths["reduced"], self.paths["reduced_no_wireless"]
+        else:
+            raise DisplayConfigError(f"Unknown Toggle Monitors group: {side}")
+        if self.group_unavailable_labels[side]:
+            connected_keys = json.dumps(sorted(self.group_keys[side]))
+            connected_id = hashlib.sha256(connected_keys.encode("utf-8")).hexdigest()[:16]
+            normal_path = normal_path.with_name(f"{normal_path.stem}-connected-{connected_id}.json")
+            no_wireless_path = no_wireless_path.with_name(f"{no_wireless_path.stem}-connected-{connected_id}.json")
+        return normal_path, no_wireless_path
 
     def saved_side_matches_configuration(self, side: int) -> bool:
         normal_path, _ = self.side_paths(side)
         if not normal_path.exists():
             return False
-        metadata = self.read_metadata()
-        key_name = "full_physical_keys" if side == 1 else "reduced_physical_keys"
-        saved_keys = metadata.get(key_name, [])
-        if not (isinstance(saved_keys, list) and set(map(str, saved_keys)) == set(self.group_keys[side])):
-            return False
+        if not self.group_unavailable_labels[side]:
+            metadata = self.read_metadata()
+            key_name = "full_physical_keys" if side == 1 else "reduced_physical_keys"
+            saved_keys = metadata.get(key_name, [])
+            if not (isinstance(saved_keys, list) and set(map(str, saved_keys)) == set(self.group_keys[side])):
+                return False
         try:
             self.load_matching_side_snapshot(side, normal_path)
         except (OSError, KeyError, TypeError, ValueError, binascii.Error, DisplayConfigError) as error:
@@ -3422,22 +3430,17 @@ class ButtonMonitorToggle:
         expected = set(self.group_keys[side])
         if physical != expected:
             raise DisplayConfigError(f"Refusing to capture an unmatched layout as Group {side}.")
-        if self.group_unavailable_labels[side]:
-            self.logger.info(
-                "Skipping Group %d snapshot capture while configured monitors are unavailable",
-                side,
-            )
-            return
         normal_path, no_wireless_path = self.side_paths(side)
         save_snapshot(snapshot, normal_path)
         save_snapshot(build_no_wireless_snapshot(snapshot), no_wireless_path)
-        prefix = "full" if side == 1 else "reduced"
-        self.write_metadata(
-            **{
-                f"{prefix}_physical_keys": sorted(physical),
-                f"{prefix}_wireless_keys": sorted(wireless),
-            }
-        )
+        if not self.group_unavailable_labels[side]:
+            prefix = "full" if side == 1 else "reduced"
+            self.write_metadata(
+                **{
+                    f"{prefix}_physical_keys": sorted(physical),
+                    f"{prefix}_wireless_keys": sorted(wireless),
+                }
+            )
         self.logger.info("Captured Group %d layout for this Button: %s", side, normal_path)
 
     def verify_group_state(self, side: int, path_array, path_count: int) -> tuple[set[str], set[str]]:

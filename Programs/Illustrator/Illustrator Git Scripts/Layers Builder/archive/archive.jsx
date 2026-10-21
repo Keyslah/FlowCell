@@ -1,23 +1,9 @@
 // FlowCell Layers Builder catalog source.
-// Runs the original Layers script "archive" against the
-// FlowCell-highlighted layers.
+// Copies the owning layers of Illustrator's selected artwork into Archive.
 #target illustrator
 
-#include "flowcell-layer-tree-selection.jsxinc"
-
-var FLOWCELL_LB_TARGETS = FlowCellLayersBuilderSelection.resolveTargets(false);
-
-try {
-// Description: Move the selected Live target into Archive.
-
-#target illustrator
-
-/*
- * Moves selected real sublayers, or selected named objects directly under
- * Live, into Archive > [target name] > AN.
- */
 (function () {
-    var SCRIPT_VERSION = "2026-04-02 15:02";
+    var SCRIPT_VERSION = "2026-10-06 copy selected owner layers";
     var LOG_PATH = Folder.temp.fsName + "/Illustrator_Archive_Debug.log";
 
     if (app.documents.length === 0) {
@@ -35,7 +21,6 @@ try {
 
     try {
         resetLog(doc);
-        roots = ensureRootLayers(doc);
         var targets = resolveTargets(doc);
         var archived = [];
         var skipped = [];
@@ -45,9 +30,11 @@ try {
 
         if (targets.length === 0) {
             logLine("No eligible targets were resolved.");
+            alert("Archive: select artwork in a layer outside Archive first.");
             return;
         }
 
+        roots = { archive: ensureRootLayer(doc, ROOT_ARCHIVE) };
         roots.archive.visible = true;
         roots.archive.locked = false;
 
@@ -71,14 +58,27 @@ try {
 
                 archiveName = getNextNumberedName(archiveContainer, "A");
                 sourceState = captureBranchState(target.layer);
-                var cleanupStartLayer = target.layer.parent && target.layer.parent.typename === "Layer" ? target.layer.parent : null;
-                unlockBranchFromState(sourceState);
-                unlockAncestorLayers(target.layer);
-                unlockAncestorLayers(archiveContainer);
-                target.layer.move(archiveContainer, ElementPlacement.PLACEATBEGINNING);
-                target.layer.name = archiveName;
-                restoreBranchState(sourceState);
-                removeEmptyAncestors(cleanupStartLayer);
+                var ancestorState = captureAncestorState(target.layer);
+                archiveEntry = null;
+                try {
+                    unlockAncestorLayers(target.layer);
+                    unlockBranchFromState(sourceState);
+                    archiveEntry = archiveContainer.layers.add();
+                    archiveEntry.name = archiveName;
+                    copyLayerContents(target.layer, archiveEntry, sourceState);
+                    applyCopiedLayerProperties(target.layer, archiveEntry, sourceState);
+                } catch (copyError) {
+                    // Roll back only the new incomplete copy; never remove source artwork.
+                    if (archiveEntry) {
+                        archiveEntry.locked = false;
+                        archiveEntry.visible = true;
+                        archiveEntry.remove();
+                    }
+                    throw copyError;
+                } finally {
+                    restoreBranchState(sourceState);
+                    restoreBranchState(ancestorState);
+                }
                 archived.push(targetName + " -> " + archiveName);
                 logLine("Archived layer target: " + targetName + " -> Archive/" + targetName + "/" + archiveName);
                 continue;
@@ -112,11 +112,13 @@ try {
     } catch (err) {
         logLine("Exception: " + err);
         writeDebug("Archive failed: " + err);
+        alert("Archive failed: " + err);
     } finally {
+        restoreActiveLayer(doc, originalActiveLayer);
         if (roots) {
-            setSystemLayerState(roots.trash, false, true);
             setSystemLayerState(roots.archive, false, true);
         }
+        try { app.redraw(); } catch (redrawError) {}
         restoreActiveLayer(doc, originalActiveLayer);
     }
 
@@ -130,14 +132,7 @@ try {
     }
 
     function resetLog(documentRef) {
-        var file = new File(LOG_PATH);
-
-        if (file.exists) {
-            try {
-                file.remove();
-            } catch (ignore) {}
-        }
-
+        logLine("--- Archive run ---");
         logLine("Archive version: " + SCRIPT_VERSION);
         logLine("Document: " + safeDocName(documentRef));
         logLine("Active layer: " + getLayerPath(documentRef.activeLayer));
@@ -214,13 +209,17 @@ try {
 
     function resolveTargets(documentRef) {
         var result = [];
-        var layers = FLOWCELL_LB_TARGETS.layers;
+        var selection = normalizeSelection(documentRef.selection);
         var i;
 
-        logLine("Layer Tree target count: " + layers.length);
-        for (i = 0; i < layers.length; i += 1) {
-            if (isEligibleTargetLayer(layers[i])) {
-                addUniqueTarget(result, makeLayerTarget(layers[i]));
+        logLine("Native selection count: " + selection.length);
+        for (i = 0; i < selection.length; i += 1) {
+            if (selection[i].typename === "TextRange" || selection[i].typename === "InsertionPoint") {
+                continue;
+            }
+            var owner = getItemOwningLayer(selection[i]);
+            if (owner && getTopLevelAncestor(owner).name !== ROOT_ARCHIVE) {
+                addUniqueTarget(result, makeLayerTarget(owner));
             }
         }
 
@@ -439,7 +438,7 @@ try {
         }
 
         for (i = 0; i < targets.length; i += 1) {
-            if (targets[i].key === target.key) {
+            if (targets[i].layer === target.layer) {
                 return;
             }
         }
@@ -712,13 +711,27 @@ try {
 
     function captureItemStates(rootLayer, store) {
         var i;
-        for (i = 0; i < rootLayer.pageItems.length; i += 1) {
+        var items = getDirectPageItems(rootLayer);
+        for (i = 0; i < items.length; i += 1) {
             store.push({
-                ref: rootLayer.pageItems[i],
-                locked: rootLayer.pageItems[i].locked,
-                hidden: rootLayer.pageItems[i].hidden
+                ref: items[i],
+                locked: items[i].locked,
+                hidden: items[i].hidden
             });
         }
+        for (i = 0; i < rootLayer.layers.length; i += 1) {
+            captureItemStates(rootLayer.layers[i], store);
+        }
+    }
+
+    function captureAncestorState(layer) {
+        var state = { layers: [], items: [] };
+        var current = layer.parent;
+        while (current && current.typename === "Layer") {
+            state.layers.unshift({ ref: current, visible: current.visible, locked: current.locked });
+            current = current.parent;
+        }
+        return state;
     }
 
     function unlockBranchFromState(state) {
@@ -851,7 +864,6 @@ try {
     }
 
     function copyChildLayer(sourceChild, targetParent, sourceState) {
-        var desiredState = findLayerState(sourceState, sourceChild);
         var targetChild = targetParent.layers.add();
 
         targetChild.name = sourceChild.name;
@@ -860,9 +872,18 @@ try {
 
         copyLayerContents(sourceChild, targetChild, sourceState);
 
+        applyCopiedLayerProperties(sourceChild, targetChild, sourceState);
+    }
+
+    function applyCopiedLayerProperties(sourceLayer, targetLayer, sourceState) {
+        var properties = ["artworkKnockout", "blendingMode", "color", "dimPlacedImages", "opacity", "preview", "printable", "sliced"];
+        for (var i = 0; i < properties.length; i += 1) {
+            try { targetLayer[properties[i]] = sourceLayer[properties[i]]; } catch (propertyError) {}
+        }
+        var desiredState = findLayerState(sourceState, sourceLayer);
         if (desiredState) {
-            targetChild.visible = desiredState.visible;
-            targetChild.locked = desiredState.locked;
+            targetLayer.visible = desiredState.visible;
+            targetLayer.locked = desiredState.locked;
         }
     }
 
@@ -962,8 +983,3 @@ try {
              layer.name === ROOT_TRASH || layer.name === ROOT_ARCHIVE);
     }
 }());
-
-} finally {
-    FlowCellLayersBuilderSelection.restore(FLOWCELL_LB_TARGETS.restore);
-    try { app.redraw(); } catch (redrawError) {}
-}

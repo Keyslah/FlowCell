@@ -20,7 +20,7 @@ import traceback
 import adsk.core
 
 
-ADDIN_VERSION = "1.0.0"
+ADDIN_VERSION = "1.0.1"
 CUSTOM_EVENT_ID = "flowcell.fusion.bridge.request.v1"
 POLL_INTERVAL_SECONDS = 0.075
 HEARTBEAT_INTERVAL_SECONDS = 2.0
@@ -62,7 +62,16 @@ def _atomic_write_json(path, value):
         handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(temp_path, path)
+    # A reader that opened the target without delete sharing makes the replace
+    # fail briefly on Windows; retry instead of dropping the response.
+    for attempt in range(40):
+        try:
+            os.replace(temp_path, path)
+            return
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.005)
 
 
 def _runtime_status(state="ready", **extra):

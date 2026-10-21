@@ -2,12 +2,14 @@ import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   availableMonitors,
   currentMonitor,
+  cursorPosition,
   getCurrentWindow,
   LogicalPosition,
   LogicalSize,
   monitorFromPoint,
   PhysicalPosition,
   PhysicalSize,
+  primaryMonitor,
   Window as TauriWindow
 } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -230,21 +232,49 @@ async function resolveDefaultPlacement(
   };
 }
 
+async function resolveCursorMonitorCenteredBounds(
+  width: number,
+  height: number
+): Promise<FlowCellBounds | null> {
+  const cursor = await cursorPosition().catch(() => null);
+  const monitor = (cursor ? await monitorFromPoint(cursor.x, cursor.y).catch(() => null) : null) ??
+    await primaryMonitor().catch(() => null);
+  if (!monitor) return null;
+  const scale = Number.isFinite(monitor.scaleFactor) && monitor.scaleFactor > 0 ? monitor.scaleFactor : 1;
+  const physicalWidth = Math.max(1, Math.round(width * scale));
+  const physicalHeight = Math.max(1, Math.round(height * scale));
+  const area = monitor.workArea;
+  return {
+    Left: area.position.x + Math.max((area.size.width - physicalWidth) / 2, 0),
+    Top: area.position.y + Math.max((area.size.height - physicalHeight) / 2, 0),
+    Width: physicalWidth,
+    Height: physicalHeight
+  };
+}
+
 async function resolveDefaultContentBounds(
   width: number,
   height: number
 ): Promise<FlowCellBounds> {
   const currentWindow = getCurrentWindow();
   const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
-  const [position, size] = await Promise.all([
+  const [position, size, minimized] = await Promise.all([
     currentWindow.outerPosition().catch(() => null),
-    currentWindow.innerSize().catch(() => null)
+    currentWindow.innerSize().catch(() => null),
+    currentWindow.isMinimized().catch(() => false)
   ]);
   const normalizedScale = Number.isFinite(scaleFactor) && scaleFactor > 0
     ? scaleFactor
     : 1;
   const physicalWidth = Math.max(1, Math.round(width * normalizedScale));
   const physicalHeight = Math.max(1, Math.round(height * normalizedScale));
+
+  // A minimized opener (e.g. Main while a tool-set hotkey fires) reports its
+  // off-screen parking position; center on the monitor under the cursor instead.
+  if (minimized || (position && (position.x <= -30000 || position.y <= -30000))) {
+    const centered = await resolveCursorMonitorCenteredBounds(width, height);
+    if (centered) return centered;
+  }
 
   if (!position || !size) {
     return {

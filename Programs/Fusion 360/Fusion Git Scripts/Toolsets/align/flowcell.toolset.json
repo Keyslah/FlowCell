@@ -1,37 +1,316 @@
 {
   "schemaVersion": 1,
   "id": "fusion360.align",
-  "version": "1.0.1",
+  "version": "1.1.1",
   "label": "align",
-  "tooltip": "Align selected native root bodies or component occurrences to the last-selected reference.",
+  "tooltip": "Align to the last-selected body, component, or face (a face counts as its whole body); Shift: world origin.",
   "kind": "toolset",
   "program": "Fusion 360",
   "source": "align.py",
   "bridgeData": {},
   "children": [
-    { "slot": "z_min", "label": "Z Min", "tooltip": "Align target minimum Z bounds to the last-selected reference minimum Z bound.", "payload": { "command": "z_min", "action": "z_min" } },
-    { "slot": "z_center", "label": "Z Center", "tooltip": "Align target Z centers to the last-selected reference Z center.", "payload": { "command": "z_center", "action": "z_center" } },
-    { "slot": "z_max", "label": "Z Max", "tooltip": "Align target maximum Z bounds to the last-selected reference maximum Z bound.", "payload": { "command": "z_max", "action": "z_max" } },
-    { "slot": "z_surface", "label": "Z Surface", "tooltip": "Place each target against the nearest opposing Z surface of the last-selected reference.", "payload": { "command": "z_surface", "action": "z_surface" } },
-    { "slot": "z_geo", "label": "Z Origin", "tooltip": "Align each target component origin to the last-selected reference Z center.", "payload": { "command": "z_geo", "action": "z_geo" } },
-    { "slot": "y_min", "label": "Y Min", "tooltip": "Align target minimum Y bounds to the last-selected reference minimum Y bound.", "payload": { "command": "y_min", "action": "y_min" } },
-    { "slot": "y_center", "label": "Y Center", "tooltip": "Align target Y centers to the last-selected reference Y center.", "payload": { "command": "y_center", "action": "y_center" } },
-    { "slot": "y_max", "label": "Y Max", "tooltip": "Align target maximum Y bounds to the last-selected reference maximum Y bound.", "payload": { "command": "y_max", "action": "y_max" } },
-    { "slot": "y_surface", "label": "Y Surface", "tooltip": "Place each target against the nearest opposing Y surface of the last-selected reference.", "payload": { "command": "y_surface", "action": "y_surface" } },
-    { "slot": "y_geo", "label": "Y Origin", "tooltip": "Align each target component origin to the last-selected reference Y center.", "payload": { "command": "y_geo", "action": "y_geo" } },
-    { "slot": "x_min", "label": "X Min", "tooltip": "Align target minimum X bounds to the last-selected reference minimum X bound.", "payload": { "command": "x_min", "action": "x_min" } },
-    { "slot": "x_center", "label": "X Center", "tooltip": "Align target X centers to the last-selected reference X center.", "payload": { "command": "x_center", "action": "x_center" } },
-    { "slot": "x_max", "label": "X Max", "tooltip": "Align target maximum X bounds to the last-selected reference maximum X bound.", "payload": { "command": "x_max", "action": "x_max" } },
-    { "slot": "x_surface", "label": "X Surface", "tooltip": "Place each target against the nearest opposing X surface of the last-selected reference.", "payload": { "command": "x_surface", "action": "x_surface" } },
-    { "slot": "x_geo", "label": "X Origin", "tooltip": "Align each target component origin to the last-selected reference X center.", "payload": { "command": "x_geo", "action": "x_geo" } },
-    { "slot": "center_everything", "label": "Center Everything", "tooltip": "Center all targets on the last-selected reference across X, Y, and Z.", "payload": { "command": "center_everything", "action": "center_everything" } },
-    { "slot": "center_xy", "label": "X+Y", "tooltip": "Center all targets on the last-selected reference in X and Y without changing Z.", "payload": { "command": "center_xy", "action": "center_xy" } }
+    {
+      "slot": "x_min",
+      "label": "X Min",
+      "tooltip": "Align to the last-selected reference; Shift: world origin.",
+      "payload": {
+        "command": "x_min",
+        "action": "x_min"
+      }
+    },
+    {
+      "slot": "x_center",
+      "label": "Center",
+      "tooltip": "Center bounds; Alt: align component origins to the reference origin. Shift: world origin.",
+      "payload": {
+        "command": "x_center",
+        "action": "x_center"
+      }
+    },
+    {
+      "slot": "x_max",
+      "label": "X Max",
+      "tooltip": "Align to the last-selected reference; Shift: world origin.",
+      "payload": {
+        "command": "x_max",
+        "action": "x_max"
+      }
+    },
+    {
+      "slot": "x_surface",
+      "label": "Surface",
+      "tooltip": "Move to the opposite outside X face; every click alternates Min/Max.",
+      "payload": {
+        "command": "x_surface",
+        "action": "x_surface"
+      }
+    },
+    {
+      "slot": "x_geo",
+      "label": "Origin",
+      "tooltip": "Move each component origin (body center for bodies) to the opposite Min/Max reference face; every click alternates.",
+      "payload": {
+        "command": "x_geo",
+        "action": "x_geo"
+      }
+    },
+    {
+      "slot": "y_min",
+      "label": "Y Min",
+      "tooltip": "Align to the last-selected reference; Shift: world origin.",
+      "payload": {
+        "command": "y_min",
+        "action": "y_min"
+      }
+    },
+    {
+      "slot": "y_center",
+      "label": "Center",
+      "tooltip": "Center bounds; Alt: align component origins to the reference origin. Shift: world origin.",
+      "payload": {
+        "command": "y_center",
+        "action": "y_center"
+      }
+    },
+    {
+      "slot": "y_max",
+      "label": "Y Max",
+      "tooltip": "Align to the last-selected reference; Shift: world origin.",
+      "payload": {
+        "command": "y_max",
+        "action": "y_max"
+      }
+    },
+    {
+      "slot": "y_surface",
+      "label": "Surface",
+      "tooltip": "Move to the opposite outside Y face; every click alternates Min/Max.",
+      "payload": {
+        "command": "y_surface",
+        "action": "y_surface"
+      }
+    },
+    {
+      "slot": "y_geo",
+      "label": "Origin",
+      "tooltip": "Move each component origin (body center for bodies) to the opposite Min/Max reference face; every click alternates.",
+      "payload": {
+        "command": "y_geo",
+        "action": "y_geo"
+      }
+    },
+    {
+      "slot": "z_min",
+      "label": "Z Min",
+      "tooltip": "Align to the last-selected reference; Shift: world origin.",
+      "payload": {
+        "command": "z_min",
+        "action": "z_min"
+      }
+    },
+    {
+      "slot": "z_center",
+      "label": "Center",
+      "tooltip": "Center bounds; Alt: align component origins to the reference origin. Shift: world origin.",
+      "payload": {
+        "command": "z_center",
+        "action": "z_center"
+      }
+    },
+    {
+      "slot": "z_max",
+      "label": "Z Max",
+      "tooltip": "Align to the last-selected reference; Shift: world origin.",
+      "payload": {
+        "command": "z_max",
+        "action": "z_max"
+      }
+    },
+    {
+      "slot": "z_surface",
+      "label": "Surface",
+      "tooltip": "Move to the opposite outside Z face; every click alternates Min/Max.",
+      "payload": {
+        "command": "z_surface",
+        "action": "z_surface"
+      }
+    },
+    {
+      "slot": "z_geo",
+      "label": "Origin",
+      "tooltip": "Move each component origin (body center for bodies) to the opposite Min/Max reference face; every click alternates.",
+      "payload": {
+        "command": "z_geo",
+        "action": "z_geo"
+      }
+    },
+    {
+      "slot": "center_everything",
+      "label": "All",
+      "tooltip": "Center on X, Y, and Z; Alt: align component origins. Shift: world origin.",
+      "payload": {
+        "command": "center_everything",
+        "action": "center_everything"
+      }
+    },
+    {
+      "slot": "center_xy",
+      "label": "X-Y",
+      "tooltip": "Center on X and Y without changing Z; Alt: align component origins. Shift: world origin.",
+      "payload": {
+        "command": "center_xy",
+        "action": "center_xy"
+      }
+    },
+    {
+      "slot": "group",
+      "label": "Group",
+      "tooltip": "Keep the moving selections together using their combined bounding box.",
+      "payload": {
+        "command": "group",
+        "action": "group"
+      }
+    }
   ],
   "layout": {
     "mode": "grid",
-    "columns": 4,
-    "gap": 8,
-    "padding": 8,
-    "updatePolicy": { "appendMissingChildSlots": true }
+    "width": 448,
+    "height": 184,
+    "placements": {
+      "x_min": {
+        "x": 8,
+        "y": 8,
+        "width": 80,
+        "height": 36
+      },
+      "x_center": {
+        "x": 96,
+        "y": 8,
+        "width": 80,
+        "height": 36
+      },
+      "x_max": {
+        "x": 184,
+        "y": 8,
+        "width": 80,
+        "height": 36
+      },
+      "x_surface": {
+        "x": 272,
+        "y": 8,
+        "width": 80,
+        "height": 36
+      },
+      "x_geo": {
+        "x": 360,
+        "y": 8,
+        "width": 80,
+        "height": 36
+      },
+      "y_min": {
+        "x": 8,
+        "y": 52,
+        "width": 80,
+        "height": 36
+      },
+      "y_center": {
+        "x": 96,
+        "y": 52,
+        "width": 80,
+        "height": 36
+      },
+      "y_max": {
+        "x": 184,
+        "y": 52,
+        "width": 80,
+        "height": 36
+      },
+      "y_surface": {
+        "x": 272,
+        "y": 52,
+        "width": 80,
+        "height": 36
+      },
+      "y_geo": {
+        "x": 360,
+        "y": 52,
+        "width": 80,
+        "height": 36
+      },
+      "z_min": {
+        "x": 8,
+        "y": 96,
+        "width": 80,
+        "height": 36
+      },
+      "z_center": {
+        "x": 96,
+        "y": 96,
+        "width": 80,
+        "height": 36
+      },
+      "z_max": {
+        "x": 184,
+        "y": 96,
+        "width": 80,
+        "height": 36
+      },
+      "z_surface": {
+        "x": 272,
+        "y": 96,
+        "width": 80,
+        "height": 36
+      },
+      "z_geo": {
+        "x": 360,
+        "y": 96,
+        "width": 80,
+        "height": 36
+      },
+      "center_everything": {
+        "x": 8,
+        "y": 140,
+        "width": 138.66666666666666,
+        "height": 36
+      },
+      "center_xy": {
+        "x": 154.66666666666666,
+        "y": 140,
+        "width": 138.66666666666666,
+        "height": 36
+      },
+      "group": {
+        "x": 301.3333333333333,
+        "y": 140,
+        "width": 138.66666666666666,
+        "height": 36
+      }
+    },
+    "fields": [
+      {
+        "id": "group",
+        "kind": "toggle",
+        "label": "Group selection",
+        "payloadKey": "group",
+        "defaultValue": false,
+        "x": 0,
+        "y": 0,
+        "width": 80,
+        "height": 36,
+        "zIndex": 0,
+        "hidden": true
+      }
+    ],
+    "childBehaviors": {
+      "group": {
+        "toggleFields": [
+          "group"
+        ],
+        "execute": false
+      }
+    },
+    "updatePolicy": {
+      "appendMissingChildSlots": true
+    }
   }
 }

@@ -991,6 +991,174 @@ class ToggleMonitorEngineTests(unittest.TestCase):
                 toggle.toggle_once()
             switch.assert_called_once_with(2, active_snapshot, active_paths, active_modes, 1)
 
+    def test_partial_group_restores_portrait_layout_across_toggle_instances(self):
+        portrait_path = make_path(2, 2, 1)
+        portrait_path.targetInfo.rotation = 2
+        portrait_snapshot, portrait_paths, portrait_modes = make_snapshot(
+            [make_path(1, 1, 0), portrait_path],
+            [make_source_mode(1, 0, 0, 1920, 1080), make_source_mode(2, 1920, -350, 1080, 1920)],
+        )
+        dummy_snapshot, dummy_paths, _ = make_snapshot(
+            [make_path(9, 9, 0)],
+            [make_source_mode(9, 0, 0, 1920, 1080)],
+        )
+        group_1 = [tm.encode_target_descriptor(self.descriptor(target_id)) for target_id in (1, 2, 3)]
+        group_2 = [tm.encode_target_descriptor(self.descriptor(9))]
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary)
+            outgoing = tm.ButtonMonitorToggle(mock.Mock(), group_1, group_2, state_root)
+            outgoing.group_keys[1] = [self.descriptor(target_id).identity_key() for target_id in (1, 2)]
+            outgoing.group_unavailable_labels[1] = ["Monitor 3"]
+            outgoing.capture_side_layout(1, portrait_snapshot, portrait_paths)
+
+            returning = tm.ButtonMonitorToggle(mock.Mock(), group_1, group_2, state_root)
+            returning.group_keys[1] = list(outgoing.group_keys[1])
+            returning.group_descriptors[1] = [self.descriptor(target_id) for target_id in (1, 2)]
+            returning.group_unavailable_labels[1] = ["Monitor 3"]
+            with (
+                mock.patch.object(tm, "apply_snapshot_exact") as apply_exact,
+                mock.patch.object(tm, "validate_and_apply_topology") as apply_topology,
+                mock.patch.object(
+                    tm,
+                    "query_display_config",
+                    return_value=(portrait_snapshot, portrait_paths, portrait_modes),
+                ) as query_all,
+                mock.patch.object(
+                    returning,
+                    "query_active",
+                    return_value=(portrait_snapshot, portrait_paths, portrait_modes),
+                ),
+            ):
+                returning.activate_side(1, dummy_snapshot, dummy_paths)
+
+            apply_exact.assert_called_once()
+            self.assertFalse(apply_exact.call_args.kwargs["save_to_database"])
+            restored = apply_exact.call_args.args[0]
+            self.assertEqual(restored.to_json(), portrait_snapshot.to_json())
+            restored_portrait = restored.path_array()[1]
+            restored_source = tm.source_mode_for_path(restored_portrait, restored.mode_array()).sourceMode
+            self.assertEqual(restored_portrait.targetInfo.rotation, 2)
+            self.assertEqual((restored_source.width, restored_source.height), (1080, 1920))
+            self.assertEqual((restored_source.position.x, restored_source.position.y), (1920, -350))
+            apply_topology.assert_not_called()
+            query_all.assert_not_called()
+            self.assertTrue(returning.saved_side_matches_configuration(1))
+
+    def test_partial_group_capture_preserves_complete_layout_and_reconnect_restore(self):
+        complete_snapshot, complete_paths, _ = make_snapshot(
+            [make_path(1, 1, 0), make_path(2, 2, 1)],
+            [make_source_mode(1, 0, 0, 1920, 1080), make_source_mode(2, 1920, 0, 1920, 1080)],
+        )
+        partial_path = make_path(1, 1, 0)
+        partial_path.targetInfo.rotation = 2
+        partial_snapshot, partial_paths, _ = make_snapshot(
+            [partial_path],
+            [make_source_mode(1, 0, 0, 1080, 1920)],
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["group-1"], ["group-2"], Path(temporary))
+            complete_keys = [self.descriptor(target_id).identity_key() for target_id in (1, 2)]
+            toggle.group_keys[1] = complete_keys
+            toggle.capture_side_layout(1, complete_snapshot, complete_paths)
+            complete_files = toggle.side_paths(1)
+            original_files = {path: path.read_bytes() for path in (*complete_files, toggle.paths["metadata"])}
+
+            toggle.group_keys[1] = complete_keys[:1]
+            toggle.group_unavailable_labels[1] = ["Monitor 2"]
+            toggle.capture_side_layout(1, partial_snapshot, partial_paths)
+            self.assertTrue(toggle.saved_side_matches_configuration(1))
+            self.assertNotEqual(toggle.side_paths(1), complete_files)
+            for path, original in original_files.items():
+                self.assertEqual(path.read_bytes(), original)
+
+            toggle.group_keys[1] = complete_keys
+            toggle.group_unavailable_labels[1] = []
+            self.assertEqual(toggle.side_paths(1), complete_files)
+            self.assertTrue(toggle.saved_side_matches_configuration(1))
+            with mock.patch.object(tm, "apply_snapshot_exact") as apply_exact:
+                toggle.apply_saved_side(1)
+            apply_exact.assert_called_once()
+            self.assertEqual(apply_exact.call_args.args[0].to_json(), complete_snapshot.to_json())
+            self.assertFalse(apply_exact.call_args.kwargs["save_to_database"])
+
+    def test_partial_group_caches_are_isolated_by_connected_monitor_set(self):
+        first_snapshot, first_paths, _ = make_snapshot(
+            [make_path(1, 1, 0), make_path(2, 2, 1)],
+            [make_source_mode(1, 0, 0, 1920, 1080), make_source_mode(2, 1920, 0, 1920, 1080)],
+        )
+        second_snapshot, second_paths, _ = make_snapshot(
+            [make_path(1, 1, 0), make_path(3, 3, 1)],
+            [make_source_mode(1, 0, 0, 1920, 1080), make_source_mode(3, -1920, 0, 1920, 1080)],
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["group-1"], ["group-2"], Path(temporary))
+            first_keys = [self.descriptor(target_id).identity_key() for target_id in (1, 2)]
+            toggle.group_keys[1] = first_keys
+            toggle.group_unavailable_labels[1] = ["Monitor 3"]
+            first_files = toggle.side_paths(1)
+            toggle.group_keys[1] = list(reversed(first_keys))
+            self.assertEqual(toggle.side_paths(1), first_files)
+            toggle.capture_side_layout(1, first_snapshot, first_paths)
+            self.assertTrue(toggle.saved_side_matches_configuration(1))
+            original_files = {path: path.read_bytes() for path in first_files}
+
+            toggle.group_keys[1] = [self.descriptor(target_id).identity_key() for target_id in (1, 3)]
+            toggle.group_unavailable_labels[1] = ["Monitor 2"]
+            self.assertNotEqual(toggle.side_paths(1), first_files)
+            self.assertFalse(toggle.saved_side_matches_configuration(1))
+            toggle.capture_side_layout(1, second_snapshot, second_paths)
+            self.assertTrue(toggle.saved_side_matches_configuration(1))
+            for path, original in original_files.items():
+                self.assertEqual(path.read_bytes(), original)
+
+            toggle.group_keys[1] = first_keys
+            toggle.group_unavailable_labels[1] = ["Monitor 3"]
+            with mock.patch.object(tm, "apply_snapshot_exact") as apply_exact:
+                toggle.apply_saved_side(1)
+            self.assertEqual(apply_exact.call_args.args[0].to_json(), first_snapshot.to_json())
+
+    def test_partial_group_rejects_snapshot_with_different_monitor_identities(self):
+        wrong_snapshot, _, _ = make_snapshot(
+            [make_path(2, 2, 0)],
+            [make_source_mode(2, 0, 0, 1920, 1080)],
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["group-1"], ["group-2"], Path(temporary))
+            toggle.group_keys[1] = [self.descriptor(1).identity_key()]
+            toggle.group_unavailable_labels[1] = ["Monitor 3"]
+            normal_path, _ = toggle.side_paths(1)
+            tm.save_snapshot(wrong_snapshot, normal_path)
+            self.assertFalse(toggle.saved_side_matches_configuration(1))
+            with mock.patch.object(tm, "apply_snapshot_exact") as apply_exact:
+                with self.assertRaisesRegex(tm.DisplayConfigError, "do not match"):
+                    toggle.apply_saved_side(1)
+            apply_exact.assert_not_called()
+
+    def test_partial_group_restores_saved_no_wireless_fallback(self):
+        portrait_path = make_path(1, 1, 0)
+        portrait_path.targetInfo.rotation = 2
+        exact_snapshot, exact_paths, _ = make_snapshot(
+            [portrait_path, make_path(9, 9, 1, wireless=True)],
+            [make_source_mode(1, 0, 0, 1080, 1920), make_source_mode(9, 1080, 0, 1920, 1080)],
+        )
+        fallback_snapshot = tm.build_no_wireless_snapshot(exact_snapshot)
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["group-1"], ["group-2"], Path(temporary))
+            toggle.group_keys[1] = [self.descriptor(1).identity_key()]
+            toggle.group_unavailable_labels[1] = ["Monitor 2"]
+            toggle.capture_side_layout(1, exact_snapshot, exact_paths)
+            self.assertTrue(toggle.saved_side_matches_configuration(1))
+            with mock.patch.object(
+                tm,
+                "apply_snapshot_exact",
+                side_effect=[tm.DisplayConfigError("wireless unavailable"), None],
+            ) as apply_exact:
+                toggle.apply_saved_side(1)
+            self.assertEqual(apply_exact.call_count, 2)
+            self.assertEqual(apply_exact.call_args_list[0].args[0].to_json(), exact_snapshot.to_json())
+            self.assertEqual(apply_exact.call_args_list[1].args[0].to_json(), fallback_snapshot.to_json())
+            self.assertTrue(all(not call.kwargs["save_to_database"] for call in apply_exact.call_args_list))
+
     def test_disconnected_effective_groups_still_fail_when_empty_or_identical(self):
         one = tm.encode_target_descriptor(self.descriptor(1))
         two = tm.encode_target_descriptor(self.descriptor(2))

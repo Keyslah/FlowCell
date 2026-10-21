@@ -1,4 +1,5 @@
 import { isButtonWindowCloseOffset } from "../windows/buttonWindowCloseControl.js";
+import { isButtonActivationAnimationPresetId } from "../animations/buttonActivationAnimations.js";
 import type {
   ButtonActivationBehavior,
   ButtonActivationAnimation,
@@ -14,6 +15,7 @@ import type {
   ButtonStateDocument,
   ButtonSurface,
   ButtonSurfaceKind,
+  ButtonThemeOverride,
   ProgramPopoutColorOverride,
   ToolSetButtonPopoutUnit,
   ButtonWindowFitMode
@@ -22,7 +24,7 @@ import { cloneButtonDocument } from "./buttonDefaults.js";
 import { validateButtonStateDocument } from "./buttonStateValidation.js";
 import { deriveRegularPopoutSelectionKey } from "./sourceIdentity.js";
 import { resolveButtonWindowEnvelope } from "../windows/buttonWindowGeometry.js";
-import { normalizeProgramPopoutColorOverride } from "../../theme/programPopoutTheme.js";
+import { normalizeProgramPopoutColorOverride, normalizeProgramPopoutThemeLock } from "../../theme/programPopoutTheme.js";
 
 export const BUTTON_SETTINGS_FILE_FORMAT = "flowcell-button-settings/v1" as const;
 export const BUTTON_SETTINGS_FILE_EXTENSION = ".json" as const;
@@ -53,6 +55,7 @@ export interface ButtonSettingsFileEntry {
   skin: ButtonSkin;
   placement: ButtonSettingsFilePlacement;
   popoutColorOverride?: ProgramPopoutColorOverride;
+  popoutThemeLock?: ButtonThemeOverride;
 }
 
 interface ButtonSettingsMainPageBehavior {
@@ -291,7 +294,7 @@ function validateAnimation(value: unknown, path: string, issues: string[]): void
     return;
   }
   hasExactKeys(value, ["presetId", "desktopBounds"], path, issues);
-  if (value.presetId !== "plus-rise") {
+  if (!isButtonActivationAnimationPresetId(value.presetId)) {
     issues.push(`${path}.presetId: Unsupported activation-animation preset.`);
   }
   validateBounds(value.desktopBounds, `${path}.desktopBounds`, issues);
@@ -695,7 +698,8 @@ export function validateButtonSettingsFile(value: unknown): ButtonSettingsFileVa
           "activationAnimation",
           "skin",
           "placement",
-          ...(Object.hasOwn(entry, "popoutColorOverride") ? ["popoutColorOverride"] : [])
+          ...(Object.hasOwn(entry, "popoutColorOverride") ? ["popoutColorOverride"] : []),
+          ...(Object.hasOwn(entry, "popoutThemeLock") ? ["popoutThemeLock"] : [])
         ],
         path,
         issues
@@ -721,6 +725,10 @@ export function validateButtonSettingsFile(value: unknown): ButtonSettingsFileVa
       if (Object.hasOwn(entry, "popoutColorOverride") &&
         (placementKind === "main-page" || !normalizeProgramPopoutColorOverride(entry.popoutColorOverride))) {
         issues.push(`${path}.popoutColorOverride: Expected valid popped Button surface or text colors.`);
+      }
+      if (Object.hasOwn(entry, "popoutThemeLock") &&
+        (placementKind === "main-page" || !normalizeProgramPopoutThemeLock(entry.popoutThemeLock))) {
+        issues.push(`${path}.popoutThemeLock: Expected valid frozen popped Button appearance.`);
       }
       if (entry.activationBehavior !== null && !isObject(entry.activationBehavior)) {
         issues.push(`${path}.activationBehavior: Expected null or an activation-behavior object.`);
@@ -851,6 +859,9 @@ export function buildButtonSettingsFile(
       skin: structuredClone(skin),
       ...(document.programPopoutColorOverrides?.[placementId]
         ? { popoutColorOverride: normalizeProgramPopoutColorOverride(document.programPopoutColorOverrides[placementId])! }
+        : {}),
+      ...(document.programPopoutThemeLocks?.[placementId]
+        ? { popoutThemeLock: normalizeProgramPopoutThemeLock(document.programPopoutThemeLocks[placementId])! }
         : {}),
       placement: {
         ...structuredClone(placementSettings),
@@ -1239,6 +1250,7 @@ export function applyButtonSettingsFile(
   for (const placement of previousPlacements) {
     delete next.placements[placement.id];
     if (next.programPopoutColorOverrides) delete next.programPopoutColorOverrides[placement.id];
+    if (next.programPopoutThemeLocks) delete next.programPopoutThemeLocks[placement.id];
   }
 
   nextSurface.name = file.surface.name;
@@ -1281,6 +1293,10 @@ export function applyButtonSettingsFile(
       next.programPopoutColorOverrides[placementId] = normalizeProgramPopoutColorOverride(entry.popoutColorOverride)!;
       next.programPopoutColorOverrideRevisions ??= {};
       next.programPopoutColorOverrideRevisions[normalized(context.programName)] ??= { surface: 0, text: 0 };
+    }
+    if (entry.popoutThemeLock) {
+      next.programPopoutThemeLocks ??= {};
+      next.programPopoutThemeLocks[placementId] = normalizeProgramPopoutThemeLock(entry.popoutThemeLock)!;
     }
   }
 
@@ -1550,6 +1566,10 @@ export function buildTransientButtonPopoutSettingsDocument(
       working.programPopoutColorOverrides[placementId] = normalizeProgramPopoutColorOverride(entry.popoutColorOverride)!;
       working.programPopoutColorOverrideRevisions ??= {};
       working.programPopoutColorOverrideRevisions[normalized(context.programName)] ??= { surface: 0, text: 0 };
+    }
+    if (entry.popoutThemeLock) {
+      working.programPopoutThemeLocks ??= {};
+      working.programPopoutThemeLocks[placementId] = normalizeProgramPopoutThemeLock(entry.popoutThemeLock)!;
     }
   }
   const transientOwnerPlacementId = file.behavior.ownerPlacementId

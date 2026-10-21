@@ -72,6 +72,7 @@ import {
 } from "../state/ButtonDraftBus";
 import { validateButtonStateDocument } from "../state/buttonStateValidation";
 import { validateInstalledButtonLayout } from "../state/installedButtonLayoutValidation";
+import { resolveInstalledToolFields } from "../state/installedToolFields";
 import {
   ensureRegularPopout,
   resolveDiscardedStagedOwnerButtonIds
@@ -532,7 +533,7 @@ function addInstalledToolSet(
     windowFitMode: "surface",
     ownerButtonId: result.ownerButtonId,
     childButtonIds,
-    fields: cloneButtonDocument(layout?.fields ?? [])
+    fields: resolveInstalledToolFields(layout?.fields, result.children)
   };
   return { ownerPlacement, popoutSurfaceId: surface.id };
 }

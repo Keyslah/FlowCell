@@ -13,8 +13,9 @@ import {
   PhysicalSize
 } from "@tauri-apps/api/window";
 import type { ButtonAnimationWindowContext } from "../../lib/windowContext";
-import type { ButtonDesktopBounds } from "../types";
+import type { ButtonActivationAnimationPresetId, ButtonDesktopBounds } from "../types";
 import plusRiseSpriteUrl from "../../assets/button-animations/plus-rise.png";
+import starWarsLightsaberUrl from "../../assets/button-animations/star-wars-lightsaber.gif";
 import {
   buildPlusRiseAnimationFrames,
   BUTTON_ANIMATION_MINIMUM_EDITOR_WIDTH,
@@ -69,6 +70,11 @@ export default function ButtonAnimationWindowPage({
   const resizePendingRef = useRef(false);
   const resizeRunningRef = useRef(false);
   const preset = getButtonActivationAnimationPreset(context.presetId);
+  const gifPlayback = preset.id === "star-wars-lightsaber";
+  // A distinct resource URL restarts the GIF even when this native window is reused.
+  const imageUrl = gifPlayback
+    ? `${starWarsLightsaberUrl}?play=${encodeURIComponent(context.requestId)}`
+    : plusRiseSpriteUrl;
   const editing = context.mode === "edit";
   const stageStyle = {
     "--button-animation-sprite-top": `${(
@@ -95,8 +101,9 @@ export default function ButtonAnimationWindowPage({
 
   const startPlayback = useCallback(async (
     requestId: string,
-    durationMs: number
+    presetId: ButtonActivationAnimationPresetId
   ) => {
+    const { durationMs } = getButtonActivationAnimationPreset(presetId);
     clearHideTimer();
     playbackAnimationRef.current?.cancel();
     playbackAnimationRef.current = null;
@@ -107,6 +114,12 @@ export default function ButtonAnimationWindowPage({
     await currentWindow.setAlwaysOnTop(true).catch(() => {});
     await currentWindow.show().catch(() => {});
     if (activeRequestIdRef.current !== requestId || !imageRef.current) return;
+    if (presetId === "star-wars-lightsaber") {
+      hideTimerRef.current = window.setTimeout(() => {
+        void hideWindow(requestId);
+      }, durationMs);
+      return;
+    }
     const animation = imageRef.current.animate(
       buildPlusRiseAnimationFrames().map((frame) => ({
         offset: frame.offset,
@@ -154,13 +167,13 @@ export default function ButtonAnimationWindowPage({
     if (!contextArmed) return;
     activeRequestIdRef.current = context.requestId;
     if (context.mode === "play") {
-      void startPlayback(context.requestId, preset.durationMs);
+      void startPlayback(context.requestId, context.presetId);
       return;
     }
     playbackAnimationRef.current?.cancel();
     playbackAnimationRef.current = null;
     clearHideTimer();
-  }, [clearHideTimer, context, contextArmed, preset.durationMs, startPlayback]);
+  }, [clearHideTimer, context, contextArmed, startPlayback]);
 
   useEffect(() => () => {
     activeRequestIdRef.current = null;
@@ -277,7 +290,7 @@ export default function ButtonAnimationWindowPage({
 
   return (
     <div
-      className={`button-animation-window button-animation-window--${context.mode}`}
+      className={`button-animation-window button-animation-window--${context.mode}${gifPlayback ? " button-animation-window--gif" : ""}`}
       onPointerDown={editing ? handleDragStart : undefined}
     >
       <div className="button-animation-window__stage" style={stageStyle}>
@@ -285,7 +298,7 @@ export default function ButtonAnimationWindowPage({
           key={`${context.mode}-${context.requestId}`}
           ref={imageRef}
           className="button-animation-window__sprite"
-          src={plusRiseSpriteUrl}
+          src={imageUrl}
           alt=""
           draggable={false}
         />

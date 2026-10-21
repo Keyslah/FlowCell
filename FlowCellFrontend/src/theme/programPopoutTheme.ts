@@ -7,6 +7,8 @@ import type {
   ProgramPopoutThemeSettings
 } from "../button/types.js";
 import {
+  BUTTON_GLOW_AMOUNT_MAX,
+  BUTTON_HIGHLIGHT_AMOUNT_MAX,
   buttonSkinOpaqueColor,
   collectButtonSkinProfileColors,
   normalizeButtonGlowAmount,
@@ -23,6 +25,7 @@ import { placementMatchesThemeTarget } from "./themeModel.js";
 import {
   normalizeProgramPopoutGradientCurve,
   programPopoutGradientColor,
+  programPopoutGradientCurveValue,
   programPopoutGradientProjection
 } from "./programPopoutGradient.js";
 import { readProgramPopoutSkinSurfaceColor } from "./programPopoutPalette.js";
@@ -34,12 +37,17 @@ export interface ProgramPopoutThemeScreenGeometry {
   visibleBounds: Pick<FlowCellBounds, "Top" | "Height"> & Partial<Pick<FlowCellBounds, "Left" | "Width">>;
   envelope: Pick<ButtonRect, "y" | "height"> & Partial<Pick<ButtonRect, "x" | "width">>;
   monitorWorkArea: Pick<FlowCellBounds, "Top" | "Height"> & Partial<Pick<FlowCellBounds, "Left" | "Width">>;
-  screenRange?: { minimumY: number; maximumY: number; minimumX?: number; maximumX?: number };
+  screenRange?: {
+    minimumY: number; maximumY: number; minimumX?: number; maximumX?: number;
+    centers?: readonly { x: number; y: number }[];
+  };
 }
 
 const SETTING_KEYS = new Set([
   "version", "colors", "spread", "scatter", "seed", "screenTopToBottom", "angle", "curve", "textColor",
   "textColors", "textAngle", "textCurve", "textScreenTopToBottom",
+  "highlightCurve", "highlightAngle", "highlightScreenTopToBottom",
+  "glowCurve", "glowAngle", "glowScreenTopToBottom",
   "hoverEnabled", "activeEnabled", "hoverColor", "activeColor", "hoverHighlightAmount",
   "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount",
   "idleEnabled", "idleColor", "idleHighlightAmount", "idleGlowAmount"
@@ -62,6 +70,34 @@ export function normalizeProgramPopoutColorOverride(value: unknown): ProgramPopo
     result[key] = key === "surface" ? buttonSkinOpaqueColor(color)!.toUpperCase() : color;
   }
   return result;
+}
+
+/** Frozen host appearance, including all interaction-state effects; no skin source is changed. */
+export function normalizeProgramPopoutThemeLock(value: unknown): ButtonThemeOverride | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  const required = ["colors", "hoverEnabled", "activeEnabled", "hoverColor", "activeColor"];
+  const amounts = ["highlightAmount", "hoverHighlightAmount", "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount"];
+  const allowed = new Set([...required, ...amounts, "idleEnabled", "idleColor", "idleHighlightAmount", "idleGlowAmount"]);
+  if (Object.keys(candidate).some((key) => !allowed.has(key)) || !required.every((key) => Object.hasOwn(candidate, key))) return null;
+  if (!candidate.colors || typeof candidate.colors !== "object" || Array.isArray(candidate.colors) ||
+      Object.entries(candidate.colors).some(([role, color]) => !/^[a-z][a-z0-9-]*$/.test(role) || !normalizedColor(color))) return null;
+  for (const key of ["hoverEnabled", "activeEnabled"]) {
+    if (candidate[key] !== null && typeof candidate[key] !== "boolean") return null;
+  }
+  for (const key of ["hoverColor", "activeColor"]) {
+    if (candidate[key] !== null && !normalizedColor(candidate[key])) return null;
+  }
+  for (const key of [...amounts, "idleHighlightAmount", "idleGlowAmount"]) {
+    const amount = candidate[key];
+    if (amount === undefined || (amount === null && !key.startsWith("idle"))) continue;
+    // Spatial curves produce fractional resolved amounts; snapshot those without rounding.
+    const maximum = key === "highlightAmount" || key.endsWith("HighlightAmount") ? BUTTON_HIGHLIGHT_AMOUNT_MAX : BUTTON_GLOW_AMOUNT_MAX;
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0 || amount > maximum) return null;
+  }
+  if (candidate.idleEnabled !== undefined && typeof candidate.idleEnabled !== "boolean") return null;
+  if (candidate.idleColor !== undefined && !normalizedColor(candidate.idleColor)) return null;
+  return structuredClone(candidate) as unknown as ButtonThemeOverride;
 }
 
 /** Mutates a caller-owned document and invalidates matching transient draft channels. */
@@ -117,12 +153,12 @@ export function normalizeProgramPopoutThemeSettings(value: unknown): ProgramPopo
   if (colors.length < 1 || colors.length > 16 || colors.some((color) => !color)) return null;
   // Gradient shape keys are optional so packages saved before they existed stay valid.
   const shape: Partial<ProgramPopoutThemeSettings> = {};
-  for (const key of ["angle", "textAngle"] as const) {
+  for (const key of ["angle", "textAngle", "highlightAngle", "glowAngle"] as const) {
     if (candidate[key] === undefined) continue;
     if (!validAngle(candidate[key])) return null;
     shape[key] = candidate[key] as number;
   }
-  for (const key of ["curve", "textCurve"] as const) {
+  for (const key of ["curve", "textCurve", "highlightCurve", "glowCurve"] as const) {
     if (candidate[key] === undefined) continue;
     const curve = normalizeProgramPopoutGradientCurve(candidate[key]);
     if (!curve) return null;
@@ -133,9 +169,10 @@ export function normalizeProgramPopoutThemeSettings(value: unknown): ProgramPopo
     if (textColors.length < 2 || textColors.length > 16 || textColors.some((color) => !color)) return null;
     shape.textColors = textColors as string[];
   }
-  if (candidate.textScreenTopToBottom !== undefined) {
-    if (typeof candidate.textScreenTopToBottom !== "boolean") return null;
-    shape.textScreenTopToBottom = candidate.textScreenTopToBottom;
+  for (const key of ["textScreenTopToBottom", "highlightScreenTopToBottom", "glowScreenTopToBottom"] as const) {
+    if (candidate[key] === undefined) continue;
+    if (typeof candidate[key] !== "boolean") return null;
+    shape[key] = candidate[key];
   }
   if (candidate.idleEnabled !== undefined) {
     if (typeof candidate.idleEnabled !== "boolean") return null;
@@ -185,6 +222,12 @@ export function normalizeProgramPopoutThemeSettings(value: unknown): ProgramPopo
     ...(shape.textAngle !== undefined ? { textAngle: shape.textAngle } : {}),
     ...(shape.textCurve ? { textCurve: shape.textCurve } : {}),
     ...(shape.textScreenTopToBottom !== undefined ? { textScreenTopToBottom: shape.textScreenTopToBottom } : {}),
+    ...(shape.highlightCurve ? { highlightCurve: shape.highlightCurve } : {}),
+    ...(shape.highlightAngle !== undefined ? { highlightAngle: shape.highlightAngle } : {}),
+    ...(shape.highlightScreenTopToBottom !== undefined ? { highlightScreenTopToBottom: shape.highlightScreenTopToBottom } : {}),
+    ...(shape.glowCurve ? { glowCurve: shape.glowCurve } : {}),
+    ...(shape.glowAngle !== undefined ? { glowAngle: shape.glowAngle } : {}),
+    ...(shape.glowScreenTopToBottom !== undefined ? { glowScreenTopToBottom: shape.glowScreenTopToBottom } : {}),
     hoverEnabled: candidate.hoverEnabled as boolean,
     activeEnabled: candidate.activeEnabled as boolean,
     hoverColor,
@@ -278,19 +321,63 @@ interface ProgramPopoutGradientChannel {
 
 function screenPosition(
   center: { x: number; y: number },
-  geometry: ProgramPopoutThemeScreenGeometry
+  geometry: ProgramPopoutThemeScreenGeometry,
+  angle = 0
 ): number | null {
   const { visibleBounds, envelope, screenRange } = geometry;
-  // Whole Layout uses actual visible Button centers, never monitor edges or empty box corners.
+  // Whole Layout changes scope, not direction. Project actual visible centers,
+  // never monitor edges or the empty corners of their bounding box.
   if (!screenRange || ![visibleBounds.Top, envelope.y, screenRange.minimumY, screenRange.maximumY].every(Number.isFinite) ||
     ![visibleBounds.Height, envelope.height].every((height) => Number.isFinite(height) && height > 0)) return null;
   const desktopY = visibleBounds.Top + (center.y - envelope.y) * visibleBounds.Height / envelope.height;
+  if (screenRange.centers?.length &&
+      screenRange.centers.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) &&
+      [visibleBounds.Left, envelope.x].every(Number.isFinite) &&
+      [visibleBounds.Width, envelope.width].every((width) => typeof width === "number" && Number.isFinite(width) && width > 0)) {
+    const desktopX = visibleBounds.Left! + (center.x - envelope.x!) * visibleBounds.Width! / envelope.width!;
+    const projected = programPopoutGradientProjection({ x: desktopX, y: desktopY }, angle);
+    const projections = screenRange.centers.map((point) => programPopoutGradientProjection(point, angle));
+    const minimum = Math.min(...projections);
+    const range = Math.max(...projections) - minimum;
+    return range > 0 ? Math.min(1, Math.max(0, (projected - minimum) / range)) : 0;
+  }
+  // Old peers and Y-only geometry retain their established vertical behavior.
   const range = screenRange.maximumY - screenRange.minimumY;
   return range > 0 ? Math.min(1, Math.max(0, (desktopY - screenRange.minimumY) / range)) : 0;
 }
 
 function placementCenter(placement: ButtonPlacement): { x: number; y: number } {
   return { x: placement.x + placement.width / 2, y: placement.y + placement.height / 2 };
+}
+
+function gradientChannelPosition(
+  document: ButtonStateDocument,
+  placement: ButtonPlacement,
+  programName: string,
+  channel: Pick<ProgramPopoutGradientChannel, "angle" | "screen">,
+  geometry?: ProgramPopoutThemeScreenGeometry,
+  normalizedScreenPosition?: number,
+): { y: number; minimumY: number; maximumY: number } {
+  const center = placementCenter(placement);
+  const screenY = channel.screen
+    ? typeof normalizedScreenPosition === "number" && Number.isFinite(normalizedScreenPosition)
+      ? Math.min(1, Math.max(0, normalizedScreenPosition))
+      : geometry ? screenPosition(center, geometry, channel.angle) : null
+    : null;
+  const projected = programPopoutGradientProjection(center, channel.angle);
+  // Local gradients use only the rendered surface: closed windows cannot alter
+  // the colors of a currently visible set of Buttons.
+  const projections = screenY !== null ? [] : document.surfaces[placement.surfaceId].placementIds
+    .map((id) => document.placements[id])
+    .filter((entry) => entry && placementMatchesThemeTarget(document, entry, {
+      kind: "program", programName, panelName: null
+    }))
+    .map((entry) => programPopoutGradientProjection(placementCenter(entry), channel.angle));
+  return {
+    y: screenY ?? projected,
+    minimumY: screenY !== null ? 0 : Math.min(projected, ...projections),
+    maximumY: screenY !== null ? 1 : Math.max(projected, ...projections)
+  };
 }
 
 function gradientChannelColor(
@@ -303,33 +390,32 @@ function gradientChannelColor(
   sourcePlacementId?: string
 ): string {
   if (channel.colors.length === 1) return channel.colors[0];
-  const center = placementCenter(placement);
-  const screenY = channel.screen
-    ? typeof normalizedScreenPosition === "number" && Number.isFinite(normalizedScreenPosition)
-      ? Math.min(1, Math.max(0, normalizedScreenPosition))
-      : geometry ? screenPosition(center, geometry) : null
-    : null;
-  const projected = programPopoutGradientProjection(center, channel.angle);
-  // Local gradients use only the rendered surface: closed windows cannot alter
-  // the colors of a currently visible set of Buttons.
-  const projections = screenY !== null ? [] : document.surfaces[placement.surfaceId].placementIds
-    .map((id) => document.placements[id])
-    .filter((entry) => entry && placementMatchesThemeTarget(document, entry, {
-      kind: "program", programName, panelName: null
-    }))
-    .map((entry) => programPopoutGradientProjection(placementCenter(entry), channel.angle));
   return programPopoutGradientColor({
     ...channel,
+    ...gradientChannelPosition(document, placement, programName, channel, geometry, normalizedScreenPosition),
     placementId: sourcePlacementId && document.placements[sourcePlacementId]?.buttonId === placement.buttonId
-      ? sourcePlacementId
-      : placement.id,
-    y: screenY ?? projected,
-    minimumY: screenY !== null ? 0 : Math.min(projected, ...projections),
-    maximumY: screenY !== null ? 1 : Math.max(projected, ...projections)
+      ? sourcePlacementId : placement.id
   }).toUpperCase();
 }
 
-/** A scan passes a position already projected along the fill angle within its screen box. */
+function effectStrength(
+  document: ButtonStateDocument,
+  placement: ButtonPlacement,
+  programName: string,
+  settings: ProgramPopoutThemeSettings,
+  effect: "highlight" | "glow",
+  geometry?: ProgramPopoutThemeScreenGeometry,
+  normalizedScreenPosition?: number
+): number {
+  const curve = settings[`${effect}Curve`];
+  if (!curve) return 1;
+  const { y, minimumY, maximumY } = gradientChannelPosition(document, placement, programName, {
+    angle: settings[`${effect}Angle`], screen: settings[`${effect}ScreenTopToBottom`] === true
+  }, geometry, normalizedScreenPosition);
+  return programPopoutGradientCurveValue(curve, maximumY > minimumY ? (y - minimumY) / (maximumY - minimumY) : 0);
+}
+
+/** A scan passes a position already projected along the fill angle across occupied centers. */
 function surfaceColor(
   document: ButtonStateDocument,
   placement: ButtonPlacement,
@@ -357,7 +443,8 @@ function textColor(
   programName: string,
   settings: ProgramPopoutThemeSettings,
   geometry?: ProgramPopoutThemeScreenGeometry,
-  sourcePlacementId?: string
+  sourcePlacementId?: string,
+  normalizedScreenPosition?: number
 ): string {
   if (!settings.textColors) return settings.textColor;
   return gradientChannelColor(document, placement, programName, {
@@ -368,7 +455,7 @@ function textColor(
     screen: settings.textScreenTopToBottom === true,
     angle: settings.textAngle,
     curve: settings.textCurve
-  }, geometry, undefined, sourcePlacementId);
+  }, geometry, normalizedScreenPosition, sourcePlacementId);
 }
 
 /** The program theme wins on popped instances while every other surface inherits as before. */
@@ -377,7 +464,9 @@ export function resolveProgramPopoutThemeOverride(
   placementId: string,
   geometry?: ProgramPopoutThemeScreenGeometry,
   normalizedScreenY?: number,
-  sourcePlacementId?: string
+  sourcePlacementId?: string,
+  normalizedTextScreenPosition?: number,
+  normalizedEffectScreenPositions?: { highlight?: number; glow?: number }
 ): ButtonThemeOverride | undefined {
   const original = document.themeOverrides?.[placementId];
   const placement = document.placements[placementId];
@@ -386,31 +475,35 @@ export function resolveProgramPopoutThemeOverride(
   const colorPlacementId = sourcePlacementId && document.placements[sourcePlacementId]?.buttonId === placement.buttonId
     ? sourcePlacementId
     : placementId;
+  const locked = normalizeProgramPopoutThemeLock(document.programPopoutThemeLocks?.[colorPlacementId]);
+  if (locked) return locked;
   const colorOverride = normalizeProgramPopoutColorOverride(document.programPopoutColorOverrides?.[colorPlacementId]);
   for (const [programName, rawSettings] of Object.entries(document.programPopoutThemes ?? {})) {
     if (!placementMatchesThemeTarget(document, placement, { kind: "program", programName, panelName: null })) continue;
     const settings = normalizeProgramPopoutThemeSettings(rawSettings);
     if (!settings) continue;
+    const highlight = effectStrength(document, placement, programName, settings, "highlight", geometry, normalizedEffectScreenPositions?.highlight);
+    const glow = effectStrength(document, placement, programName, settings, "glow", geometry, normalizedEffectScreenPositions?.glow);
     return {
       ...original,
       colors: {
         ...original?.colors,
         surface: surfaceColor(document, placement, programName, settings, geometry, normalizedScreenY, sourcePlacementId),
-        text: textColor(document, placement, programName, settings, geometry, sourcePlacementId),
+        text: textColor(document, placement, programName, settings, geometry, sourcePlacementId, normalizedTextScreenPosition),
         ...colorOverride
       },
       idleEnabled: settings.idleEnabled ?? false,
       idleColor: settings.idleColor ?? "#FFFFFFCC",
-      idleHighlightAmount: settings.idleHighlightAmount ?? 0,
-      idleGlowAmount: settings.idleGlowAmount ?? 0,
+      idleHighlightAmount: (settings.idleHighlightAmount ?? 0) * highlight,
+      idleGlowAmount: (settings.idleGlowAmount ?? 0) * glow,
       hoverEnabled: settings.hoverEnabled,
       activeEnabled: settings.activeEnabled,
       hoverColor: settings.hoverColor,
       activeColor: settings.activeColor,
-      hoverHighlightAmount: settings.hoverHighlightAmount,
-      activeHighlightAmount: settings.activeHighlightAmount,
-      hoverGlowAmount: settings.hoverGlowAmount,
-      activeGlowAmount: settings.activeGlowAmount
+      hoverHighlightAmount: settings.hoverHighlightAmount * highlight,
+      activeHighlightAmount: settings.activeHighlightAmount * highlight,
+      hoverGlowAmount: settings.hoverGlowAmount * glow,
+      activeGlowAmount: settings.activeGlowAmount * glow
     };
   }
   return colorOverride ? {

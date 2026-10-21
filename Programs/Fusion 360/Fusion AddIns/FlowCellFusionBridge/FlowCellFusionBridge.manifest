@@ -5,7 +5,7 @@
   "description": {
     "": "Owner-scoped filesystem bridge for FlowCell actions in Autodesk Fusion."
   },
-  "version": "1.0.0",
+  "version": "1.0.1",
   "runOnStartup": true,
   "supportedOS": "windows",
   "editEnabled": true,

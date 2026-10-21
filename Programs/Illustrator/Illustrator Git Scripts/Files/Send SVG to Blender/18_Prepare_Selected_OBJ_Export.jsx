@@ -533,6 +533,8 @@
             adjustOffsetsForBoundsCenterShift: adjustOffsetsForBoundsCenterShift,
             recenterExportItems: recenterExportItems,
             validateVectorArtwork: validateVectorArtwork,
+            bakeVisibleClippingGroups: bakeVisibleClippingGroups,
+            exportGroup: exportGroup,
             showBlockingWarning: showBlockingWarning,
             removeNonRenderingStrokedPaths: removeNonRenderingStrokedPaths,
             selectVisibleStrokedArtwork: selectVisibleStrokedArtwork,
@@ -1062,12 +1064,97 @@
         return true;
     }
 
+    function bakeVisibleClippingGroups(documentRef, layerName) {
+        var groups;
+        var group;
+        var mask;
+        var child;
+        var paths;
+        var previousCount = null;
+        var i;
+
+        // Re-read Illustrator's live collections after each expansion. Work from
+        // the innermost mask out so a parent's crop sees already-baked children.
+        while (true) {
+            groups = [];
+            for (i = 0; i < documentRef.groupItems.length; i += 1) {
+                group = documentRef.groupItems[i];
+                if (isEffectivelyVisible(group) && group.clipped === true) {
+                    groups.push(group);
+                }
+            }
+            if (groups.length === 0) {
+                return;
+            }
+            if (previousCount !== null && groups.length >= previousCount) {
+                throwNormalizationError(layerName, "Illustrator could not bake the clipping mask into paths.");
+            }
+            previousCount = groups.length;
+            group = groups[0];
+            for (i = 1; i < groups.length; i += 1) {
+                child = groups[i].parent;
+                while (child && safeString(child.typename) === "GroupItem") {
+                    if (child === group) {
+                        group = groups[i];
+                        break;
+                    }
+                    child = child.parent;
+                }
+            }
+
+            mask = null;
+            // Illustrator can omit a compound clipping object from a group's
+            // pageItems collection; document.pathItems still exposes its paths.
+            paths = documentRef.pathItems;
+            for (i = 0; i < paths.length; i += 1) {
+                if (paths[i].clipping !== true) {
+                    continue;
+                }
+                child = safeString(paths[i].parent.typename) === "CompoundPathItem" ? paths[i].parent : paths[i];
+                if (child.parent === group) {
+                    if (mask && mask !== child) {
+                        throwNormalizationError(layerName, "a clipping group has multiple mask objects.");
+                    }
+                    mask = child;
+                }
+            }
+            if (!mask) {
+                throwNormalizationError(layerName, "Illustrator did not expose the clipping mask's paths.");
+            }
+
+            // Crop uses its frontmost filled operand as the boundary. Keep a
+            // compound mask intact: releasing its subpaths would fill its holes.
+            if (safeString(mask.typename) === "CompoundPathItem") {
+                // Illustrator's clipped setter rejects a compound mask even
+                // when setting false. Release it through the native command,
+                // which places the mask outside the remaining content group.
+                clearSelection(documentRef);
+                group.selected = true;
+                executeRequiredVectorCleanup(documentRef, "releaseMask", "clipping mask release", layerName);
+                mask.move(group, ElementPlacement.PLACEATBEGINNING);
+            } else {
+                group.clipped = false;
+            }
+            paths = safeString(mask.typename) === "CompoundPathItem" ? mask.pathItems : [mask];
+            for (i = 0; i < paths.length; i += 1) {
+                paths[i].clipping = false;
+                paths[i].closed = true;
+                paths[i].filled = true;
+                paths[i].stroked = false;
+            }
+            mask.zOrder(ZOrderMethod.BRINGTOFRONT);
+            clearSelection(documentRef);
+            group.selected = true;
+            executeRequiredVectorCleanup(documentRef, "Live Pathfinder Crop", "clipping mask crop", layerName);
+            executeRequiredVectorCleanup(documentRef, "expandStyle", "clipping mask expansion", layerName);
+            unlockTemporaryArtwork(documentRef);
+        }
+    }
+
     function rejectVisibleClippingGroups(item, layerName) {
         var childItems;
         var childCount;
-        var clippingError;
         var isClipped;
-        var warningMessage;
         var i;
 
         if (!isEffectivelyVisible(item) || safeString(item.typename) !== "GroupItem") {
@@ -1083,16 +1170,7 @@
             );
         }
         if (isClipped) {
-            warningMessage =
-                "FlowCell cannot send this artwork to Blender.\n\nLayer \"" + layerName +
-                "\" contains a visible clipping mask. Expand or release the mask and convert the result " +
-                "to explicit closed filled paths, then try again.";
-            clippingError = new Error(
-                "Layer " + layerName +
-                " contains a visible clipping group. Convert the clipping mask into explicit closed filled paths before sending it to Blender."
-            );
-            clippingError.flowcellWarningMessage = warningMessage;
-            throw clippingError;
+            throwNormalizationError(layerName, "a clipping group remains after automatic mask processing.");
         }
 
         try {
@@ -1650,8 +1728,9 @@
             removeNonRenderingStrokedPaths(temporaryDocument, group.layerName);
             outlineVisibleStrokes(temporaryDocument, group.layerName);
             outlineVisibleText(temporaryDocument);
-            validateVectorArtwork(temporaryDocument, group.layerName);
             closeOpenFilledPathsForUnite(temporaryDocument, group.layerName);
+            bakeVisibleClippingGroups(temporaryDocument, group.layerName);
+            validateVectorArtwork(temporaryDocument, group.layerName);
             uniteAndBakeVectorArtwork(temporaryDocument, group.layerName);
 
             exportBounds = getVisibleBounds(temporaryDocument, group.layerName);

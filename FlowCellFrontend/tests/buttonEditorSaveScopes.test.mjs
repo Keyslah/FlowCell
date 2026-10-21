@@ -70,13 +70,14 @@ function documentWithButton() {
   return document;
 }
 
-test("saving a popped placement removal clears both legacy and individual color references", () => {
+test("saving a popped placement removal clears legacy, individual color and frozen appearance references", () => {
   const committed = documentWithButton();
   committed.surfaces[DEFAULT_BUTTON_SURFACE_ID].kind = "regular-popout";
   committed.themeOverrides = {
     "placement-one": { colors: { surface: "#224466" }, hoverEnabled: null, activeEnabled: null, hoverColor: null, activeColor: null }
   };
   committed.programPopoutColorOverrides = { "placement-one": { surface: "#FF9900", text: "#000000" } };
+  committed.programPopoutThemeLocks = { "placement-one": structuredClone(committed.themeOverrides["placement-one"]) };
   assert.equal(validateButtonStateDocument(committed).valid, true);
   const draft = structuredClone(committed);
   draft.surfaces[DEFAULT_BUTTON_SURFACE_ID].placementIds = [];
@@ -85,6 +86,7 @@ test("saving a popped placement removal clears both legacy and individual color 
   assert.equal(result.placements["placement-one"], undefined);
   assert.equal(result.themeOverrides["placement-one"], undefined);
   assert.equal(result.programPopoutColorOverrides["placement-one"], undefined);
+  assert.equal(result.programPopoutThemeLocks["placement-one"], undefined);
   assert.equal(validateButtonStateDocument(result).valid, true);
   assert.deepEqual(committed.programPopoutColorOverrides["placement-one"], { surface: "#FF9900", text: "#000000" });
 });

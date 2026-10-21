@@ -62,6 +62,7 @@ enum ScopedWindowPlacement {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ScopedWindowStateUpdate {
     placement: ScopedWindowPlacement,
+    placement_applied: bool,
     observed_foreground_hwnd: isize,
     input_active: bool,
     initial_reveal_active: bool,
@@ -238,6 +239,17 @@ fn resolve_foreground_scoped_process_names(
             None
         }
     })
+}
+
+#[cfg(any(windows, test))]
+fn scoped_group_was_topmost(
+    entries: &HashMap<String, ScopedTopmostEntry>,
+    process_names: Option<&[String]>,
+) -> bool {
+    process_names.is_some_and(|names| entries.values().any(|entry| {
+        entry.last_placement == Some(ScopedWindowPlacement::Topmost)
+            && process_groups_overlap(&entry.process_names, names)
+    }))
 }
 
 fn frontend_launcher_path_from_repo_root(root: &Path) -> PathBuf {
@@ -495,12 +507,24 @@ fn resolve_scoped_window_placement(
     cursor_over_taskbar_or_preview: bool,
     foreground_hwnd: isize,
     window_hwnd: isize,
+    foreground_group_was_topmost: bool,
 ) -> (ScopedWindowPlacement, bool) {
     if cursor_over_taskbar_or_preview {
         return (ScopedWindowPlacement::Bottom, false);
     }
 
     if matches_target_process {
+        return (ScopedWindowPlacement::Topmost, true);
+    }
+
+    // The owning app already promoted this group. Focus moving into its own
+    // controls must not demote and re-promote every native window. New controls
+    // inherit the established group placement; an inactive group cannot gain it.
+    if foreground_is_scoped_window
+        && foreground_scoped_group_matches
+        && last_external_matches_target
+        && foreground_group_was_topmost
+    {
         return (ScopedWindowPlacement::Topmost, true);
     }
 
@@ -519,9 +543,8 @@ fn resolve_scoped_window_placement(
     }
 
     // A FlowCell button may become the foreground window while it is being
-    // clicked. That is a continuation of the last proven owning application,
-    // never a new topmost match. Keep the matching group in the normal band so
-    // it remains usable over its owner without floating above other programs.
+    // clicked before its owning app has established a topmost group. Keep that
+    // continuation usable in the normal band without granting a new promotion.
     if foreground_is_scoped_window
         && foreground_scoped_group_matches
         && last_external_matches_target
@@ -600,19 +623,16 @@ fn resolve_scoped_owner_hwnds(
 
 #[cfg(any(windows, test))]
 fn should_reapply_scoped_window_state(
-    owner_changed: bool,
+    native_state_changed: bool,
     last_placement: Option<ScopedWindowPlacement>,
     placement: ScopedWindowPlacement,
-    last_observed_foreground_hwnd: Option<isize>,
-    observed_foreground_hwnd: isize,
     last_input_active: Option<bool>,
     input_active: bool,
     last_preview_suppressed: Option<bool>,
     preview_suppressed: bool,
 ) -> bool {
-    owner_changed
+    native_state_changed
         || last_placement != Some(placement)
-        || last_observed_foreground_hwnd != Some(observed_foreground_hwnd)
         || last_input_active != Some(input_active)
         || last_preview_suppressed != Some(preview_suppressed)
         || preview_suppressed
@@ -624,8 +644,10 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
     entry: &ScopedTopmostEntry,
     foreground: &ForegroundWindowState,
     foreground_scoped_process_names: Option<&[String]>,
+    foreground_group_was_topmost: bool,
     last_external_foreground: Option<&ForegroundWindowState>,
     cursor_over_taskbar_or_preview: bool,
+    force: bool,
 ) -> Result<ScopedWindowStateUpdate, String> {
     let window_hwnd = window
         .hwnd()
@@ -662,6 +684,7 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         cursor_over_taskbar_or_preview,
         foreground.hwnd,
         window_hwnd,
+        foreground_group_was_topmost,
     );
     let (placement, input_active) = resolve_selective_window_interactivity(
         scoped_placement,
@@ -701,12 +724,17 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         }
     };
     let owner_changed = native_owner_hwnd != current_owner_hwnd;
+    // Native activation may raise an inactive control, and owner/anchor changes
+    // can change WS_EX_TOPMOST independently of our cached placement.
+    let native_state_changed = force || owner_changed
+        || is_native_window_topmost(window_hwnd) != (placement == ScopedWindowPlacement::Topmost)
+        || (placement == ScopedWindowPlacement::Bottom
+            && foreground_scoped_group_matches
+            && entry.last_observed_foreground_hwnd != Some(foreground.hwnd));
     let should_reapply = should_reapply_scoped_window_state(
-        owner_changed,
+        native_state_changed,
         entry.last_placement,
         placement,
-        entry.last_observed_foreground_hwnd,
-        foreground.hwnd,
         entry.last_input_active,
         input_active,
         entry.last_preview_suppressed,
@@ -728,7 +756,8 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         set_native_window_owner(window, native_owner_hwnd)?;
     }
 
-    // Only an exact external process match is ever allowed to select TOPMOST.
+    // Only an exact external match establishes TOPMOST; its own controls may
+    // continue that already active group without another native transition.
     // Inactive windows go to the bottom, never directly behind the foreground:
     // even that insertion can raise them above apps on another monitor.
     if should_reapply {
@@ -737,6 +766,7 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
 
     Ok(ScopedWindowStateUpdate {
         placement,
+        placement_applied: should_reapply,
         observed_foreground_hwnd: foreground.hwnd,
         input_active,
         initial_reveal_active: explicit_open_reveal
@@ -1084,16 +1114,7 @@ fn expanded_fan_placement(placement: ScopedWindowPlacement) -> Option<ScopedWind
 
 #[cfg(windows)]
 fn raise_expanded_fan_hwnd(hwnd: Win32Hwnd, placement: ScopedWindowPlacement) -> Result<(), String> {
-    set_scoped_native_hwnd_placement(hwnd, placement, false)?;
-    if placement == ScopedWindowPlacement::Normal {
-        // HWND_NOTOPMOST does not raise a window already in the normal band.
-        unsafe {
-            SetWindowPos(hwnd, Some(windows::Win32::UI::WindowsAndMessaging::HWND_TOP), 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
+    set_scoped_native_hwnd_placement(hwnd, placement, false)
 }
 
 #[cfg(windows)]
@@ -1102,6 +1123,7 @@ fn raise_expanded_fans(
     last_external: Option<&ForegroundWindowState>, preview_suppressed: bool,
 ) -> Result<(), String> {
     let foreground_group = resolve_foreground_scoped_process_names(app, entries, foreground);
+    let group_was_topmost = scoped_group_was_topmost(entries, foreground_group.as_deref());
     // Oldest first: the latest hover-open or owner pin click wins, including over pinned fans.
     for label in expanded_fan_stack(entries) {
         let entry = &entries[&label];
@@ -1113,7 +1135,7 @@ fn raise_expanded_fans(
             foreground_group.as_ref().is_some_and(|group| process_groups_overlap(&entry.process_names, group)),
             last_external.is_some_and(|external| matches_foreground_process(&entry.process_names, &external.process_info)),
             continues_explicit_open_reveal(entry.initial_reveal, foreground.process_id == std::process::id(), foreground.hwnd, hwnd, entry.last_observed_foreground_hwnd),
-            preview_suppressed, foreground.hwnd, hwnd,
+            preview_suppressed, foreground.hwnd, hwnd, group_was_topmost,
         );
         if let Some(placement) = expanded_fan_placement(placement) {
             raise_expanded_fan_hwnd(Win32Hwnd(hwnd as _), placement)?;
@@ -1170,7 +1192,8 @@ fn set_scoped_native_hwnd_placement(
         let is_minimized = IsIconic(hwnd.0 as _) != 0;
         let should_show_window = matches!(resolved_placement, ScopedWindowPlacement::Topmost)
             && promote
-            && !is_minimized;
+            && !is_minimized
+            && IsWindowVisible(hwnd.0 as _) == 0;
 
         if should_show_window {
             let _ = ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE);
@@ -1190,6 +1213,22 @@ fn set_scoped_native_hwnd_placement(
             },
         )
         .map_err(|error| error.to_string())?;
+        if resolved_placement == ScopedWindowPlacement::Normal {
+            // HWND_NOTOPMOST does not raise a window already in the normal
+            // band, so a reused Pop/Fan opened from FlowCell would stay buried
+            // under its program. Normal is only resolved while FlowCell itself
+            // is in front, so raising within the normal band is safe.
+            SetWindowPos(
+                hwnd,
+                Some(HWND_TOP),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            )
+            .map_err(|error| error.to_string())?;
+        }
     }
 
     Ok(())
@@ -1752,12 +1791,8 @@ pub(crate) async fn refresh_scoped_window_topmost(
                 {
                     entry.initial_reveal = true;
                 }
-                if force.unwrap_or(false) {
-                    // Presentation happens after show. Force the resolved
-                    // placement to be applied again even if the hidden
-                    // pre-show refresh cached the same state.
-                    entry.last_placement = None;
-                }
+                // Force a post-show application separately; clearing placement
+                // here would erase a sole control's established group promotion.
             }
             entries.clone()
         };
@@ -1773,13 +1808,16 @@ pub(crate) async fn refresh_scoped_window_topmost(
         let last_external_foreground = resolve_last_external_foreground(&registry, &foreground);
         let foreground_scoped_process_names =
             resolve_foreground_scoped_process_names(&app, &entries_snapshot, &foreground);
+        let group_was_topmost = scoped_group_was_topmost(&entries_snapshot, foreground_scoped_process_names.as_deref());
         let update = apply_scoped_window_state(
             &window,
             &entry,
             &foreground,
             foreground_scoped_process_names.as_deref(),
+            group_was_topmost,
             last_external_foreground.as_ref(),
             cursor_over_taskbar_or_preview,
+            force.unwrap_or(false),
         )?;
 
         {
@@ -1884,9 +1922,11 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
         let last_external_foreground = resolve_last_external_foreground(&registry, &foreground);
         let foreground_scoped_process_names =
             resolve_foreground_scoped_process_names(&app, &snapshot, &foreground);
+        let group_was_topmost = scoped_group_was_topmost(&snapshot, foreground_scoped_process_names.as_deref());
         let mut missing_labels = Vec::new();
         let mut applied_updates = Vec::new();
         let mut input_state_updates = Vec::new();
+        let mut stack_changed = false;
 
         for (label, entry) in &snapshot {
             let Some(window) = app.get_webview_window(&label) else {
@@ -1899,9 +1939,12 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
                 entry,
                 &foreground,
                 foreground_scoped_process_names.as_deref(),
+                group_was_topmost,
                 last_external_foreground.as_ref(),
                 cursor_over_taskbar_or_preview,
+                false,
             ) {
+                stack_changed |= update.placement_applied;
                 if entry.last_input_active != Some(update.input_active) {
                     input_state_updates.push((label.clone(), update.input_active));
                 }
@@ -1917,7 +1960,7 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
             }
         }
 
-        let stack_changed = !missing_labels.is_empty() || !applied_updates.is_empty();
+        stack_changed |= !missing_labels.is_empty();
         let mut registry_became_empty = false;
         if !missing_labels.is_empty() || !applied_updates.is_empty() {
             if let Ok(mut entries) = registry.entries.lock() {
@@ -1960,6 +2003,10 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
         thread::sleep(Duration::from_millis(SCOPED_TOPMOST_POLL_MS));
     });
 }
+
+#[cfg(all(test, windows))]
+#[path = "windows_focus_tests.rs"]
+mod focus_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2196,7 +2243,17 @@ mod tests {
     fn expanded_fan_stacking_cannot_promote_an_inactive_or_preview_suppressed_group() {
         use super::ScopedWindowPlacement as Placement;
         for preview in [false, true] {
-            let (placement, _) = super::resolve_scoped_window_placement(false, false, false, false, false, preview, 99, 22);
+            let (placement, _) = super::resolve_scoped_window_placement(
+                false,
+                false,
+                false,
+                false,
+                false,
+                preview,
+                99,
+                22,
+                false,
+            );
             assert_eq!(super::expanded_fan_placement(placement), None);
         }
         assert_eq!(super::expanded_fan_placement(Placement::Topmost), Some(Placement::Topmost));
@@ -2333,6 +2390,7 @@ mod tests {
                 false,
                 200,
                 100,
+                false,
             ),
             (ScopedWindowPlacement::Topmost, true)
         );
@@ -2346,13 +2404,14 @@ mod tests {
                 false,
                 300,
                 100,
+                false,
             ),
             (ScopedWindowPlacement::Bottom, false)
         );
     }
 
     #[test]
-    fn scoped_button_focus_is_normal_band_continuation_not_topmost() {
+    fn scoped_button_focus_without_established_promotion_stays_in_normal_band() {
         assert_eq!(
             resolve_scoped_window_placement(
                 false,
@@ -2363,6 +2422,7 @@ mod tests {
                 false,
                 100,
                 100,
+                false,
             ),
             (ScopedWindowPlacement::Normal, true)
         );
@@ -2376,6 +2436,7 @@ mod tests {
                 false,
                 100,
                 100,
+                false,
             ),
             (ScopedWindowPlacement::Bottom, false)
         );
@@ -2393,6 +2454,7 @@ mod tests {
                 false,
                 100,
                 101,
+                false,
             ),
             (ScopedWindowPlacement::Bottom, false)
         );
@@ -2406,6 +2468,7 @@ mod tests {
                 false,
                 100,
                 110,
+                false,
             ),
             (ScopedWindowPlacement::Bottom, false)
         );
@@ -2423,6 +2486,7 @@ mod tests {
                 true,
                 200,
                 100,
+                false,
             ),
             (ScopedWindowPlacement::Bottom, false)
         );
@@ -2465,6 +2529,7 @@ mod tests {
                     false,
                     foreground,
                     300,
+                    false,
                 );
                 let (placement, _) =
                     resolve_selective_window_interactivity(placement, active, selective_input, false);
@@ -2528,8 +2593,15 @@ mod tests {
             for foreground in [&blender, &button, &blender, &chrome, &blender] {
                 foreground.raise_without_focus();
                 let (placement, _) = resolve_scoped_window_placement(
-                    false, foreground.0 == button.0, false, false, false, false,
-                    foreground.0 as isize, page.0 as isize,
+                    false,
+                    foreground.0 == button.0,
+                    false,
+                    false,
+                    false,
+                    false,
+                    foreground.0 as isize,
+                    page.0 as isize,
+                    false,
                 );
                 super::set_scoped_native_hwnd_placement(
                     super::Win32Hwnd(page.0), placement, false).unwrap();
@@ -2537,8 +2609,15 @@ mod tests {
                     "inactive page rose above Chrome when another program was clicked (owned={owned})");
             }
             let (placement, _) = resolve_scoped_window_placement(
-                true, false, false, true, false, false,
-                illustrator.0 as isize, page.0 as isize,
+                true,
+                false,
+                false,
+                true,
+                false,
+                false,
+                illustrator.0 as isize,
+                page.0 as isize,
+                false,
             );
             super::set_scoped_native_hwnd_placement(
                 super::Win32Hwnd(page.0), placement, false).unwrap();
@@ -2599,6 +2678,7 @@ mod tests {
                 false,
                 100,
                 110,
+                false,
             ),
             (ScopedWindowPlacement::Normal, true)
         );
@@ -2612,6 +2692,7 @@ mod tests {
                 true,
                 100,
                 110,
+                false,
             ),
             (ScopedWindowPlacement::Bottom, false)
         );
@@ -2625,6 +2706,7 @@ mod tests {
                 false,
                 120,
                 110,
+                false,
             ),
             (ScopedWindowPlacement::Behind(120), true)
         );
@@ -2638,30 +2720,27 @@ mod tests {
                 false,
                 120,
                 110,
+                false,
             ),
             (ScopedWindowPlacement::Behind(120), false)
         );
     }
 
     #[test]
-    fn foreground_handle_changes_reapply_without_steady_state_churn() {
+    fn only_native_or_resolved_state_changes_reapply_placement() {
         assert!(should_reapply_scoped_window_state(
             false,
             Some(ScopedWindowPlacement::Behind(200)),
             ScopedWindowPlacement::Behind(300),
-            Some(200),
-            300,
             Some(false),
             false,
             Some(false),
             false,
         ));
-        assert!(should_reapply_scoped_window_state(
+        assert!(!should_reapply_scoped_window_state(
             false,
             Some(ScopedWindowPlacement::Topmost),
             ScopedWindowPlacement::Topmost,
-            Some(200),
-            201,
             Some(true),
             true,
             Some(false),
@@ -2671,8 +2750,6 @@ mod tests {
             false,
             Some(ScopedWindowPlacement::Behind(300)),
             ScopedWindowPlacement::Behind(300),
-            Some(300),
-            300,
             Some(false),
             false,
             Some(false),
@@ -2682,12 +2759,67 @@ mod tests {
             false,
             Some(ScopedWindowPlacement::Behind(300)),
             ScopedWindowPlacement::Behind(300),
-            Some(300),
-            300,
             Some(false),
             false,
             Some(true),
             true,
         ));
+        assert!(should_reapply_scoped_window_state(
+            true,
+            Some(ScopedWindowPlacement::Topmost),
+            ScopedWindowPlacement::Topmost,
+            Some(true),
+            true,
+            Some(false),
+            false,
+        ));
+    }
+
+    #[test]
+    fn established_program_groups_survive_button_handoffs_without_promoting_other_groups() {
+        for process in ["blender.exe", "illustrator.exe", "krita.exe", "fusion360.exe"] {
+            let names = vec![process.to_string()];
+            let mut entries = std::collections::HashMap::new();
+            entries.insert("existing".to_string(), super::ScopedTopmostEntry {
+                process_names: names.clone(),
+                last_placement: Some(ScopedWindowPlacement::Topmost),
+                ..Default::default()
+            });
+            let active_group = super::scoped_group_was_topmost(&entries, Some(&names));
+            assert!(active_group);
+            assert!(!super::scoped_group_was_topmost(&entries, Some(&["unrelated.exe".to_string()])));
+            assert!(!super::scoped_group_was_topmost(&entries, None));
+
+            // Both an existing control and a new/revealed sibling retain the
+            // group's established layer while either control has focus.
+            for window in [100, 101] {
+                for foreground in [200, 100, 101, 200] {
+                    let (placement, input) = resolve_scoped_window_placement(
+                        foreground == 200, foreground != 200, true, true,
+                        window == 101, false, foreground, window, active_group,
+                    );
+                    assert_eq!((placement, input), (ScopedWindowPlacement::Topmost, true));
+                    assert!(!should_reapply_scoped_window_state(
+                        false, Some(ScopedWindowPlacement::Topmost), placement,
+                        Some(true), input, Some(false), false,
+                    ));
+                }
+            }
+            // A matching cache alone is insufficient after another app/group
+            // takes focus, and taskbar suppression still wins immediately.
+            for (scoped, same_group, last_external_matches, preview) in [
+                (false, false, true, false),
+                (true, false, true, false),
+                (true, true, false, false),
+                (true, true, true, true),
+            ] {
+                assert_eq!(resolve_scoped_window_placement(
+                    false, scoped, same_group, last_external_matches, false,
+                    preview, 300, 100, active_group,
+                ), (ScopedWindowPlacement::Bottom, false));
+            }
+            entries.get_mut("existing").unwrap().last_placement = Some(ScopedWindowPlacement::Bottom);
+            assert!(!super::scoped_group_was_topmost(&entries, Some(&names)));
+        }
     }
 }

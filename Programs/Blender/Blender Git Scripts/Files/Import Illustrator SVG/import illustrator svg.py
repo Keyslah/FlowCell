@@ -28,7 +28,11 @@ def _finished(operator_result) -> bool:
 
 def thickness_mm_from_filepath(filepath) -> float:
     """Read a leading number, optionally parenthesized, as millimeters."""
-    stem = Path(str(filepath or "")).stem
+    return thickness_mm_from_name(Path(str(filepath or "")).stem)
+
+
+def thickness_mm_from_name(name) -> float:
+    stem = str(name or "")
     match = LEADING_EXTRUSION_VALUE.match(stem)
     if match is None:
         return DEFAULT_THICKNESS_MM
@@ -37,7 +41,7 @@ def thickness_mm_from_filepath(filepath) -> float:
     thickness_mm = float(token)
     if not math.isfinite(thickness_mm) or thickness_mm <= 0.0:
         raise ValueError(
-            f"SVG filename '{stem}' must use a positive finite extrusion value, got '{token}'."
+            f"SVG name '{stem}' must use a positive finite extrusion value, got '{token}'."
         )
     return thickness_mm
 
@@ -111,7 +115,9 @@ def _validated_items(data) -> list[dict[str, object]]:
         if layer_value is not None and not isinstance(layer_value, str):
             raise ValueError(f"Illustrator SVG item {item_number} layerName must be text.")
         layer_name = layer_value if isinstance(layer_value, str) and layer_value.strip() else filepath.stem
-        thickness_mm = thickness_mm_from_filepath(filepath)
+        # The owning Illustrator layer name is authoritative; sanitizing or
+        # renaming the transport file must not silently change its thickness.
+        thickness_mm = thickness_mm_from_name(layer_name)
         width_mm = _positive_finite_millimeters(
             item.get("widthMm"), f"Illustrator SVG item {item_number} widthMm"
         )

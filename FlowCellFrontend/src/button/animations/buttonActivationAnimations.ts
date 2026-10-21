@@ -8,6 +8,7 @@ export interface ButtonActivationAnimationPreset {
   id: ButtonActivationAnimationPresetId;
   label: string;
   durationMs: number;
+  pressInterval?: { minimum: number; maximum: number };
   spritePixelSize: {
     width: number;
     height: number;
@@ -51,6 +52,20 @@ export const BUTTON_ACTIVATION_ANIMATION_PRESETS: readonly ButtonActivationAnima
       topMarginSpriteHeights: 0.55,
       heightSpriteHeights: 2
     }
+  },
+  {
+    id: "star-wars-lightsaber",
+    label: "Star Wars Lightsaber",
+    durationMs: 3_010,
+    pressInterval: { minimum: 5, maximum: 50 },
+    spritePixelSize: {
+      width: 480,
+      height: 268
+    },
+    playbackCanvas: {
+      topMarginSpriteHeights: 0,
+      heightSpriteHeights: 1
+    }
   }
 ];
 
@@ -74,6 +89,40 @@ export function getButtonActivationAnimationPreset(
     throw new Error(`Unknown Button activation animation '${presetId}'.`);
   }
   return preset;
+}
+
+export function consumeButtonAnimationPress(
+  button: ButtonRecord,
+  storage: Pick<Storage, "getItem" | "setItem">,
+  random: () => number = Math.random
+): boolean {
+  const animation = button.activationAnimation;
+  if (!animation) return false;
+  const range = getButtonActivationAnimationPreset(animation.presetId).pressInterval;
+  if (!range) return true;
+  const key = `flowcell.button-animation-presses.v1:${button.id}:${animation.presetId}`;
+  let saved: { interval?: number; presses?: number } | null = null;
+  try {
+    saved = JSON.parse(storage.getItem(key) ?? "null");
+  } catch {
+    // An invalid runtime counter starts a fresh interval; the assignment is unchanged.
+  }
+  const valid = saved && Number.isInteger(saved.interval) &&
+    saved.interval! >= range.minimum && saved.interval! <= range.maximum &&
+    Number.isInteger(saved.presses) && saved.presses! >= 0 && saved.presses! < saved.interval!;
+  const nextInterval = () => range.minimum + Math.floor(
+    random() * (range.maximum - range.minimum + 1)
+  );
+  let interval = valid ? saved!.interval! : nextInterval();
+  let presses = (valid ? saved!.presses! : 0) + 1;
+  const play = presses >= interval;
+  if (play) {
+    interval = nextInterval();
+    presses = 0;
+  }
+  // Only the elected playback coordinator calls this synchronous read/write.
+  storage.setItem(key, JSON.stringify({ interval, presses }));
+  return play;
 }
 
 export function normalizeButtonAnimationDesktopBounds(

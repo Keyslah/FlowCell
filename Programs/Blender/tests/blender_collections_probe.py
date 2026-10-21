@@ -86,6 +86,8 @@ for home_kind in ("external", "nested-live", "scene-root", "multi-linked"):
     restored = bpy.data.objects["Subject"]
     assert set(restored.users_collection) == set(homes) and restored.location.x == 0
     assert original.name.startswith("(t1)") and original.hide_get()
+    assert ctx.active_object == restored and set(ctx.selected_objects) == {restored}
+    assert not snap.select_get() and not original.select_get()
     select(restored)
     actions.perform_back(ctx)
     assert set(bpy.data.objects["Subject"].users_collection) == set(homes)
@@ -122,6 +124,112 @@ actions.perform_add_to_live(ctx)
 added = roots["Live"].objects[0]
 assert actions.stored_origin_collections(added) == [roots["Live"]]
 passed.append("archive and stored snapshot origins/add-to-live")
+
+roots = reset()
+restore_sources = []
+restore_homes = {}
+for source_kind in ("Snapshots", "Archive", "Trash"):
+    home = collection(source_kind + " source home", roots["Live"])
+    name = source_kind + " subject"
+    original = obj(name, home)
+    restore_homes[name] = home
+    select(original)
+    if source_kind == "Snapshots":
+        source = snapshot(original, roots)
+    elif source_kind == "Archive":
+        actions.perform_archive(ctx)
+        source = next(iter(roots["Archive"].all_objects))
+    else:
+        actions.perform_trash(ctx)
+        source = original
+    restore_sources.append(source)
+select(*restore_sources)
+assert actions.perform_restore(ctx) == "Restored 3 object(s) to their original collections."
+restored_outputs = {bpy.data.objects[name] for name in restore_homes}
+assert set(ctx.selected_objects) == restored_outputs
+assert ctx.active_object in restored_outputs
+assert all(not source.select_get() for source in restore_sources)
+for name, home in restore_homes.items():
+    restored = bpy.data.objects[name]
+    assert tuple(restored.users_collection) == (home,) and not restored.hide_get()
+passed.append("mixed stored versions restore selects only restored working objects")
+
+roots = reset()
+home = collection("Cylinder home")
+original = obj("Cylinder", home)
+original_snap = snapshot(original, roots)
+original_bucket = actions.find_named_bucket(roots["Snapshots"], "Cylinder")
+original_versions = tuple(original_bucket.objects)
+duplicate = original.copy()  # Blender duplicates inherit FlowCell custom properties.
+duplicate.data = original.data.copy()
+home.objects.link(duplicate)
+duplicate.name = "Cylinder 4"
+duplicate.data.vertices[1].co.x = 4
+assert duplicate[actions.TARGET_NAME_PROP] == "Cylinder"
+select(duplicate)
+assert actions.perform_snapshot(ctx) == "Saved 1 snapshot object(s)."
+duplicate_bucket = actions.find_named_bucket(roots["Snapshots"], "Cylinder 4")
+assert duplicate_bucket is not None, "Snapshot must use the selected duplicate's current name"
+assert tuple(original_bucket.objects) == original_versions
+duplicate_snap = actions.find_latest_version_object(duplicate_bucket, "s")
+assert duplicate_snap.name == "(s1)Cylinder 4"
+assert duplicate_snap.data.vertices[1].co.x == 4
+assert original_snap.data.vertices[1].co.x == 1
+assert ctx.active_object == duplicate and set(ctx.selected_objects) == {duplicate}
+assert duplicate_snap.hide_get() and not duplicate.hide_get()
+assert tuple(duplicate.users_collection) == (home,)
+assert actions.perform_snapshot(ctx) == "Saved 1 snapshot object(s)."
+assert len(duplicate_bucket.objects) == 2 and len(original_bucket.objects) == 1
+assert actions.find_latest_version_object(duplicate_bucket, "s").name == "(s2)Cylinder 4"
+select(original, duplicate)
+assert actions.perform_snapshot(ctx) == "Saved 2 snapshot object(s)."
+assert len(original_bucket.objects) == 2 and len(duplicate_bucket.objects) == 3
+assert ctx.active_object == duplicate and set(ctx.selected_objects) == {original, duplicate}
+assert all(item.hide_get() for item in (*original_bucket.objects, *duplicate_bucket.objects))
+passed.append("inherited duplicate target keeps snapshots, geometry, and selection isolated")
+
+roots = reset()
+home = collection("Renamed object home")
+renamed = obj("Before rename", home)
+snapshot(renamed, roots)
+old_bucket = actions.find_named_bucket(roots["Snapshots"], "Before rename")
+old_versions = tuple(old_bucket.objects)
+renamed.name = "After rename"
+assert renamed[actions.TARGET_NAME_PROP] == "Before rename"
+select(renamed)
+assert actions.perform_snapshot(ctx) == "Saved 1 snapshot object(s)."
+new_bucket = actions.find_named_bucket(roots["Snapshots"], "After rename")
+assert new_bucket is not None, "Snapshot must follow the selected object's visible renamed identity"
+assert tuple(old_bucket.objects) == old_versions
+assert actions.find_latest_version_object(new_bucket, "s").name == "(s1)After rename"
+assert ctx.active_object == renamed and set(ctx.selected_objects) == {renamed}
+passed.append("renamed working object starts its own snapshot bucket")
+
+for operation in ("restore", "back", "cycle"):
+    roots = reset()
+    home = collection("Missing original home")
+    unrelated = obj("Cylinder 4", home)
+    unrelated[actions.TARGET_NAME_PROP] = "Cylinder"
+    unrelated.location.x = 4
+    bucket = actions.ensure_named_bucket(roots["Snapshots"], "Cylinder")
+    stored = obj("(s1)Cylinder", bucket)
+    stored[actions.TARGET_NAME_PROP] = "Cylinder"
+    stored[actions.ORIGIN_COLLECTIONS_PROP] = {"0": home}
+    assert actions.find_original_object(ctx, "Cylinder") is None
+    select(stored)
+    if operation == "restore":
+        assert actions.perform_restore(ctx) == "Restored 1 object(s) to their original collections."
+        assert bpy.data.objects["Cylinder"] != unrelated
+    elif operation == "back":
+        assert actions.perform_back(ctx) == "Back restored 1 object(s)."
+        assert bpy.data.objects["Cylinder"] != unrelated
+    else:
+        result = actions.perform_cycle_live_versions(ctx)
+        assert result["display"] == "s1" and ctx.active_object == stored
+    assert unrelated.name == "Cylinder 4" and unrelated.location.x == 4
+    assert tuple(unrelated.users_collection) == (home,) and not unrelated.hide_get()
+    assert not roots["Trash"].all_objects
+    passed.append(operation + " does not claim duplicate when exact original is absent")
 
 roots = reset()
 home = collection("Legacy home")

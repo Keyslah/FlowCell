@@ -35,6 +35,48 @@ const setupManifest = JSON.parse(
 );
 const actionById = new Map(page.actions.map((action) => [action.id, action]));
 
+test("both Browse buttons share a persisted last folder, with legacy fallback and cancellation", async () => {
+  const functions = pageScript.slice(pageScript.indexOf("  function normalizedState("), pageScript.indexOf("  function changeSaveMode("));
+  const calls = [], saved = [];
+  let nextResponse;
+  function load(state) {
+    return new Function("pageApi", "actions", "state", `
+      const objectRecord = value => value && typeof value === 'object' ? value : null;
+      const errorMessage = error => { throw error; };
+      const setBusy = () => {}, setStatus = () => {}, syncSettings = () => {};
+      const existingProjectFolderInput = {};
+      let busy = false, existingProjectRoot = '';
+      ${functions}
+      const settings = normalizedState(state);
+      return { settings, chooseParentFolder, chooseExistingProjectFolder };
+    `)({ request: async (action, payload) => {
+      calls.push({ action, payload });
+      if (action === "write") { saved.push(payload.state); return { written: true }; }
+      return nextResponse;
+    } }, { stateWrite: "write", selectParentFolder: "parent", selectExistingProjectFolder: "existing" }, state);
+  }
+  let api = load({ baseFolder: "D:\\Art" });
+  nextResponse = { selected: true, path: "D:\\Projects" };
+  await api.chooseParentFolder();
+  assert.equal(calls[0].payload.initialDirectory, "D:\\Art");
+  assert.equal(saved.at(-1).lastBrowseFolder, "D:\\Projects");
+  api = load(saved.at(-1)); // Reopen the page from owner-state.
+  nextResponse = { selected: true, path: "D:\\Projects\\Clover" };
+  await api.chooseExistingProjectFolder();
+  assert.equal(calls.at(-2).payload.initialDirectory, "D:\\Projects");
+  assert.equal(saved.at(-1).lastBrowseFolder, "D:\\Projects\\Clover");
+  assert.equal(saved.at(-1).baseFolder, "D:\\Projects");
+  api = load(saved.at(-1));
+  const writes = saved.length;
+  nextResponse = { selected: false, path: "" };
+  await api.chooseParentFolder();
+  assert.equal(calls.at(-1).payload.initialDirectory, "D:\\Projects\\Clover");
+  assert.equal(saved.length, writes);
+  for (const id of ["parent-folder.select", "existing-project-folder.select"]) {
+    assert.equal(actionById.get(id).requestSchema.properties.initialDirectory.type, "string");
+  }
+});
+
 function assertStrictObjectSchema(schema, label) {
   assert.equal(schema.type, "object", `${label} must use an object root`);
   assert.equal(schema.additionalProperties, false, `${label} must reject undeclared properties`);
@@ -65,7 +107,7 @@ test("Save Blender is a Files-panel Blender installed-page package", () => {
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.sourceKind, "page");
   assert.equal(contribution.installOnAdd, true);
-  assert.equal(contribution.version, "1.2.3");
+  assert.equal(contribution.version, "1.2.4");
 });
 
 test("every page resource is package-contained and present", () => {
@@ -292,7 +334,7 @@ test("page removes spaces and unsafe Windows filename characters before saving",
 test("page persists only reusable destination settings and clears the project name", () => {
   assert.match(
     pageScript,
-    /state:\s*\{\s*schemaVersion:\s*1,\s*baseFolder:\s*settings\.baseFolder,\s*profileId:\s*settings\.profileId\s*\}/
+    /state:\s*\{\s*schemaVersion:\s*1,\s*baseFolder:\s*settings\.baseFolder,\s*lastBrowseFolder:\s*settings\.lastBrowseFolder,\s*profileId:\s*settings\.profileId\s*\}/
   );
   assert.match(pageScript, /legacyProfilePath[\s\S]*legacyProfileMatch/);
   assert.doesNotMatch(pageScript, /state:\s*\{[^}]*projectName/s);

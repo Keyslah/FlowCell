@@ -40,7 +40,7 @@
   "bundledSources": [
     {
       "id": "fusion-360.align",
-      "version": "1.0.1",
+      "version": "1.1.1",
       "panelName": "Tool Sets",
       "sourcePath": "Fusion Git Scripts/Toolsets/align",
       "importKind": "tool-set",
@@ -49,14 +49,14 @@
       "required": false,
       "dependencies": [],
       "installEffects": [
-        "Installs the Fusion Align Tool Set and its owner-scoped action into Tool Sets."
+        "Installs the Fusion Align Tool Set (Blender-style Min/Center/Max/Surface/Origin rows, All, X-Y, and Group) and its owner-scoped action into Tool Sets."
       ],
       "installIfMissing": true,
       "installOnAdd": true
     },
     {
       "id": "fusion-360.rotate",
-      "version": "1.0.1",
+      "version": "1.1.0",
       "panelName": "Tool Sets",
       "sourcePath": "Fusion Git Scripts/Toolsets/rotate",
       "importKind": "tool-set",
@@ -65,14 +65,14 @@
       "required": false,
       "dependencies": [],
       "installEffects": [
-        "Installs the Fusion Rotate Tool Set and its owner-scoped action into Tool Sets."
+        "Installs the Fusion Rotate Tool Set (Transform and Distribute around five pivots) and its owner-scoped action into Tool Sets."
       ],
       "installIfMissing": true,
       "installOnAdd": true
     },
     {
       "id": "fusion-360.scale",
-      "version": "1.0.2",
+      "version": "1.2.0",
       "panelName": "Tool Sets",
       "sourcePath": "Fusion Git Scripts/Toolsets/scale",
       "importKind": "tool-set",
@@ -81,7 +81,7 @@
       "required": false,
       "dependencies": [],
       "installEffects": [
-        "Installs the Fusion Scale Tool Set with editable XYZ dimensions, aspect locking, side pinning, and a native drag command."
+        "Installs the Fusion Scale Tool Set: Smart Axis style Base, X/Y/Z lock cycles, and Live, plus linkable X/Y/Z sliders and typed sizes."
       ],
       "installIfMissing": true,
       "installOnAdd": true

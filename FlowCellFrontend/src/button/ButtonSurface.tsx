@@ -9,6 +9,7 @@ import {
 import type {
   ButtonCoreMeasurement,
   ButtonEditorMode,
+  ButtonRangeToolField,
   ButtonRecord,
   ButtonStateDocument,
   ButtonToolField,
@@ -32,6 +33,11 @@ import {
   showOpenFileDialog,
   showOpenFolderDialog
 } from "../lib/tauri";
+import {
+  formatRangeValue,
+  linkedRangeFields,
+  linkedRangePatch
+} from "./popout/rangeFieldLink";
 
 interface ToolsetStateIdentity {
   programName: string;
@@ -106,6 +112,8 @@ export interface ButtonSurfaceProps {
   onPlacementVisualStateChange?: (placementId: string, state: ButtonVisualState) => void;
   onPlacementNaturalMeasurement?: (placementId: string, measurement: ButtonCoreMeasurement) => void;
   resetResultMappedActivationStateOnMount?: boolean;
+  /** The tool set's read-only state reply; it resyncs result-mapped Button states. */
+  stateQueryResponse?: unknown;
   className?: string;
   style?: CSSProperties;
 }
@@ -125,6 +133,8 @@ function renderFieldInput(args: {
   browsePath?: () => void;
 }) {
   const { field, value, disabled, setValue, commit, browsePath } = args;
+  // Range fields render through RangeFieldControl.
+  if (field.kind === "range") return null;
   if (field.kind === "display") {
     return field.serviceTarget && field.serviceTrigger === "activate"
       ? <button type="button" disabled={disabled} onClick={() => commit(value, "activate")}><output>{String(value ?? "")}</output></button>
@@ -211,6 +221,66 @@ function renderFieldInput(args: {
   );
 }
 
+function RangeFieldControl({
+  field,
+  value,
+  disabled,
+  onInput,
+  onRelease
+}: {
+  field: ButtonRangeToolField;
+  value: JsonValue;
+  disabled: boolean;
+  onInput: (value: number) => void;
+  onRelease: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const onReleaseRef = useRef(onRelease);
+  onReleaseRef.current = onRelease;
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    // React's onChange is the continuous input event; the native change event
+    // fires once when a drag or key step is released.
+    const handleChange = () => onReleaseRef.current();
+    input.addEventListener("change", handleChange);
+    return () => input.removeEventListener("change", handleChange);
+  }, []);
+  const numeric = typeof value === "number" && Number.isFinite(value) ? value : field.defaultValue;
+  const beginDrag = () => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.setAttribute("data-button-field-dragging", "true");
+    const endDrag = () => {
+      input.removeAttribute("data-button-field-dragging");
+      window.removeEventListener("pointerup", endDrag, true);
+      window.removeEventListener("pointercancel", endDrag, true);
+      window.removeEventListener("blur", endDrag);
+    };
+    window.addEventListener("pointerup", endDrag, true);
+    window.addEventListener("pointercancel", endDrag, true);
+    window.addEventListener("blur", endDrag);
+  };
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="range"
+        onPointerDown={beginDrag}
+        min={field.minimum}
+        max={field.maximum}
+        step={field.step ?? "any"}
+        value={numeric}
+        disabled={disabled}
+        onChange={(event) => onInput(Number(event.currentTarget.value))}
+      />
+      <output>{formatRangeValue(field, numeric)}</output>
+    </>
+  );
+}
+
+type RangeServiceTrigger = "input" | "change";
+
 export function ButtonSurface({
   document,
   programPopoutThemeScreenGeometry,
@@ -240,6 +310,7 @@ export function ButtonSurface({
   onPlacementVisualStateChange,
   onPlacementNaturalMeasurement,
   resetResultMappedActivationStateOnMount = false,
+  stateQueryResponse,
   className,
   style
 }: ButtonSurfaceProps) {
@@ -248,17 +319,85 @@ export function ButtonSurface({
     ...initialFieldValues(fields),
     ...(fieldValues ?? {})
   }));
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
+  const fieldsRef = useRef(fields);
+  fieldsRef.current = fields;
   useEffect(() => {
     setValues((current) => ({ ...initialFieldValues(fields), ...current, ...(fieldValues ?? {}) }));
   }, [fields, fieldValues]);
 
   const applyFieldPatch = useCallback((
     patch: Readonly<Record<string, JsonValue>>,
-    nextValues: Readonly<Record<string, JsonValue>>
+    _nextValues: Readonly<Record<string, JsonValue>>
   ) => {
-    setValues({ ...nextValues });
-    onFieldPatch?.(patch, nextValues);
+    // Merge onto the live values: callers compute nextValues from the values
+    // they started with, and a slow program reply would otherwise undo any
+    // field the user changed in the meantime (e.g. a Link toggle).
+    const merged = { ...valuesRef.current, ...patch };
+    valuesRef.current = merged;
+    setValues(merged);
+    onFieldPatch?.(patch, merged);
   }, [onFieldPatch]);
+
+  // One service call per range field at a time. Drag steps coalesce to the
+  // latest value; the release always follows them.
+  const rangeServiceQueuesRef = useRef(new Map<string, { running: boolean; queue: RangeServiceTrigger[] }>());
+  // Assigned below once the activation-result queue exists.
+  const syncFieldServiceResultRef = useRef<(field: ButtonToolField, response: unknown) => void>(() => {});
+  const onFieldExecutionResultRef = useRef(onFieldExecutionResult);
+  onFieldExecutionResultRef.current = onFieldExecutionResult;
+  const pumpRangeService = useCallback(async (fieldId: string) => {
+    const state = rangeServiceQueuesRef.current.get(fieldId);
+    if (!state || state.running) return;
+    state.running = true;
+    try {
+      while (state.queue.length > 0) {
+        const trigger = state.queue.shift()!;
+        const field = fieldsRef.current.find((candidate) => candidate.id === fieldId);
+        if (!field || field.kind !== "range" || !field.serviceTarget) continue;
+        // While dragging, the slider (and its linked sliders) own their values;
+        // program patches for them apply only to the release response.
+        const ownedIds = trigger === "input"
+          ? new Set(linkedRangeFields(fieldsRef.current, valuesRef.current, fieldId).map((member) => member.id))
+          : new Set<string>();
+        try {
+          const result = await executeButtonToolField(field, valuesRef.current[fieldId] ?? field.defaultValue, {
+            fields: fieldsRef.current,
+            fieldValues: valuesRef.current,
+            onFieldPatch: (patch) => {
+              const accepted = Object.fromEntries(
+                Object.entries(patch).filter(([id]) => !ownedIds.has(id))
+              );
+              if (Object.keys(accepted).length === 0) return;
+              applyFieldPatch(accepted, { ...valuesRef.current, ...accepted });
+            }
+          }, trigger);
+          if (trigger === "change") syncFieldServiceResultRef.current(field, result.response);
+          // Accepted patches are already applied; a send-time snapshot would drag the slider back.
+          onFieldExecutionResultRef.current?.(fieldId, { ...result, fieldValues: valuesRef.current, fieldPatch: {} });
+        } catch (error) {
+          onFieldExecutionResultRef.current?.(fieldId, {
+            executed: false,
+            message: error instanceof Error ? error.message : String(error),
+            fieldValues: valuesRef.current,
+            fieldPatch: {}
+          });
+        }
+      }
+    } finally {
+      state.running = false;
+    }
+  }, [applyFieldPatch]);
+  const enqueueRangeService = useCallback((fieldId: string, trigger: RangeServiceTrigger) => {
+    const queues = rangeServiceQueuesRef.current;
+    const state = queues.get(fieldId) ?? { running: false, queue: [] };
+    queues.set(fieldId, state);
+    if (!(trigger === "input" && state.queue[state.queue.length - 1] === "input")) {
+      state.queue.push(trigger);
+    }
+    void pumpRangeService(fieldId);
+  }, [pumpRangeService]);
 
   const orderedPlacementIds = useMemo(() => {
     if (!surface) return [];
@@ -312,6 +451,32 @@ export function ButtonSurface({
     activationResultApplyQueueRef.current = queued.then(() => undefined, () => undefined);
     return queued;
   }, [surfaceId]);
+
+  useEffect(() => {
+    if (mode !== "run" || stateQueryResponse === undefined || stateQueryResponse === null) return;
+    if (responseReportsExecutionFailure(stateQueryResponse)) return;
+    void enqueueActivationResult({ response: stateQueryResponse, identity: null }).catch((error) => {
+      console.error("FlowCell could not apply the tool set's current Button state.", error);
+    });
+  }, [mode, stateQueryResponse, enqueueActivationResult]);
+
+  // A field service answers for its own tool set, so its response also
+  // resyncs that tool set's result-mapped Button states (e.g. lock cycles).
+  syncFieldServiceResultRef.current = (field, response) => {
+    const target = field.serviceTarget;
+    if (response === undefined || responseReportsExecutionFailure(response)) return;
+    if (target?.kind !== "tool-set-action") return;
+    void enqueueActivationResult({
+      response,
+      identity: {
+        programName: target.programName,
+        panelName: target.panelName,
+        fileName: target.ownerFileName
+      }
+    }).catch((error) => {
+      console.error("FlowCell could not apply the tool field's Button state.", error);
+    });
+  };
 
   useEffect(() => {
     if (mode !== "run" || !resetResultMappedActivationStateOnMount) return;
@@ -368,6 +533,7 @@ export function ButtonSurface({
         fieldValues: values,
         onFieldPatch: applyFieldPatch
       }, trigger);
+      if (result.executed) syncFieldServiceResultRef.current(field, result.response);
       onFieldExecutionResult?.(field.id, result);
     } catch (error) {
       onFieldExecutionResult?.(field.id, {
@@ -444,7 +610,27 @@ export function ButtonSurface({
           }}
         >
           <span>{field.label}</span>
-          {renderFieldInput({
+          {field.kind === "range" ? (
+            <RangeFieldControl
+              field={field}
+              value={values[field.id] ?? field.defaultValue}
+              disabled={Boolean(field.disabled) || mode === "edit"}
+              onInput={(requested) => {
+                const patch = linkedRangePatch(fields, valuesRef.current, field.id, requested);
+                if (Object.keys(patch).length === 0) return;
+                applyFieldPatch(patch, { ...valuesRef.current, ...patch });
+                if (field.serviceTarget && field.serviceTrigger === "input" && mode !== "edit") {
+                  enqueueRangeService(field.id, "input");
+                }
+              }}
+              onRelease={() => {
+                const trigger = field.serviceTrigger ?? "change";
+                if (field.serviceTarget && (trigger === "input" || trigger === "change") && mode !== "edit") {
+                  enqueueRangeService(field.id, "change");
+                }
+              }}
+            />
+          ) : renderFieldInput({
             field,
             value: values[field.id] ?? field.defaultValue,
             disabled: Boolean(field.disabled) || mode === "edit",

@@ -7,9 +7,47 @@ import ts from "typescript";
 const frontendRoot = join(import.meta.dirname, "..");
 const repoRoot = join(frontendRoot, "..");
 
+test("folder.select forwards the remembered directory and tolerates older empty requests", async () => {
+  const source = read(frontendRoot, "src", "pages", "installed-page", "installedPageCoreBroker.ts");
+  const parsed = ts.createSourceFile("broker.ts", source, ts.ScriptTarget.Latest, true);
+  const functions = parsed.statements.filter((statement) =>
+    ts.isFunctionDeclaration(statement) && ["stringValue", "runFolderSelect"].includes(statement.name?.text)
+  ).map((statement) => statement.getText(parsed)).join("\n");
+  const compiled = ts.transpileModule(functions, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const calls = [];
+  const run = new Function("showOpenFolderDialog", `${compiled}\nreturn runFolderSelect;`)(async (args) => {
+    calls.push(args);
+    return calls.length === 1 ? ["D:\\Art\\Last used"] : [];
+  });
+  assert.deepEqual(await run({ dialogTitle: "Browse" }, { initialDirectory: " D:\\Art\\Last used " }),
+    { selected: true, path: "D:\\Art\\Last used" });
+  assert.deepEqual(calls[0], { title: "Browse", initialDirectory: "D:\\Art\\Last used", multiselect: false });
+  assert.deepEqual(await run({}, {}), { selected: false, path: "" });
+  assert.equal(calls[1].initialDirectory, undefined);
+  assert.match(source, /case "folder.select": return runFolderSelect\(options, payload\)/);
+});
+
 function read(...parts) {
   return readFileSync(join(...parts), "utf8");
 }
+
+test("screen-color capability returns selection and cancellation through the native picker", async () => {
+  const source = read(frontendRoot, "src", "pages", "installed-page", "installedPageCoreBroker.ts");
+  const parsed = ts.createSourceFile("broker.ts", source, ts.ScriptTarget.Latest, true);
+  const fn = parsed.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === "runScreenColorPick");
+  const compiled = ts.transpileModule(fn.getText(parsed), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const calls = [];
+  let color = "#123456";
+  const run = new Function("invoke", `${compiled}\nreturn runScreenColorPick;`)(async name => {
+    calls.push(name);
+    return { color };
+  });
+  assert.deepEqual(await run(), { selected: true, color: "#123456" });
+  color = null;
+  assert.deepEqual(await run(), { selected: false, color: "" });
+  assert.deepEqual(calls, ["pick_screen_color", "pick_screen_color"]);
+  assert.match(source, /case "color.pick-screen": return runScreenColorPick\(\)/);
+});
 
 test("isolated-page Undo accepts only its nonce and the three Undo/Redo chords", () => {
   const source = read(frontendRoot, "src", "pages", "installed-page", "InstalledPageWindowPage.tsx");
@@ -331,7 +369,8 @@ test("installed-page Button-theme palette is live Pop-out/Fan scoped, stale-scan
   assert.match(broker, /resolvePanelOwnerFanPlacement\(document, setup\.id\)/);
   assert.match(popoutRenderer, /expandedButtonPopoutPlacementIds\(document, unit\)/);
   assert.match(popoutOperations, /unit\.interactionMode === "fan"[\s\S]{0,160}surface\.placementIds/);
-  assert.match(broker, /registered\.buttonDraftSessionId\?\.trim\(\)[\s\S]{0,80}continue/);
+  assert.match(broker, /if \(registered\.buttonDraftSessionId\?\.trim\(\)\) \{\s*return;/);
+  assert.match(broker, /Promise\.all\(handles\.map\(async \(handle\)/);
   assert.match(buttonWindows, /kind: "button-fan"[\s\S]{0,240}buttonDraftSessionId: args\.draftSessionId/);
   for (const renderer of [fanRenderer, popoutRenderer]) {
     assert.match(renderer, /const sourceThemeOverride = .*themeOverrides\?\.\[sourcePlacement\.id\]/);

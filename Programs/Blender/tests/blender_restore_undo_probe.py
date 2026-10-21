@@ -119,6 +119,7 @@ def main() -> None:
     else:
         assert str(result.get("message", "")) == "Restored 1 object(s) to their original collections."
         assert sorted(obj.name for obj in bpy.data.objects) == ["(s1)Probe", "(t1)Probe", "Probe"]
+        assert after["selected"] == ["Probe"] and after["active"] == "Probe"
 
     if not bpy.ops.ed.undo.poll():
         print("FLOWCELL_PROBE undo SKIPPED: Blender background mode has no window context", flush=True)
@@ -127,7 +128,10 @@ def main() -> None:
     undo_result = bpy.ops.ed.undo()
     bpy.context.view_layer.update()
     print("FLOWCELL_PROBE undo", sorted(undo_result), flush=True)
-    print("FLOWCELL_PROBE undone", json.dumps(_scene_state(), sort_keys=True), flush=True)
+    undone = _scene_state()
+    print("FLOWCELL_PROBE undone", json.dumps(undone, sort_keys=True), flush=True)
+    if not mode.endswith("-live"):
+        assert undone == before
 
 
 if __name__ == "__main__":

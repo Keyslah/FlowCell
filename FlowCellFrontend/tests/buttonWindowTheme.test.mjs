@@ -6,6 +6,23 @@ import { createButtonStateDocument } from "./.compiled-button-system/button/stat
 import { withCanonicalProgramPopoutThemes } from "./.compiled-button-system/button/windows/buttonWindowThemeDocument.js";
 import { clearProgramPopoutColorOverrides } from "./.compiled-button-system/theme/programPopoutTheme.js";
 
+test("canonical freeze and re-enable win over stale drafts while draft-only locks survive package changes", () => {
+  const canonical = createButtonStateDocument();
+  canonical.placements.saved = { id: "saved", buttonId: "button", surfaceId: "pop" };
+  const appearance = { colors: { surface: "#112233" }, hoverEnabled: true, activeEnabled: false, hoverColor: null, activeColor: null };
+  canonical.programPopoutThemeLocks = { saved: appearance };
+  const draft = structuredClone(canonical);
+  draft.placements.transient = { id: "transient", buttonId: "transient", surfaceId: "pop" };
+  draft.programPopoutThemeLocks.transient = appearance;
+  draft.programPopoutThemeLocks.saved.colors.surface = "#445566";
+  assert.deepEqual(withCanonicalProgramPopoutThemes(draft, canonical).programPopoutThemeLocks.saved, appearance);
+  delete canonical.programPopoutThemeLocks.saved;
+  canonical.programPopoutThemes = { blender: { colors: ["#FFFFFF"] } };
+  const current = withCanonicalProgramPopoutThemes(draft, canonical);
+  assert.equal(current.programPopoutThemeLocks.saved, undefined);
+  assert.deepEqual(current.programPopoutThemeLocks.transient, appearance);
+});
+
 test("canonical individual edits and resets survive stale same-placement editor drafts", () => {
   const canonical = createButtonStateDocument();
   canonical.placements.saved = { id: "saved", buttonId: "button", surfaceId: "pop" };
@@ -95,7 +112,7 @@ test("popout and Fan paths forward physical screen geometry to normal and collap
     const page = readFileSync(join(frontend, "src", "button", folder, `${name}WindowPage.tsx`), "utf8");
     const renderer = readFileSync(join(frontend, "src", "button", folder, `${name}Renderer.tsx`), "utf8");
     assert.match(page, /visibleBounds: \{\s*Left: appliedFrameBounds\.left,\s*Top: appliedFrameBounds\.top,\s*Width: appliedFrameBounds\.width,\s*Height: appliedFrameBounds\.height\s*\}/);
-    assert.match(page, /enabled: Boolean\(programPopoutThemeSettings\?\.screenTopToBottom \|\| programPopoutThemeSettings\?\.textScreenTopToBottom\)/);
+    assert.match(page, /enabled: Boolean\(programPopoutThemeSettings\?\.screenTopToBottom \|\| programPopoutThemeSettings\?\.textScreenTopToBottom \|\|\s*programPopoutThemeSettings\?\.highlightScreenTopToBottom \|\| programPopoutThemeSettings\?\.glowScreenTopToBottom\)/);
     assert.match(page, /envelope: renderedEnvelope/);
     assert.match(page, /appliedCanvasRef\.current\?\.monitorWorkArea/);
     assert.equal((renderer.match(/programPopoutThemeScreenGeometry=\{programPopoutThemeScreenGeometry\}/g) ?? []).length, 2);

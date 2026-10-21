@@ -65,42 +65,38 @@ class RotateTests(unittest.TestCase):
         targets, reference = ROTATE._object_mode_targets(records)
         self.assertEqual([record["label"] for record in targets], ["one", "two"])
         self.assertEqual(reference["label"], "reference")
-        with self.assertRaisesRegex(ValueError, "last selection"):
+        with self.assertRaisesRegex(ValueError, "pivot body/component last"):
             ROTATE._object_mode_targets([records[-1]])
 
-    def test_manifest_exposes_transform_controls_without_distribute(self):
+    def test_manifest_exposes_transform_and_distribute_like_blender(self):
         manifest = json.loads((HERE / "flowcell.toolset.json").read_text(encoding="utf-8"))
-        slots = {child["slot"] for child in manifest["children"]}
+        slots = [child["slot"] for child in manifest["children"]]
+        self.assertEqual(len(slots), 18)
         self.assertIn("center_pick", slots)
         self.assertIn("mode_transform", slots)
+        self.assertIn("mode_distribute", slots)
         self.assertIn("value_input", slots)
-        self.assertNotIn("mode_distribute", slots)
-        self.assertFalse(any("distribute" in slot.lower() for slot in slots))
-        behaviors = manifest["layout"]["childBehaviors"]
+        layout = manifest["layout"]
+        self.assertEqual(set(layout["placements"]), set(slots))
+        self.assertTrue(layout["updatePolicy"]["appendMissingChildSlots"])
+        behaviors = layout["childBehaviors"]
         self.assertEqual(behaviors["value_input"], {"inlineEditField": "value", "execute": False})
-        self.assertEqual(
-            behaviors["apply_negative"]["payloadTemplate"]["direction"],
-            "negative",
-        )
-        self.assertEqual(
-            behaviors["apply_positive"]["payloadTemplate"]["direction"],
-            "positive",
-        )
+        self.assertEqual(behaviors["mode_distribute"]["fieldPatch"], {"operation_mode": "DISTRIBUTE"})
+        self.assertEqual(behaviors["mode_distribute"]["activationPatch"], {"value": 3})
+        for slot in ("apply_negative", "apply_positive"):
+            template = behaviors[slot]["payloadTemplate"]
+            self.assertEqual(template["distribute_count"], {"$field": "value"})
+            self.assertEqual(template["direction"], slot.split("_")[1])
+        modes = next(field for field in layout["fields"] if field["id"] == "operation_mode")
+        self.assertEqual([option["value"] for option in modes["options"]], ["TRANSFORM", "DISTRIBUTE"])
 
-    def test_design_history_and_component_body_boundaries_fail_closed(self):
-        root = object()
-        ROTATE._require_parametric_design(types.SimpleNamespace(designType="parametric"))
-        with self.assertRaisesRegex(ValueError, "Capture Design History"):
-            ROTATE._require_parametric_design(types.SimpleNamespace(designType="direct"))
-
-        safe_body = types.SimpleNamespace(assemblyContext=None, parentComponent=root)
-        ROTATE._require_instance_safe_bodies([{"kind": "body", "entity": safe_body}], types.SimpleNamespace(rootComponent=root))
-        proxy_body = types.SimpleNamespace(assemblyContext=object(), parentComponent=root)
-        with self.assertRaisesRegex(ValueError, "Select the occurrence"):
-            ROTATE._require_instance_safe_bodies([{"kind": "body", "entity": proxy_body}], types.SimpleNamespace(rootComponent=root))
-        component_body = types.SimpleNamespace(assemblyContext=None, parentComponent=object())
-        with self.assertRaisesRegex(ValueError, "root-component"):
-            ROTATE._require_instance_safe_bodies([{"kind": "body", "entity": component_body}], types.SimpleNamespace(rootComponent=root))
+    def test_distribute_count_is_bounded(self):
+        self.assertEqual(ROTATE._distribute_count("3"), 3)
+        self.assertEqual(ROTATE._distribute_count(4.4), 4)
+        with self.assertRaisesRegex(ValueError, "at least 1"):
+            ROTATE._distribute_count(0)
+        with self.assertRaisesRegex(ValueError, "360 or fewer"):
+            ROTATE._distribute_count(1000)
 
     def test_precise_bounds_are_preferred(self):
         precise = types.SimpleNamespace(

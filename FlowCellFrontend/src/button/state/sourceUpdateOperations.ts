@@ -12,6 +12,7 @@ import {
 import type { InstallButtonSourceResult } from "./ButtonStateRepository.js";
 import { cloneButtonDocument } from "./buttonDefaults.js";
 import { validateInstalledButtonLayout } from "./installedButtonLayoutValidation.js";
+import { resolveInstalledToolFields } from "./installedToolFields.js";
 
 function stableDocumentIdSegment(value: string): string {
   const normalized = value.trim().toLocaleLowerCase();
@@ -190,5 +191,5 @@ export function applyInstalledSourceUpdate(
       toolSetSlot: child.slot
     };
   }
-  unit.fields = cloneButtonDocument(layout?.fields ?? []);
+  unit.fields = resolveInstalledToolFields(layout?.fields, installed.children);
 }

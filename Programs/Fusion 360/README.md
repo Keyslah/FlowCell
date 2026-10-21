@@ -7,38 +7,53 @@ user add-in directory; Fusion normally needs one restart after that add-in is
 first installed or its core files change. Installed owner actions are reloaded
 from their managed copies on each request.
 
+All three tools work on root-component bodies, bodies inside components, and
+(Align/Rotate) whole components, and they require **Capture Design History** so
+every change is a reversible timeline feature. Moving or rotating a component
+releases it from **Ground to Parent** and captures its position, because Fusion
+otherwise snaps uncaptured component moves back on the next recompute.
+
 ## Align
 
-Select one or more target native root-component bodies or component
-occurrences, then select the reference last. Bounds alignment supports minimum,
-center, maximum, nearest surface, component origin, XYZ center, and XY center
-operations. Body changes are timeline Move features; occurrence changes use
-Fusion assembly transforms.
+Works like the Blender Align tool set. Select the bodies/components to move,
+then the reference last. Clicking faces works too: a selected face, edge, or
+vertex stands for its whole body, so click a face on each object to move and
+a face on the reference last. The selection stays as clicked, so you can press
+several buttons in a row.
+
+- Rows `X Min | Center | X Max | Surface | Origin`, then Y, then Z.
+- **Surface** moves the selection flush against the opposite outside face of
+  the reference; every click alternates Min/Max.
+- **Origin** moves each component origin (a body's center, since bodies have no
+  origin) to the opposite Min/Max reference face; every click alternates.
+- **All** centers X, Y, and Z; **X-Y** leaves Z alone.
+- **Group** (toggle) moves the selection together using its combined bounds.
+- **Shift** aligns to the world origin and moves the whole selection.
+- **Alt** with Center, All, or X-Y aligns component origins instead of bounds.
 
 ## Rotate
 
-Select native root-component bodies or component occurrences, choose a world X,
-Y, or Z axis, choose Geometry, Origin, World, Pick, or Object pivot, then use a
-preset or the editable angle with Positive or Negative. Object pivot treats the
-last selection as the pivot and rotates the earlier selections. The Fusion
-version intentionally offers Transform only; Blender-style distribute/copy
-behavior is not exposed.
+Choose a world X, Y, or Z axis and a pivot: Geometry, Origin, World, Pick (the
+point where you clicked the last selection), or Object (the last selection's
+origin; the earlier selections rotate).
+
+- **Transform** rotates the selection by the presets or the typed angle with
+  Positive or Negative.
+- **Distribute** keeps the selection and adds evenly spaced copies around the
+  pivot; the value is the total count. Bodies are copied with Copy/Paste Body;
+  components get new instances of the same component.
 
 ## Scale
 
-Scale accepts native BRep bodies owned by the active design's root component.
-Select the bodies and press **Refresh** to load their aggregate X, Y, and Z
-dimensions in the document's current length units. Each dimension is editable.
+Select bodies, then:
 
-- **Free Axis** selects the one free scale handle shown in Fusion.
-- **Lock Aspect** makes that free axis drive all three dimensions proportionally.
-- **X/Y/Z Center, Min, or Max** chooses the plane held fixed on each axis.
-- **Scale / Drag** opens the native Fusion command after you edit exact
-  dimensions in FlowCell. Drag the visible free-axis handle larger or smaller,
-  then press **Enter** to commit or **Esc** to cancel.
+- Drag the **X**, **Y**, or **Z** slider to scale live. Each drag is one scale
+  step (one Scale feature plus one Move feature that keeps the pinned side
+  still); the slider returns to 100% when you let go.
+- **Link** moves all three sliders together for uniform scaling.
+- Type an exact **Size** (document units) and press Enter to resize. With Link
+  on, editing one size keeps the proportions.
+- **X/Y/Z Center, Min, Max** choose which side stays fixed on each axis.
+- **Refresh** reads the selection's sizes.
 
-Scale creates a native Scale feature and, when a fixed plane needs correction,
-a native Move feature. Component-owned bodies and occurrence proxies fail
-closed so non-uniform dimensions and pinned planes stay unambiguous. Align,
-Rotate, and Scale require **Capture Design History** because they create native,
-reversible timeline features.
+Scale works along world axes, so it skips bodies in rotated components.
