@@ -1,5 +1,5 @@
 import { isButtonWindowCloseOffset } from "../windows/buttonWindowCloseControl.js";
-import { isButtonActivationAnimationPresetId } from "../animations/buttonActivationAnimations.js";
+import { isButtonActivationAnimationPresetId, isButtonAnimationFrequency, isButtonAnimationOpacity } from "../animations/buttonActivationAnimations.js";
 import type {
   ButtonActivationBehavior,
   ButtonActivationAnimation,
@@ -293,9 +293,15 @@ function validateAnimation(value: unknown, path: string, issues: string[]): void
     issues.push(`${path}: Expected null or an activation-animation object.`);
     return;
   }
-  hasExactKeys(value, ["presetId", "desktopBounds"], path, issues);
+  hasExactKeys({ opacity: 1, frequency: undefined, ...value }, ["presetId", "desktopBounds", "opacity", "frequency"], path, issues);
   if (!isButtonActivationAnimationPresetId(value.presetId)) {
     issues.push(`${path}.presetId: Unsupported activation-animation preset.`);
+  }
+  if (value.opacity !== undefined && !isButtonAnimationOpacity(value.opacity)) {
+    issues.push(`${path}.opacity: Expected a number from 0 to 1.`);
+  }
+  if (value.frequency !== undefined && !isButtonAnimationFrequency(value.frequency)) {
+    issues.push(`${path}.frequency: Expected every press, a press count, or an ordered random range from 1 to 10000.`);
   }
   validateBounds(value.desktopBounds, `${path}.desktopBounds`, issues);
 }

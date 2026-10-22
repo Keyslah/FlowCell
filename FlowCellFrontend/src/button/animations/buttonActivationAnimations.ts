@@ -1,5 +1,7 @@
 import type {
+  ButtonActivationAnimation,
   ButtonActivationAnimationPresetId,
+  ButtonAnimationFrequency,
   ButtonDesktopBounds,
   ButtonRecord
 } from "../types.js";
@@ -79,6 +81,36 @@ export function isButtonActivationAnimationPresetId(
   return typeof value === "string" && PRESET_IDS.has(value);
 }
 
+export function isButtonAnimationOpacity(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+export function isButtonAnimationFrequency(value: unknown): value is ButtonAnimationFrequency {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const frequency = value as Record<string, unknown>;
+  const validCount = (count: unknown): count is number =>
+    typeof count === "number" && Number.isInteger(count) && count >= 1 && count <= 10_000;
+  switch (frequency.mode) {
+    case "every-press":
+      return Object.keys(frequency).length === 1;
+    case "every-n-presses":
+      return Object.keys(frequency).length === 2 && validCount(frequency.presses);
+    case "random-presses":
+      return Object.keys(frequency).length === 3 && validCount(frequency.minimum) &&
+        validCount(frequency.maximum) && frequency.minimum <= frequency.maximum;
+    default:
+      return false;
+  }
+}
+
+export function getButtonAnimationFrequency(
+  animation: Pick<ButtonActivationAnimation, "presetId" | "frequency">
+): ButtonAnimationFrequency {
+  if (animation.frequency) return animation.frequency;
+  const range = getButtonActivationAnimationPreset(animation.presetId).pressInterval;
+  return range ? { mode: "random-presses", ...range } : { mode: "every-press" };
+}
+
 export function getButtonActivationAnimationPreset(
   presetId: ButtonActivationAnimationPresetId
 ): ButtonActivationAnimationPreset {
@@ -98,19 +130,26 @@ export function consumeButtonAnimationPress(
 ): boolean {
   const animation = button.activationAnimation;
   if (!animation) return false;
-  const range = getButtonActivationAnimationPreset(animation.presetId).pressInterval;
-  if (!range) return true;
+  const frequency = getButtonAnimationFrequency(animation);
+  const range = frequency.mode === "random-presses"
+    ? frequency
+    : { minimum: frequency.mode === "every-press" ? 1 : frequency.presses,
+        maximum: frequency.mode === "every-press" ? 1 : frequency.presses };
+  const frequencyKey = `${frequency.mode}:${range.minimum}:${range.maximum}`;
   const key = `flowcell.button-animation-presses.v1:${button.id}:${animation.presetId}`;
-  let saved: { interval?: number; presses?: number } | null = null;
+  let saved: { frequencyKey?: string; interval?: number; presses?: number } | null = null;
   try {
     saved = JSON.parse(storage.getItem(key) ?? "null");
   } catch {
     // An invalid runtime counter starts a fresh interval; the assignment is unchanged.
   }
-  const valid = saved && Number.isInteger(saved.interval) &&
+  const legacyDefault = animation.presetId === "star-wars-lightsaber" &&
+    frequencyKey === "random-presses:5:50";
+  const valid = saved && (saved.frequencyKey === frequencyKey ||
+    (saved.frequencyKey === undefined && legacyDefault)) && Number.isInteger(saved.interval) &&
     saved.interval! >= range.minimum && saved.interval! <= range.maximum &&
     Number.isInteger(saved.presses) && saved.presses! >= 0 && saved.presses! < saved.interval!;
-  const nextInterval = () => range.minimum + Math.floor(
+  const nextInterval = () => range.minimum === range.maximum ? range.minimum : range.minimum + Math.floor(
     random() * (range.maximum - range.minimum + 1)
   );
   let interval = valid ? saved!.interval! : nextInterval();
@@ -121,7 +160,7 @@ export function consumeButtonAnimationPress(
     presses = 0;
   }
   // Only the elected playback coordinator calls this synchronous read/write.
-  storage.setItem(key, JSON.stringify({ interval, presses }));
+  storage.setItem(key, JSON.stringify({ frequencyKey, interval, presses }));
   return play;
 }
 

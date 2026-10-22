@@ -26,7 +26,7 @@ import {
   normalizeButtonHighlightAmount,
   normalizeButtonSkinColor
 } from "../skins/buttonSkinColors.js";
-import { isButtonActivationAnimationPresetId } from "../animations/buttonActivationAnimations.js";
+import { isButtonActivationAnimationPresetId, isButtonAnimationFrequency, isButtonAnimationOpacity } from "../animations/buttonActivationAnimations.js";
 import { normalizeProgramPopoutColorOverride, normalizeProgramPopoutThemeLock, normalizeProgramPopoutThemeSettings } from "../../theme/programPopoutTheme.js";
 
 export interface ButtonStateValidationIssue {
@@ -457,6 +457,12 @@ function validateButtonRecord(
     } else {
       if (!isButtonActivationAnimationPresetId(value.activationAnimation.presetId)) {
         addIssue(issues, `${animationPath}.presetId`, "Button activation animation preset is invalid.");
+      }
+      if (value.activationAnimation.opacity !== undefined && !isButtonAnimationOpacity(value.activationAnimation.opacity)) {
+        addIssue(issues, `${animationPath}.opacity`, "Button animation opacity must be from 0 to 1.");
+      }
+      if (value.activationAnimation.frequency !== undefined && !isButtonAnimationFrequency(value.activationAnimation.frequency)) {
+        addIssue(issues, `${animationPath}.frequency`, "Button animation frequency must use whole press counts from 1 to 10000 and an ordered range.");
       }
       if (!isUsableDesktopBounds(value.activationAnimation.desktopBounds)) {
         addIssue(

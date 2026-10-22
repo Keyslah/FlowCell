@@ -737,6 +737,8 @@ test("Button settings preserve the Star Wars animation when saved and reloaded",
   surface.kind = "panel";
   const animation = {
     presetId: "star-wars-lightsaber",
+    opacity: 0.45,
+    frequency: { mode: "every-n-presses", presses: 5 },
     desktopBounds: { left: 100, top: 120, width: 480, height: 268 }
   };
   document.buttons["button-b"].activationAnimation = animation;
@@ -749,6 +751,14 @@ test("Button settings preserve the Star Wars animation when saved and reloaded",
     programName: "Blender", panelName: "Utility"
   });
   assert.deepEqual(loaded.buttons["button-b"].activationAnimation, animation);
+  const invalid = structuredClone(settings);
+  invalid.entries.find((entry) => entry.buttonId === "button-b").activationAnimation.opacity = 1.1;
+  assert.equal(validateButtonSettingsFile(invalid).valid, false);
+  const invalidFrequency = structuredClone(settings);
+  invalidFrequency.entries.find((entry) => entry.buttonId === "button-b").activationAnimation.frequency = {
+    mode: "random-presses", minimum: 50, maximum: 5
+  };
+  assert.equal(validateButtonSettingsFile(invalidFrequency).valid, false);
 });
 
 test("Button settings save and restore exact membership, text, skin, size, highlights, behavior, and animation", () => {

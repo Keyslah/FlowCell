@@ -22,6 +22,7 @@ import {
   openButtonActivationAnimationEditor,
   saveButtonActivationAnimationEditorBounds
 } from "../animations/buttonAnimationWindows";
+import { getButtonAnimationFrequency } from "../animations/buttonActivationAnimations";
 import {
   buildButtonFanWindowLabel,
   buildButtonPopoutWindowLabel,
@@ -31,6 +32,7 @@ import {
 } from "../windows/buttonWindows";
 import type {
   ButtonActivationAnimationPresetId,
+  ButtonAnimationFrequency,
   ButtonCoreMeasurement,
   ButtonDesktopBounds,
   ButtonPlacement,
@@ -2395,21 +2397,30 @@ function ButtonEditorContent({
     presetId: ButtonActivationAnimationPresetId,
     bounds = button.activationAnimation?.presetId === presetId
       ? button.activationAnimation.desktopBounds
-      : null
+      : null,
+    opacity = button.activationAnimation?.opacity ?? 1,
+    frequency: ButtonAnimationFrequency = getButtonAnimationFrequency(
+      button.activationAnimation?.presetId === presetId ? button.activationAnimation : { presetId }
+    )
   ) => {
     try {
       setMessage(null);
       const resolvedBounds = await openButtonActivationAnimationEditor({
         buttonId: button.id,
         presetId,
-        bounds
+        bounds,
+        opacity
       });
       const current = store.current().buttons[button.id];
       if (!current) return;
       const draftAlreadyMatches = current.activationAnimation?.presetId === presetId &&
+        (current.activationAnimation.opacity ?? 1) === opacity &&
+        JSON.stringify(getButtonAnimationFrequency(current.activationAnimation)) === JSON.stringify(frequency) &&
         desktopBoundsEqual(current.activationAnimation.desktopBounds, resolvedBounds);
       const committedAnimation = store.committed.buttons[button.id]?.activationAnimation;
       const committedAlreadyMatches = committedAnimation?.presetId === presetId &&
+        (committedAnimation.opacity ?? 1) === opacity &&
+        JSON.stringify(getButtonAnimationFrequency(committedAnimation)) === JSON.stringify(frequency) &&
         desktopBoundsEqual(committedAnimation.desktopBounds, resolvedBounds);
       if (draftAlreadyMatches && committedAlreadyMatches) {
         setActiveAnimationEditorButtonId(button.id);
@@ -2418,6 +2429,8 @@ function ButtonEditorContent({
       const nextDraft = cloneButtonDocument(store.current());
       nextDraft.buttons[button.id].activationAnimation = {
         presetId,
+        opacity,
+        frequency: structuredClone(frequency),
         desktopBounds: resolvedBounds
       };
       await persistButtonAnimation(nextDraft, button.id, "Animation applied.");
@@ -2453,7 +2466,9 @@ function ButtonEditorContent({
   };
 
   const applyAnimationSelection = async (
-    presetId: ButtonActivationAnimationPresetId | null
+    presetId: ButtonActivationAnimationPresetId | null,
+    opacity: number,
+    frequency: ButtonAnimationFrequency
   ) => {
     const button = selectedButton;
     if (!button) return;
@@ -2468,12 +2483,14 @@ function ButtonEditorContent({
     }
     if (
       activeAnimationEditorButtonId === button.id &&
-      button.activationAnimation?.presetId === presetId
+      button.activationAnimation?.presetId === presetId &&
+      (button.activationAnimation.opacity ?? 1) === opacity &&
+      JSON.stringify(getButtonAnimationFrequency(button.activationAnimation)) === JSON.stringify(frequency)
     ) {
       setMessage("This animation is already applied and its position-and-size setup is open.");
       return;
     }
-    await configureButtonAnimation(button, presetId);
+    await configureButtonAnimation(button, presetId, undefined, opacity, frequency);
   };
 
   const applyAllButtonText = async () => {

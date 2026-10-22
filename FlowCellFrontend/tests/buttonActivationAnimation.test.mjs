@@ -23,6 +23,7 @@ import {
   canButtonRunActivationAnimation,
   consumeButtonAnimationPress,
   getButtonActivationAnimationPreset,
+  getButtonAnimationFrequency,
   getButtonAnimationAspectRatio,
   normalizeButtonAnimationDesktopBounds,
   normalizeButtonAnimationEditorBounds,
@@ -126,6 +127,7 @@ test("Star Wars GIF survives canonical validation and animation window routing",
   const document = createButtonStateDocument();
   document.buttons["animated-button"] = makeExecutableButton({
     presetId: "star-wars-lightsaber",
+    opacity: 0.45,
     desktopBounds: { left: 120, top: 80, width: 480, height: 268 }
   });
   assert.equal(validateButtonStateDocument(document).valid, true);
@@ -138,12 +140,23 @@ test("Star Wars GIF survives canonical validation and animation window routing",
     mode: "play",
     requestId: "gif-repeat",
     buttonId: "animated-button",
-    presetId: "star-wars-lightsaber"
+    presetId: "star-wars-lightsaber",
+    opacity: 0.45
   };
   const previousWindow = globalThis.window;
   try {
     globalThis.window = { location: new URL(buildWindowContextUrl(context), "http://localhost") };
     assert.deepEqual(getWindowContextFromLocation(), context);
+    for (const opacity of [-0.1, 1.1, null, "0.5"]) {
+      document.buttons["animated-button"].activationAnimation.opacity = opacity;
+      assert.equal(validateButtonStateDocument(document).valid, false);
+      globalThis.window.location = new URL(buildWindowContextUrl({ ...context, opacity }), "http://localhost");
+      assert.deepEqual(getWindowContextFromLocation(), { kind: "main" });
+    }
+    for (const opacity of [0, 1, undefined]) {
+      document.buttons["animated-button"].activationAnimation.opacity = opacity;
+      assert.equal(validateButtonStateDocument(document).valid, true);
+    }
   } finally {
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
@@ -184,17 +197,17 @@ test("random GIF cadence persists the pending interval and count across sessions
   for (let press = 1; press <= 3; press += 1) {
     assert.equal(consumeButtonAnimationPress(button, firstSession, random), false);
   }
-  assert.deepEqual(JSON.parse([...data.values()][0]), { interval: 5, presses: 3 });
+  assert.deepEqual(JSON.parse([...data.values()][0]), { frequencyKey: "random-presses:5:50", interval: 5, presses: 3 });
   const reopenedSession = session();
   assert.equal(consumeButtonAnimationPress(button, reopenedSession, random), false);
   assert.equal(rolls, 1, "reopening must not reroll the pending interval");
   assert.equal(consumeButtonAnimationPress(button, reopenedSession, random), true);
-  assert.deepEqual(JSON.parse([...data.values()][0]), { interval: 50, presses: 0 });
+  assert.deepEqual(JSON.parse([...data.values()][0]), { frequencyKey: "random-presses:5:50", interval: 50, presses: 0 });
   for (let press = 1; press < 50; press += 1) {
     assert.equal(consumeButtonAnimationPress(button, reopenedSession, random), false);
   }
   assert.equal(consumeButtonAnimationPress(button, reopenedSession, random), true);
-  assert.deepEqual(JSON.parse([...data.values()][0]), { interval: 20, presses: 0 });
+  assert.deepEqual(JSON.parse([...data.values()][0]), { frequencyKey: "random-presses:5:50", interval: 20, presses: 0 });
   const otherButton = { ...button, id: "another-button" };
   assert.equal(consumeButtonAnimationPress(otherButton, session(), () => 0), false);
   assert.equal(data.size, 2, "different Buttons keep separate counters");
@@ -205,11 +218,11 @@ test("Plus Rise remains every-press and invalid GIF counters restart safely", ()
     presetId: "plus-rise",
     desktopBounds: { left: 0, top: 0, width: 283, height: 295 }
   });
-  const unavailableStorage = {
-    getItem: () => { throw new Error("must not read"); },
-    setItem: () => { throw new Error("must not write"); }
+  const storage = {
+    getItem: () => null,
+    setItem: () => {}
   };
-  assert.equal(consumeButtonAnimationPress(button, unavailableStorage), true);
+  assert.equal(consumeButtonAnimationPress(button, storage), true);
   button.activationAnimation.presetId = "star-wars-lightsaber";
   for (const corrupt of ["broken", "null", "{}", '{"interval":999,"presses":1}', '{"interval":5,"presses":5}']) {
     let written;
@@ -217,8 +230,76 @@ test("Plus Rise remains every-press and invalid GIF counters restart safely", ()
       getItem: () => corrupt,
       setItem: (_key, value) => { written = value; }
     }, () => 0), false);
-    assert.deepEqual(JSON.parse(written), { interval: 5, presses: 1 });
+    assert.deepEqual(JSON.parse(written), { frequencyKey: "random-presses:5:50", interval: 5, presses: 1 });
   }
+});
+
+test("editable frequency validates saved assignments and preserves legacy defaults", () => {
+  assert.deepEqual(getButtonAnimationFrequency({ presetId: "plus-rise" }), { mode: "every-press" });
+  assert.deepEqual(getButtonAnimationFrequency({ presetId: "star-wars-lightsaber" }), {
+    mode: "random-presses", minimum: 5, maximum: 50
+  });
+  const document = createButtonStateDocument();
+  const animation = { presetId: "star-wars-lightsaber", desktopBounds: { left: 0, top: 0, width: 480, height: 268 } };
+  document.buttons["animated-button"] = makeExecutableButton(animation);
+  for (const frequency of [
+    { mode: "every-press" }, { mode: "every-n-presses", presses: 5 },
+    { mode: "every-n-presses", presses: 10000 },
+    { mode: "random-presses", minimum: 1, maximum: 1 },
+    { mode: "random-presses", minimum: 20, maximum: 50 }, undefined
+  ]) {
+    animation.frequency = frequency;
+    assert.equal(validateButtonStateDocument(document).valid, true, JSON.stringify(frequency));
+  }
+  for (const frequency of [
+    null, {}, { mode: "unknown" }, { mode: "every-press", presses: 5 },
+    ...[0, -1, 1.5, 10001, "5", NaN].map((presses) => ({ mode: "every-n-presses", presses })),
+    { mode: "random-presses", minimum: 6, maximum: 5 },
+    { mode: "random-presses", minimum: 5 },
+    { mode: "random-presses", minimum: 1, maximum: 10001 }
+  ]) {
+    animation.frequency = frequency;
+    assert.equal(validateButtonStateDocument(document).valid, false, JSON.stringify(frequency));
+  }
+});
+
+test("fixed five-press cadence survives reopening and resets when frequency changes", () => {
+  let saved = JSON.stringify({ interval: 5, presses: 4 });
+  const session = () => ({ getItem: () => saved, setItem: (_key, value) => { saved = value; } });
+  const button = makeExecutableButton({
+    presetId: "star-wars-lightsaber",
+    desktopBounds: { left: 0, top: 0, width: 480, height: 268 },
+    frequency: { mode: "every-n-presses", presses: 5 }
+  });
+  const noRandom = () => { throw new Error("Fixed cadence must not roll"); };
+  for (let press = 1; press <= 10; press += 1) {
+    assert.equal(consumeButtonAnimationPress(button, session(), noRandom), press % 5 === 0);
+  }
+  button.activationAnimation.opacity = 0.35;
+  assert.equal(consumeButtonAnimationPress(button, session(), noRandom), false);
+  assert.equal(JSON.parse(saved).presses, 1);
+  button.activationAnimation.frequency = { mode: "every-press" };
+  assert.equal(consumeButtonAnimationPress(button, session(), noRandom), true);
+  button.activationAnimation.frequency = { mode: "every-n-presses", presses: 5 };
+  assert.equal(consumeButtonAnimationPress(button, session(), noRandom), false);
+  assert.equal(JSON.parse(saved).presses, 1, "new frequency starts from its first press");
+});
+
+test("custom random ranges include both endpoints and migrate compatible legacy counters", () => {
+  let saved = JSON.stringify({ interval: 20, presses: 19 });
+  const storage = { getItem: () => saved, setItem: (_key, value) => { saved = value; } };
+  const button = makeExecutableButton({
+    presetId: "star-wars-lightsaber", desktopBounds: { left: 0, top: 0, width: 480, height: 268 }
+  });
+  assert.equal(consumeButtonAnimationPress(button, storage, () => 0), true);
+  button.activationAnimation.frequency = { mode: "random-presses", minimum: 2, maximum: 3 };
+  assert.equal(consumeButtonAnimationPress(button, storage, () => 0), false);
+  assert.equal(consumeButtonAnimationPress(button, storage, () => 0.999999), true);
+  assert.equal(JSON.parse(saved).interval, 3);
+  assert.equal(consumeButtonAnimationPress(button, storage, () => 0), false);
+  assert.equal(consumeButtonAnimationPress(button, storage, () => 0), false);
+  assert.equal(consumeButtonAnimationPress(button, storage, () => 0), true);
+  assert.equal(JSON.parse(saved).interval, 2);
 });
 
 test("activation animation bounds use whole physical pixels for native Tauri placement", () => {
@@ -328,6 +409,34 @@ test("actual Button execution notifies the activation effect exactly once", asyn
     assert.equal(actionCalls, 1);
     assert.equal(effectCalls, 1);
   } finally {
+    unregisterAction();
+    unregisterEffect();
+  }
+});
+
+test("the animation starts without waiting for a slow Button action to finish", async () => {
+  const actionStarted = deferred();
+  const finishAction = deferred();
+  let effectCalls = 0;
+  const unregisterEffect = registerButtonActivationEffectHandler(() => {
+    effectCalls += 1;
+  });
+  const unregisterAction = registerButtonCoreAction("test-animated-button", async () => {
+    actionStarted.resolve();
+    await finishAction.promise;
+  });
+  try {
+    const pending = executeButtonRecord(makeExecutableButton({
+      presetId: "star-wars-lightsaber",
+      opacity: 0.45,
+      desktopBounds: { left: 100, top: 120, width: 480, height: 268 }
+    }), "click");
+    await actionStarted.promise;
+    assert.equal(effectCalls, 1);
+    finishAction.resolve();
+    assert.equal((await pending).executed, true);
+  } finally {
+    finishAction.resolve();
     unregisterAction();
     unregisterEffect();
   }

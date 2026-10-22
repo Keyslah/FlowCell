@@ -45,9 +45,16 @@ export interface ButtonDesktopBounds {
 
 export type ButtonActivationAnimationPresetId = "plus-rise" | "star-wars-lightsaber";
 
+export type ButtonAnimationFrequency =
+  | { mode: "every-press" }
+  | { mode: "every-n-presses"; presses: number }
+  | { mode: "random-presses"; minimum: number; maximum: number };
+
 export interface ButtonActivationAnimation {
   presetId: ButtonActivationAnimationPresetId;
   desktopBounds: ButtonDesktopBounds;
+  opacity?: number;
+  frequency?: ButtonAnimationFrequency;
 }
 
 export interface ButtonCoreMeasurement {

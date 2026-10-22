@@ -255,6 +255,7 @@ export async function openButtonActivationAnimationEditor(args: {
   buttonId: string;
   presetId: ButtonActivationAnimationPresetId;
   bounds?: ButtonDesktopBounds | null;
+  opacity?: number;
 }): Promise<ButtonDesktopBounds> {
   if (!hasTauriRuntime()) {
     throw new Error("Button animation positioning is available in the FlowCell desktop app.");
@@ -269,7 +270,8 @@ export async function openButtonActivationAnimationEditor(args: {
     mode: "edit",
     requestId: createAnimationRequestId(),
     buttonId: args.buttonId,
-    presetId: args.presetId
+    presetId: args.presetId,
+    opacity: args.opacity ?? 1
   }, bounds);
   return bounds;
 }
@@ -287,7 +289,8 @@ export async function playButtonActivationAnimation(
     mode: "play",
     requestId: createAnimationRequestId(),
     buttonId: button.id,
-    presetId: animation.presetId
+    presetId: animation.presetId,
+    opacity: animation.opacity ?? 1
   }, resolveButtonAnimationPlaybackBounds(
     animation.presetId,
     animation.desktopBounds

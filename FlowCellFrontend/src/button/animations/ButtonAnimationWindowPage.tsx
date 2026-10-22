@@ -77,6 +77,7 @@ export default function ButtonAnimationWindowPage({
     : plusRiseSpriteUrl;
   const editing = context.mode === "edit";
   const stageStyle = {
+    opacity: context.opacity ?? 1,
     "--button-animation-sprite-top": `${(
       preset.playbackCanvas.topMarginSpriteHeights /
       preset.playbackCanvas.heightSpriteHeights
