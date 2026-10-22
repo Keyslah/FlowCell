@@ -1,15 +1,20 @@
 <#
-Purpose: Build the installer-only release and every tracked program ZIP from one committed revision.
+Purpose: Build the installer-only release and program ZIPs, including the selected saved Blender themes.
 Context: Windows developer/CI tools installed, locked npm dependencies restored.
-Inputs: AutoHotkey executable/license, optional output directory. No credentials required to build.
+Inputs: AutoHotkey executable/license, optional output directory and Blender theme library. No credentials required to build.
 Writes: Ignored dist and Tauri build output. Prior installer ZIP is recycled before replacement.
 Constraints: No portable ZIP, user state, registration, publication, or source mutation.
 #>
 [CmdletBinding()]
-param([string]$AutoHotkeyExe='C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe', [string]$AutoHotkeyLicenseFile='C:\Program Files\AutoHotkey\license.txt', [string]$OutputDirectory)
+param([string]$AutoHotkeyExe='C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe', [string]$AutoHotkeyLicenseFile='C:\Program Files\AutoHotkey\license.txt', [string]$OutputDirectory, [string]$BlenderThemeLibrary)
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $output=if($OutputDirectory){[IO.Path]::GetFullPath($OutputDirectory)}else{Join-Path $repo 'dist/release'}
+$RepoRoot=$repo
+function Stop-Package([string]$Message) { throw "[FlowCell package] $Message" }
+. (Join-Path $PSScriptRoot 'program-package-safety.ps1')
+. (Join-Path $PSScriptRoot 'blender-theme-packages.ps1')
+$BlenderThemeLibrary=Resolve-BlenderThemePackageLibrary -LibraryPath $BlenderThemeLibrary
 & (Join-Path $PSScriptRoot 'prepare-installer.ps1') -AutoHotkeyExe $AutoHotkeyExe -AutoHotkeyLicenseFile $AutoHotkeyLicenseFile
 Push-Location (Join-Path $repo 'FlowCellFrontend')
 try { & npm.cmd run tauri build -- --config src-tauri/tauri.installer.conf.json; if($LASTEXITCODE -ne 0){throw "Tauri installer build failed: $LASTEXITCODE"} } finally {Pop-Location}
@@ -19,6 +24,6 @@ if($installers.Count -ne 1){throw "Expected exactly one installer; found $($inst
 $zip=Join-Path $output 'flowcellwindowsinstaller.zip'
 if(Test-Path -LiteralPath $zip){Add-Type -AssemblyName Microsoft.VisualBasic;[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($zip,'OnlyErrorDialogs','SendToRecycleBin')}
 Compress-Archive -LiteralPath $installers[0].FullName -DestinationPath $zip
-& (Join-Path $PSScriptRoot 'package-portable.ps1') -ProgramsOnly -OutputDirectory $output
+& (Join-Path $PSScriptRoot 'package-portable.ps1') -ProgramsOnly -OutputDirectory $output -BlenderThemeLibrary $BlenderThemeLibrary
 & (Join-Path $PSScriptRoot 'verify-release.ps1') -Directory $output
-Write-Output "Installer and all program packages built from $((& git -C $repo rev-parse HEAD).Trim()) in $output"
+Write-Output "Installer and program source revision: $((& git -C $repo rev-parse HEAD).Trim()); selected Blender themes included. Output: $output"

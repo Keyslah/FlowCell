@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type {
   ButtonActivationAnimationPresetId,
+  ButtonAnimationFadePoint,
   ButtonAnimationFrequency,
   ButtonRecord
 } from "../types";
@@ -8,9 +9,12 @@ import {
   BUTTON_ACTIVATION_ANIMATION_PRESETS,
   canButtonRunActivationAnimation,
   getButtonActivationAnimationPreset,
+  getButtonAnimationFadeCurve,
   getButtonAnimationFrequency,
+  isButtonAnimationFadeCurve,
   isButtonAnimationFrequency
 } from "../animations/buttonActivationAnimations";
+import { ButtonAnimationFadeCurveEditor } from "./ButtonAnimationFadeCurveEditor";
 
 export interface ButtonAnimationPickerPageProps {
   button: ButtonRecord | null;
@@ -20,7 +24,8 @@ export interface ButtonAnimationPickerPageProps {
   onApply: (
     presetId: ButtonActivationAnimationPresetId | null,
     opacity: number,
-    frequency: ButtonAnimationFrequency
+    frequency: ButtonAnimationFrequency,
+    fadeCurve: ButtonAnimationFadePoint[]
   ) => void | Promise<void>;
   onPositionAndSize: () => void;
   onSavePositionAndSize: () => void;
@@ -48,6 +53,10 @@ export function ButtonAnimationPickerPage({
     : { mode: "every-press" } as const;
   const savedFrequencyKey = JSON.stringify(savedFrequency);
   const [frequency, setFrequency] = useState<ButtonAnimationFrequency>(savedFrequency);
+  const savedFadeCurveKey = JSON.stringify(getButtonAnimationFadeCurve(button?.activationAnimation ?? {}));
+  const [fadeCurve, setFadeCurve] = useState<ButtonAnimationFadePoint[]>(
+    () => getButtonAnimationFadeCurve(button?.activationAnimation ?? {})
+  );
 
   useEffect(() => {
     setSelectedPresetId(button?.activationAnimation?.presetId ?? "");
@@ -61,9 +70,15 @@ export function ButtonAnimationPickerPage({
     setFrequency(JSON.parse(savedFrequencyKey) as ButtonAnimationFrequency);
   }, [button?.id, savedFrequencyKey]);
 
+  useEffect(() => {
+    setFadeCurve(JSON.parse(savedFadeCurveKey) as ButtonAnimationFadePoint[]);
+  }, [button?.id, savedFadeCurveKey]);
+
   const validFrequency = isButtonAnimationFrequency(frequency);
   const canApplyPreset = Boolean(
-    button && (!selectedPresetId || (canButtonRunActivationAnimation(button) && validFrequency))
+    button && (!selectedPresetId || (
+      canButtonRunActivationAnimation(button) && validFrequency && isButtonAnimationFadeCurve(fadeCurve)
+    ))
   );
   const appliedPreset = button?.activationAnimation
     ? getButtonActivationAnimationPreset(button.activationAnimation.presetId)
@@ -198,13 +213,14 @@ export function ButtonAnimationPickerPage({
                     onChange={(event) => setTransparency(Number(event.currentTarget.value))}
                   />
                 </label>
+                <ButtonAnimationFadeCurveEditor curve={fadeCurve} disabled={busy} onChange={setFadeCurve} />
               </>
             ) : null}
             <button
               className="button-animation-picker-page__apply"
               type="button"
               disabled={busy || !canApplyPreset}
-              onClick={() => void onApply(selectedPresetId || null, 1 - transparency / 100, frequency)}
+              onClick={() => void onApply(selectedPresetId || null, 1 - transparency / 100, frequency, fadeCurve)}
             >
               Apply
             </button>

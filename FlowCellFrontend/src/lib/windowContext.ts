@@ -1,6 +1,6 @@
 import type { FlowCellBounds } from "../types.js";
-import type { ButtonActivationAnimationPresetId } from "../button/types.js";
-import { isButtonActivationAnimationPresetId, isButtonAnimationOpacity } from "../button/animations/buttonActivationAnimations.js";
+import type { ButtonActivationAnimationPresetId, ButtonAnimationFadePoint } from "../button/types.js";
+import { isButtonActivationAnimationPresetId, isButtonAnimationFadeCurve, isButtonAnimationOpacity } from "../button/animations/buttonActivationAnimations.js";
 
 export const BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION = 1 as const;
 export const BINDS_PREFILL_EVENT = "flowcell:binds-prefill";
@@ -50,6 +50,7 @@ export interface ButtonAnimationWindowContext {
   buttonId: string;
   presetId: ButtonActivationAnimationPresetId;
   opacity?: number;
+  fadeCurve?: ButtonAnimationFadePoint[];
 }
 
 export interface BindsButtonPrefill {
@@ -238,7 +239,8 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
     typeof parsed.buttonId === "string" &&
     parsed.buttonId.trim() &&
     isButtonActivationAnimationPresetId(parsed.presetId) &&
-    (parsed.opacity === undefined || isButtonAnimationOpacity(parsed.opacity))
+    (parsed.opacity === undefined || isButtonAnimationOpacity(parsed.opacity)) &&
+    (parsed.fadeCurve === undefined || isButtonAnimationFadeCurve(parsed.fadeCurve))
   ) {
     return {
       kind: "button-animation",
@@ -247,7 +249,8 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
       requestId: parsed.requestId,
       buttonId: parsed.buttonId,
       presetId: parsed.presetId,
-      ...(parsed.opacity === undefined ? {} : { opacity: parsed.opacity })
+      ...(parsed.opacity === undefined ? {} : { opacity: parsed.opacity }),
+      ...(parsed.fadeCurve === undefined ? {} : { fadeCurve: parsed.fadeCurve })
     };
   }
   if (parsed.kind === "binds") {

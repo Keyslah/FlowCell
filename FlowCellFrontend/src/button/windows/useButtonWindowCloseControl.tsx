@@ -80,6 +80,9 @@ export function useButtonWindowCloseControl(args: {
     if (!session || session.pointerId !== event.pointerId || !args.frame) return;
     event.preventDefault();
     event.stopPropagation();
+    // A Space-held press still clicks X unless it moves far enough to drag.
+    if (!suppressClick.current && Math.hypot(event.clientX - session.x, event.clientY - session.y) < 4) return;
+    suppressClick.current = true;
     const next = clamp({ left: session.left + event.clientX - session.x, top: session.top + event.clientY - session.y });
     setOffset(closeControlOffsetFromPosition(args.frame, next, ratio));
   };
@@ -88,13 +91,16 @@ export function useButtonWindowCloseControl(args: {
     event.preventDefault();
     event.stopPropagation();
     if (commit) move(event);
-    else setOffset(drag.current.original);
+    else {
+      suppressClick.current = true;
+      setOffset(drag.current.original);
+    }
     drag.current = null;
     setDragging(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
   const close = async () => {
-    if (closing || dragging || args.spaceDown || suppressClick.current) return;
+    if (closing || dragging || suppressClick.current) return;
     setClosing(true);
     try {
       await getCurrentWindow().close();
@@ -120,7 +126,7 @@ export function useButtonWindowCloseControl(args: {
         data-close-control-dragging={dragging ? "true" : undefined}
         style={{ ...position, cursor: args.spaceDown || dragging ? "move" : "pointer" }}
         aria-label="Close this window"
-        title="Close this window · Hold Space to move X"
+        title="Click to close this window · Hold Space and drag to move X"
         disabled={closing}
         onKeyDown={(event) => {
           if (event.code === "Space") event.preventDefault();
@@ -133,7 +139,6 @@ export function useButtonWindowCloseControl(args: {
           suppressClick.current = false;
           if (!args.spaceDown || event.button !== 0) return;
           event.preventDefault();
-          suppressClick.current = true;
           drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, ...position, original: offset };
           setDragging(true);
           hover.hover(true);

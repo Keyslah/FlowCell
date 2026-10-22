@@ -50,11 +50,18 @@ export type ButtonAnimationFrequency =
   | { mode: "every-n-presses"; presses: number }
   | { mode: "random-presses"; minimum: number; maximum: number };
 
+/** Normalized playback time and opacity multiplier for one fade curve point. */
+export interface ButtonAnimationFadePoint {
+  time: number;
+  opacity: number;
+}
+
 export interface ButtonActivationAnimation {
   presetId: ButtonActivationAnimationPresetId;
   desktopBounds: ButtonDesktopBounds;
   opacity?: number;
   frequency?: ButtonAnimationFrequency;
+  fadeCurve?: ButtonAnimationFadePoint[];
 }
 
 export interface ButtonCoreMeasurement {

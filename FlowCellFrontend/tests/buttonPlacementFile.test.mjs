@@ -739,6 +739,7 @@ test("Button settings preserve the Star Wars animation when saved and reloaded",
     presetId: "star-wars-lightsaber",
     opacity: 0.45,
     frequency: { mode: "every-n-presses", presses: 5 },
+    fadeCurve: [{ time: 0, opacity: 0 }, { time: 0.3, opacity: 1 }, { time: 0.7, opacity: 1 }, { time: 1, opacity: 0 }],
     desktopBounds: { left: 100, top: 120, width: 480, height: 268 }
   };
   document.buttons["button-b"].activationAnimation = animation;
@@ -759,6 +760,11 @@ test("Button settings preserve the Star Wars animation when saved and reloaded",
     mode: "random-presses", minimum: 50, maximum: 5
   };
   assert.equal(validateButtonSettingsFile(invalidFrequency).valid, false);
+  const invalidFade = structuredClone(settings);
+  invalidFade.entries.find((entry) => entry.buttonId === "button-b").activationAnimation.fadeCurve = [
+    { time: 0, opacity: 0 }, { time: 0, opacity: 1 }
+  ];
+  assert.equal(validateButtonSettingsFile(invalidFade).valid, false);
 });
 
 test("Button settings save and restore exact membership, text, skin, size, highlights, behavior, and animation", () => {

@@ -1860,29 +1860,7 @@
     picker.addEventListener("input", () => update(picker.value));
     picker.addEventListener("change", () => update(picker.value));
     textInput.addEventListener("change", () => update(textInput.value));
-    const eyedropper = actionButton(buttonThemeActions.pickColor, async () => {
-      if (busy) return;
-      setBusy(true);
-      setStatus("Click a screen color. Escape or right-click cancels.");
-      try {
-        const response = await pageApi.request(buttonThemeActions.pickColor, {});
-        if (response?.selected === false) {
-          setStatus("Color picking canceled.");
-        } else {
-          const color = normalizeHex(response.color);
-          if (!color) throw new Error("The screen picker returned an invalid color.");
-          update(color);
-          setStatus(`${spec.ariaPrefix}${labelText}: ${color}`, "success");
-        }
-      } catch (error) {
-        setStatus(error instanceof Error ? error.message : String(error), "error");
-      } finally {
-        setBusy(false);
-      }
-    });
-    eyedropper.className = "button-theme-gradient__pick";
-    eyedropper.setAttribute("aria-label", `${spec.ariaPrefix}${labelText} screen eyedropper`);
-    inputs.append(picker, textInput, eyedropper);
+    inputs.append(picker, textInput);
     control.append(inputs);
     return control;
   }

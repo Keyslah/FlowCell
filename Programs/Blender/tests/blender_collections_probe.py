@@ -205,6 +205,42 @@ assert actions.find_latest_version_object(new_bucket, "s").name == "(s1)After re
 assert ctx.active_object == renamed and set(ctx.selected_objects) == {renamed}
 passed.append("renamed working object starts its own snapshot bucket")
 
+for original_name in ("Original ", " Original", " Original "):
+    for direction in ("forward", "backward"):
+        roots = reset()
+        original = obj(original_name, roots["Live"])
+        unrelated = obj("Original.001", roots["Live"])
+        unrelated[actions.TARGET_NAME_PROP] = "Original"
+        versions = [snapshot(original, roots) for _ in range(3)]
+        members = [original, *versions]
+        before = [(item.name, tuple(item.users_collection), item.data) for item in members]
+        expected_labels = ("s3", "s2", "s1", "original") if direction == "forward" else (
+            "s1", "s2", "s3", "original"
+        )
+        for expected_label in expected_labels * 2:
+            result = actions.perform_cycle_live_versions(ctx, direction)
+            ctx.view_layer.update()
+            assert result["display"] == expected_label, (original_name, direction, result)
+            visible = [item for item in members if item.visible_get(view_layer=ctx.view_layer)]
+            assert visible == [ctx.active_object], (
+                original_name, direction, [item.name for item in visible]
+            )
+            assert set(ctx.selected_objects) == {ctx.active_object}
+            assert original.hide_get() == (expected_label != "original")
+            assert unrelated.visible_get() and not unrelated.select_get()
+        assert [(item.name, tuple(item.users_collection), item.data) for item in members] == before
+        passed.append(f"whitespace original {original_name!r} cycles {direction} with one visible version")
+
+roots = reset()
+padded = obj(" Original ", roots["Live"])
+exact = obj("Original", roots["Live"])
+assert actions.find_original_object(ctx, "Original") == exact
+exact.name = "Unrelated"
+assert actions.find_original_object(ctx, "Original") == padded
+other_padded = obj("Original ", roots["Live"])
+assert actions.find_original_object(ctx, "Original") is None
+passed.append("original lookup prefers exact names and rejects ambiguous whitespace matches")
+
 for operation in ("restore", "back", "cycle"):
     roots = reset()
     home = collection("Missing original home")

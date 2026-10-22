@@ -26,7 +26,7 @@ import {
   normalizeButtonHighlightAmount,
   normalizeButtonSkinColor
 } from "../skins/buttonSkinColors.js";
-import { isButtonActivationAnimationPresetId, isButtonAnimationFrequency, isButtonAnimationOpacity } from "../animations/buttonActivationAnimations.js";
+import { isButtonActivationAnimationPresetId, isButtonAnimationFadeCurve, isButtonAnimationFrequency, isButtonAnimationOpacity } from "../animations/buttonActivationAnimations.js";
 import { normalizeProgramPopoutColorOverride, normalizeProgramPopoutThemeLock, normalizeProgramPopoutThemeSettings } from "../../theme/programPopoutTheme.js";
 
 export interface ButtonStateValidationIssue {
@@ -463,6 +463,9 @@ function validateButtonRecord(
       }
       if (value.activationAnimation.frequency !== undefined && !isButtonAnimationFrequency(value.activationAnimation.frequency)) {
         addIssue(issues, `${animationPath}.frequency`, "Button animation frequency must use whole press counts from 1 to 10000 and an ordered range.");
+      }
+      if (value.activationAnimation.fadeCurve !== undefined && !isButtonAnimationFadeCurve(value.activationAnimation.fadeCurve)) {
+        addIssue(issues, `${animationPath}.fadeCurve`, "Button animation fade curve must contain 2-16 ordered unit-range points spanning time 0 to 1.");
       }
       if (!isUsableDesktopBounds(value.activationAnimation.desktopBounds)) {
         addIssue(

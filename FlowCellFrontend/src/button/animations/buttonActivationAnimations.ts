@@ -1,6 +1,7 @@
 import type {
   ButtonActivationAnimation,
   ButtonActivationAnimationPresetId,
+  ButtonAnimationFadePoint,
   ButtonAnimationFrequency,
   ButtonDesktopBounds,
   ButtonRecord
@@ -83,6 +84,63 @@ export function isButtonActivationAnimationPresetId(
 
 export function isButtonAnimationOpacity(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+export const BUTTON_ANIMATION_FADE_MAX_POINTS = 16;
+
+export function isButtonAnimationFadeCurve(value: unknown): value is ButtonAnimationFadePoint[] {
+  if (!Array.isArray(value) || value.length < 2 || value.length > BUTTON_ANIMATION_FADE_MAX_POINTS) return false;
+  let previousTime = -1;
+  for (const point of value) {
+    if (!point || typeof point !== "object" || Array.isArray(point) ||
+        Object.keys(point).length !== 2 || !isButtonAnimationOpacity(point.time) ||
+        !isButtonAnimationOpacity(point.opacity) || point.time <= previousTime) return false;
+    previousTime = point.time;
+  }
+  return value[0].time === 0 && value[value.length - 1].time === 1;
+}
+
+export function getButtonAnimationFadeCurve(
+  animation: Pick<ButtonActivationAnimation, "fadeCurve">
+): ButtonAnimationFadePoint[] {
+  return animation.fadeCurve ?? [
+    { time: 0, opacity: 0 },
+    { time: 0.2, opacity: 1 },
+    { time: 0.8, opacity: 1 },
+    { time: 1, opacity: 0 }
+  ];
+}
+
+export function sampleButtonAnimationFadeCurve(
+  curve: readonly ButtonAnimationFadePoint[],
+  time: number
+): number {
+  if (time <= curve[0].time) return curve[0].opacity;
+  for (let index = 1; index < curve.length; index += 1) {
+    const end = curve[index];
+    if (time === end.time) return end.opacity;
+    if (time <= end.time) {
+      const start = curve[index - 1];
+      const progress = Math.max(0, Math.min(1, smootherStep((time - start.time) / (end.time - start.time))));
+      return start.opacity + (end.opacity - start.opacity) * progress;
+    }
+  }
+  return curve[curve.length - 1].opacity;
+}
+
+export function buildButtonAnimationFadeFrames(
+  animation: Pick<ButtonActivationAnimation, "fadeCurve" | "opacity">
+): { offset: number; opacity: number }[] {
+  const curve = getButtonAnimationFadeCurve(animation);
+  const opacity = animation.opacity ?? 1;
+  const frames = curve.slice(0, -1).flatMap((point, index) =>
+    Array.from({ length: 20 }, (_, step) => {
+      const offset = point.time + (curve[index + 1].time - point.time) * step / 20;
+      return { offset, opacity: sampleButtonAnimationFadeCurve(curve, offset) * opacity };
+    })
+  );
+  frames.push({ offset: 1, opacity: curve[curve.length - 1].opacity * opacity });
+  return frames;
 }
 
 export function isButtonAnimationFrequency(value: unknown): value is ButtonAnimationFrequency {

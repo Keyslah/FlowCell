@@ -13,13 +13,15 @@ import {
   PhysicalSize
 } from "@tauri-apps/api/window";
 import type { ButtonAnimationWindowContext } from "../../lib/windowContext";
-import type { ButtonActivationAnimationPresetId, ButtonDesktopBounds } from "../types";
+import type { ButtonDesktopBounds } from "../types";
 import plusRiseSpriteUrl from "../../assets/button-animations/plus-rise.png";
 import starWarsLightsaberUrl from "../../assets/button-animations/star-wars-lightsaber.gif";
 import {
+  buildButtonAnimationFadeFrames,
   buildPlusRiseAnimationFrames,
   BUTTON_ANIMATION_MINIMUM_EDITOR_WIDTH,
   getButtonActivationAnimationPreset,
+  getButtonAnimationFadeCurve,
   resizeButtonAnimationEditorBounds,
   type ButtonAnimationResizeDirection
 } from "./buttonActivationAnimations";
@@ -61,10 +63,12 @@ export default function ButtonAnimationWindowPage({
 }: ButtonAnimationWindowPageProps) {
   const [context, setContext] = useState(initialContext);
   const [contextArmed, setContextArmed] = useState(false);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const activeRequestIdRef = useRef<string | null>(null);
   const playbackAnimationRef = useRef<Animation | null>(null);
+  const fadeAnimationRef = useRef<Animation | null>(null);
   const activeResizeRef = useRef<ActiveResize | null>(null);
   const resizeSessionRef = useRef(0);
   const resizePendingRef = useRef(false);
@@ -77,7 +81,7 @@ export default function ButtonAnimationWindowPage({
     : plusRiseSpriteUrl;
   const editing = context.mode === "edit";
   const stageStyle = {
-    opacity: context.opacity ?? 1,
+    opacity: (context.opacity ?? 1) * (editing ? 1 : getButtonAnimationFadeCurve(context)[0].opacity),
     "--button-animation-sprite-top": `${(
       preset.playbackCanvas.topMarginSpriteHeights /
       preset.playbackCanvas.heightSpriteHeights
@@ -101,20 +105,27 @@ export default function ButtonAnimationWindowPage({
   }, [clearHideTimer]);
 
   const startPlayback = useCallback(async (
-    requestId: string,
-    presetId: ButtonActivationAnimationPresetId
+    playbackContext: ButtonAnimationWindowContext
   ) => {
+    const { requestId, presetId } = playbackContext;
     const { durationMs } = getButtonActivationAnimationPreset(presetId);
     clearHideTimer();
     playbackAnimationRef.current?.cancel();
     playbackAnimationRef.current = null;
+    fadeAnimationRef.current?.cancel();
+    fadeAnimationRef.current = null;
     await imageRef.current?.decode().catch(() => {});
     if (activeRequestIdRef.current !== requestId) return;
     const currentWindow = getCurrentWindow();
     await currentWindow.setIgnoreCursorEvents(true).catch(() => {});
     await currentWindow.setAlwaysOnTop(true).catch(() => {});
+    if (activeRequestIdRef.current !== requestId) return;
     await currentWindow.show().catch(() => {});
-    if (activeRequestIdRef.current !== requestId || !imageRef.current) return;
+    if (activeRequestIdRef.current !== requestId || !imageRef.current || !stageRef.current) return;
+    fadeAnimationRef.current = stageRef.current.animate(
+      buildButtonAnimationFadeFrames(playbackContext),
+      { duration: durationMs, easing: "linear", fill: "both" }
+    );
     if (presetId === "star-wars-lightsaber") {
       hideTimerRef.current = window.setTimeout(() => {
         void hideWindow(requestId);
@@ -147,6 +158,7 @@ export default function ButtonAnimationWindowPage({
     let unlisten: (() => void) | undefined;
     void listenForButtonAnimationWindowContextUpdates((nextContext) => {
       if (!disposed) {
+        activeRequestIdRef.current = nextContext.requestId;
         setContext(nextContext);
         setContextArmed(true);
       }
@@ -168,11 +180,13 @@ export default function ButtonAnimationWindowPage({
     if (!contextArmed) return;
     activeRequestIdRef.current = context.requestId;
     if (context.mode === "play") {
-      void startPlayback(context.requestId, context.presetId);
+      void startPlayback(context);
       return;
     }
     playbackAnimationRef.current?.cancel();
     playbackAnimationRef.current = null;
+    fadeAnimationRef.current?.cancel();
+    fadeAnimationRef.current = null;
     clearHideTimer();
   }, [clearHideTimer, context, contextArmed, startPlayback]);
 
@@ -180,6 +194,8 @@ export default function ButtonAnimationWindowPage({
     activeRequestIdRef.current = null;
     playbackAnimationRef.current?.cancel();
     playbackAnimationRef.current = null;
+    fadeAnimationRef.current?.cancel();
+    fadeAnimationRef.current = null;
     clearHideTimer();
   }, [clearHideTimer]);
 
@@ -294,7 +310,12 @@ export default function ButtonAnimationWindowPage({
       className={`button-animation-window button-animation-window--${context.mode}${gifPlayback ? " button-animation-window--gif" : ""}`}
       onPointerDown={editing ? handleDragStart : undefined}
     >
-      <div className="button-animation-window__stage" style={stageStyle}>
+      <div
+        key={`${context.mode}-${context.requestId}`}
+        ref={stageRef}
+        className="button-animation-window__stage"
+        style={stageStyle}
+      >
         <img
           key={`${context.mode}-${context.requestId}`}
           ref={imageRef}

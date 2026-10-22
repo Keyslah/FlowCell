@@ -14,6 +14,7 @@ import {
 } from "../../lib/windowContext";
 import type {
   ButtonActivationAnimationPresetId,
+  ButtonAnimationFadePoint,
   ButtonDesktopBounds,
   ButtonRecord
 } from "../types";
@@ -256,6 +257,7 @@ export async function openButtonActivationAnimationEditor(args: {
   presetId: ButtonActivationAnimationPresetId;
   bounds?: ButtonDesktopBounds | null;
   opacity?: number;
+  fadeCurve?: ButtonAnimationFadePoint[];
 }): Promise<ButtonDesktopBounds> {
   if (!hasTauriRuntime()) {
     throw new Error("Button animation positioning is available in the FlowCell desktop app.");
@@ -271,7 +273,8 @@ export async function openButtonActivationAnimationEditor(args: {
     requestId: createAnimationRequestId(),
     buttonId: args.buttonId,
     presetId: args.presetId,
-    opacity: args.opacity ?? 1
+    opacity: args.opacity ?? 1,
+    fadeCurve: args.fadeCurve
   }, bounds);
   return bounds;
 }
@@ -290,7 +293,8 @@ export async function playButtonActivationAnimation(
     requestId: createAnimationRequestId(),
     buttonId: button.id,
     presetId: animation.presetId,
-    opacity: animation.opacity ?? 1
+    opacity: animation.opacity ?? 1,
+    fadeCurve: animation.fadeCurve
   }, resolveButtonAnimationPlaybackBounds(
     animation.presetId,
     animation.desktopBounds

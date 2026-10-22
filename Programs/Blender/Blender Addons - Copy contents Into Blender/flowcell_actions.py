@@ -2134,7 +2134,14 @@ def find_original_object(context: bpy.types.Context, target_name: str) -> bpy.ty
     candidates = [obj for obj in context.scene.objects if working_collections(obj, context.scene.collection)]
     # An inherited target property cannot identify the original: it may belong
     # to a different duplicate after the original has been moved or renamed.
-    return next((obj for obj in candidates if obj.name == target_name), None)
+    exact_match = next((obj for obj in candidates if obj.name == target_name), None)
+    if exact_match is not None:
+        return exact_match
+    # Target names already trim surrounding whitespace. Use that same rule
+    # here so a padded original is included in the cycle's visibility changes.
+    # Never choose arbitrarily when multiple working names trim to the target.
+    trimmed_matches = [obj for obj in candidates if obj.name.strip() == target_name]
+    return trimmed_matches[0] if len(trimmed_matches) == 1 else None
 
 
 def restore_object_to_origin(

@@ -341,55 +341,32 @@ test("Theme owns its Blender lifecycle and generic deletion owns its sidecar", (
   assert.ok(registryPrune > 0 && registryPrune < runtimeRecycle);
 });
 
-test("gradient eyedroppers commit the selected screen color to the exact Fill or Text stop", async () => {
+test("gradient swatches retain color editing without separate eyedropper buttons", async () => {
   const root = await renderThemePage({}, {
     "button-theme.settings": { configured: true, settings: poppedSettings({
       colors: ["#123456", "#234567", "#345678"], textColors: ["#AAAAAA", "#BBBBBB"]
-    }) },
-    "button-theme.pick-color": { selected: true, color: "#a1b2c3" }
+    }) }
   });
+  assert.equal(root.querySelectorAll("button").some(node => /eyedropper/i.test(`${node.textContent} ${node["aria-label"] || ""}`)), false);
+  assert.equal(page.actions.some(action => action.id === "button-theme.pick-color"), false);
+  assert.equal(page.capabilities.includes("color.pick-screen"), false);
   for (const name of ["Color 2", "Text End"]) {
-    const pick = root.querySelectorAll("button").find(node => node["aria-label"] === `${name} screen eyedropper`);
-    assert.ok(pick, `${name} has a dedicated screen eyedropper`);
-    pick.click();
-    assert.equal(root.dataset.busy, "true", "disable controls while screen selection is active");
-    pick.click();
-    await settlePageAction();
-    assert.equal(root.dataset.busy, "false");
+    const picker = root.querySelectorAll("input").find(node => node["aria-label"] === `${name} color picker`);
+    assert.equal(picker.type, "color", "the swatch keeps the original browser color popup");
+    setInput(picker, "#a1b2c3", "input");
     assert.equal(root.querySelectorAll("input").find(node => node["aria-label"] === `${name} color`).value, "#A1B2C3");
     assert.equal(root.querySelectorAll("input").find(node => node["aria-label"] === `${name} color picker`).value, "#A1B2C3");
   }
-  assert.equal(root.requests.filter(({ actionId }) => actionId === "button-theme.pick-color").length, 2,
-    "a repeated click during selection cannot launch a second picker");
   await root.flushTimers();
   const saved = root.requests.filter(({ actionId }) => actionId === "owner-state.write").at(-1).payload.state.buttonTheme;
   assert.deepEqual(plain(saved.gradientColors), ["#123456", "#A1B2C3", "#345678"]);
   assert.deepEqual(plain(saved.textColors), ["#AAAAAA", "#A1B2C3"]);
 });
 
-test("canceling or failing a gradient eyedropper preserves colors and releases controls", async () => {
-  for (const response of [
-    { selected: false, color: "" },
-    { selected: true, color: "invalid" },
-    () => { throw new Error("Screen capture failed"); }
-  ]) {
-    const root = await renderThemePage({}, {
-      "button-theme.settings": { configured: true, settings: poppedSettings({ colors: ["#123456", "#345678"] }) },
-      "button-theme.pick-color": response
-    });
-    root.querySelectorAll("button").find(node => node["aria-label"] === "Start screen eyedropper").click();
-    await settlePageAction();
-    assert.equal(root.querySelectorAll("input").find(node => node["aria-label"] === "Start color").value, "#123456");
-    assert.equal(root.dataset.busy, "false");
-    assert.match(root.status.textContent, /canceled|invalid color|Screen capture failed/);
-    assert.equal(root.status.dataset.kind, response.selected === false ? "info" : "error");
-  }
-});
-
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.0.35");
+  assert.equal(contribution.version, "3.0.36");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -490,7 +467,6 @@ test("popped Button colors use an aggregate revision-bound Core contract", async
   const refill = actionById.get("button-theme.refill");
   const toggleText = actionById.get("button-theme.toggle-text");
   assert.deepEqual(page.config.actions.buttonTheme, {
-    pickColor: "button-theme.pick-color",
     scan: scan.id,
     apply: apply.id,
     refill: refill.id,
@@ -1379,7 +1355,6 @@ test("the package restores the original Theme wording", () => {
 
 test("every rendered Theme button restores an explanatory tooltip", async () => {
   assert.deepEqual(page.config.actionTooltips, {
-    "button-theme.pick-color": "Pick this gradient color from anywhere on screen. Escape or right-click cancels.",
     "theme.image.select": "Pick an image, sample theme colors, and place it as the Place Picture image.",
     "theme.image.sample": "Sample theme colors from the selected reference image.",
     "theme.absorb": "Read the current Blender theme and stage all visible buckets.",
@@ -1437,7 +1412,7 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
   const root = await renderThemePage();
   const buttons = root.querySelectorAll("button");
   // Grid visibility and spacing apply directly through their inputs.
-  assert.equal(buttons.length, 27 + 6 + 5 + 2 * 17 + 2 * 19 + page.config.roles.length + page.config.environment.valueFields.length);
+  assert.equal(buttons.length, 27 + 5 + 2 * 17 + 2 * 19 + page.config.roles.length + page.config.environment.valueFields.length);
   assert.deepEqual(
     buttons.flatMap((button, index) => button.title.trim() ? [] : [`${index}: ${button.textContent}`]),
     []

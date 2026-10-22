@@ -18,18 +18,21 @@ import {
   createLatestDesiredRegistrationCoordinator
 } from "./.compiled-button-system/button/runtime/latestDesiredRegistration.js";
 import {
+  buildButtonAnimationFadeFrames,
   buildPlusRiseAnimationFrames,
   BUTTON_ACTIVATION_ANIMATION_PRESETS,
   canButtonRunActivationAnimation,
   consumeButtonAnimationPress,
   getButtonActivationAnimationPreset,
+  getButtonAnimationFadeCurve,
   getButtonAnimationFrequency,
   getButtonAnimationAspectRatio,
   normalizeButtonAnimationDesktopBounds,
   normalizeButtonAnimationEditorBounds,
   PLUS_RISE_FRAME_COUNT,
   resizeButtonAnimationEditorBounds,
-  resolveButtonAnimationPlaybackBounds
+  resolveButtonAnimationPlaybackBounds,
+  sampleButtonAnimationFadeCurve
 } from "./.compiled-button-system/button/animations/buttonActivationAnimations.js";
 import {
   buildWindowContextUrl,
@@ -180,6 +183,82 @@ test("Star Wars GIF uses one source cycle and its original aspect ratio without 
   assert.deepEqual(resized, { left: 100, top: 66, width: 960, height: 536 });
 });
 
+test("default animation fades smoothly in and out, scaled by overall transparency", () => {
+  const curve = getButtonAnimationFadeCurve({});
+  assert.deepEqual(curve, [
+    { time: 0, opacity: 0 }, { time: 0.2, opacity: 1 },
+    { time: 0.8, opacity: 1 }, { time: 1, opacity: 0 }
+  ]);
+  for (const [time, expected] of [[0, 0], [0.1, 0.5], [0.2, 1], [0.5, 1], [0.8, 1], [0.9, 0.5], [1, 0]]) {
+    assert.ok(Math.abs(sampleButtonAnimationFadeCurve(curve, time) - expected) < 1e-10);
+  }
+  const frames = buildButtonAnimationFadeFrames({ opacity: 0.35 });
+  assert.deepEqual(frames[0], { offset: 0, opacity: 0 });
+  assert.deepEqual(frames.at(-1), { offset: 1, opacity: 0 });
+  assert.equal(Math.max(...frames.map((frame) => frame.opacity)), 0.35);
+  assert.ok(frames.every((frame, index) => frame.opacity >= 0 && frame.opacity <= 0.35 &&
+    (index === 0 || frame.offset > frames[index - 1].offset)));
+  assert.ok(buildButtonAnimationFadeFrames({ opacity: 0 }).every((frame) => frame.opacity === 0));
+  assert.ok(sampleButtonAnimationFadeCurve(curve, 0.001) < 0.00001, "fade eases away from zero");
+  assert.equal(sampleButtonAnimationFadeCurve(curve, -1), 0);
+  assert.equal(sampleButtonAnimationFadeCurve(curve, 2), 0);
+});
+
+test("custom fade curves preserve control points, narrow fades, and explicit no-fade", () => {
+  const fadeCurve = [
+    { time: 0, opacity: 0.3 }, { time: 0.001, opacity: 0.7 },
+    { time: 0.9, opacity: 0.7 }, { time: 1, opacity: 0.1 }
+  ];
+  const frames = buildButtonAnimationFadeFrames({ fadeCurve });
+  assert.deepEqual(getButtonAnimationFadeCurve({ fadeCurve }), fadeCurve);
+  for (const point of fadeCurve) {
+    assert.equal(sampleButtonAnimationFadeCurve(fadeCurve, point.time), point.opacity);
+    assert.ok(frames.some((frame) => frame.offset === point.time && frame.opacity === point.opacity));
+  }
+  const noFade = [{ time: 0, opacity: 1 }, { time: 1, opacity: 1 }];
+  assert.ok(buildButtonAnimationFadeFrames({ fadeCurve: noFade, opacity: 0.6 })
+    .every((frame) => frame.opacity === 0.6));
+});
+
+test("fade curves round-trip in window contexts and reject malformed saved data", () => {
+  const document = createButtonStateDocument();
+  const animation = {
+    presetId: "star-wars-lightsaber", desktopBounds: { left: 0, top: 0, width: 480, height: 268 },
+    fadeCurve: getButtonAnimationFadeCurve({})
+  };
+  document.buttons["animated-button"] = makeExecutableButton(animation);
+  const context = { kind: "button-animation", schemaVersion: 1, mode: "play", requestId: "fade-test",
+    buttonId: "animated-button", presetId: animation.presetId, fadeCurve: animation.fadeCurve };
+  const previousWindow = globalThis.window;
+  try {
+    globalThis.window = { location: new URL(buildWindowContextUrl(context), "http://localhost") };
+    assert.deepEqual(getWindowContextFromLocation(), context);
+    assert.equal(validateButtonStateDocument(document).valid, true);
+    for (const invalid of [
+      null, [], [{ time: 0, opacity: 0 }],
+      [{ time: 0.1, opacity: 0 }, { time: 1, opacity: 1 }],
+      [{ time: 0, opacity: 0 }, { time: 0.9, opacity: 1 }],
+      [{ time: 0, opacity: 0 }, { time: 0, opacity: 1 }, { time: 1, opacity: 0 }],
+      [{ time: 0, opacity: 0 }, { time: 0.8, opacity: 1 }, { time: 0.7, opacity: 1 }, { time: 1, opacity: 0 }],
+      [{ time: 0, opacity: -0.1 }, { time: 1, opacity: 1 }],
+      [{ time: 0, opacity: 0 }, { time: 1, opacity: 1.1 }],
+      [{ time: 0, opacity: 0, extra: 1 }, { time: 1, opacity: 1 }],
+      [{ time: 0, opacity: 0 }, { time: 1, opacity: NaN }],
+      Array.from({ length: 17 }, (_, index) => ({ time: index / 16, opacity: 1 }))
+    ]) {
+      animation.fadeCurve = invalid;
+      assert.equal(validateButtonStateDocument(document).valid, false, JSON.stringify(invalid));
+      globalThis.window.location = new URL(buildWindowContextUrl({ ...context, fadeCurve: invalid }), "http://localhost");
+      assert.deepEqual(getWindowContextFromLocation(), { kind: "main" });
+    }
+    delete animation.fadeCurve;
+    assert.equal(validateButtonStateDocument(document).valid, true, "legacy assignments use the default fade");
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
 test("random GIF cadence persists the pending interval and count across sessions", () => {
   const data = new Map();
   const session = () => ({
@@ -276,6 +355,7 @@ test("fixed five-press cadence survives reopening and resets when frequency chan
     assert.equal(consumeButtonAnimationPress(button, session(), noRandom), press % 5 === 0);
   }
   button.activationAnimation.opacity = 0.35;
+  button.activationAnimation.fadeCurve = getButtonAnimationFadeCurve({});
   assert.equal(consumeButtonAnimationPress(button, session(), noRandom), false);
   assert.equal(JSON.parse(saved).presses, 1);
   button.activationAnimation.frequency = { mode: "every-press" };

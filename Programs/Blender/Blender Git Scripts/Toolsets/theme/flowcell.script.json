@@ -105,35 +105,6 @@
         }
       },
       {
-        "id": "button-theme.pick-color",
-        "handler": {
-          "kind": "core",
-          "capability": "color.pick-screen",
-          "options": {}
-        },
-        "requestSchema": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {}
-        },
-        "responseSchema": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "selected": {
-              "type": "boolean"
-            },
-            "color": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "selected",
-            "color"
-          ]
-        }
-      },
-      {
         "id": "button-theme.scan",
         "handler": {
           "kind": "core",
@@ -6635,7 +6606,6 @@
       "theme-package-library",
       "file.select",
       "image.sample-palette",
-      "color.pick-screen",
       "button-theme.palette",
       "tool-fields.save",
       "tool-fields.load",
@@ -6698,7 +6668,6 @@
         "resettingEnvironment": "Resetting the HDRI world…"
       },
       "actionLabels": {
-        "button-theme.pick-color": "Eyedropper",
         "theme.image.select": "Browse",
         "theme.image.sample": "Sample",
         "theme.absorb": "Absorb Theme",
@@ -6740,7 +6709,6 @@
         "button-theme.participation": "Include Button"
       },
       "actionTooltips": {
-        "button-theme.pick-color": "Pick this gradient color from anywhere on screen. Escape or right-click cancels.",
         "theme.image.select": "Pick an image, sample theme colors, and place it as the Place Picture image.",
         "theme.image.sample": "Sample theme colors from the selected reference image.",
         "theme.absorb": "Read the current Blender theme and stage all visible buckets.",
@@ -7195,7 +7163,6 @@
           "applyBucket": "theme.apply-bucket"
         },
         "buttonTheme": {
-          "pickColor": "button-theme.pick-color",
           "scan": "button-theme.scan",
           "apply": "button-theme.apply",
           "refill": "button-theme.refill",

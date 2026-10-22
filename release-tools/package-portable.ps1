@@ -4,6 +4,7 @@ param(
   [string]$AutoHotkeyExe,
   [string]$AutoHotkeyLicenseFile,
   [string]$OutputDirectory,
+  [string]$BlenderThemeLibrary,
   [switch]$ProgramsOnly
 )
 
@@ -32,6 +33,7 @@ if (-not (Test-Path -LiteralPath $programPackageSafetyScript -PathType Leaf)) {
   Stop-Package "Required release helper missing: $programPackageSafetyScript"
 }
 . $programPackageSafetyScript
+. (Join-Path $PSScriptRoot 'blender-theme-packages.ps1')
 
 function Resolve-BuiltExe([string]$RequestedPath) {
   if ($RequestedPath) {
@@ -233,7 +235,18 @@ function New-FlowCellProgramPackage([System.IO.DirectoryInfo]$ProgramDirectory) 
   Assert-ProgramManifestReferencesTracked $ProgramDirectory $contract.Manifest $trackedFiles
 
   New-Item -ItemType Directory -Path $programsPackageRoot -Force | Out-Null
-  Copy-TrackedProgramFolder $ProgramDirectory $destination $trackedFiles
+  $programFiles = $trackedFiles
+  if ($contract.Manifest.programId -eq 'blender') {
+    # Saved themes come only from the current library. Old exported copies in
+    # the catalog must never restore themes that were removed from that folder.
+    $themePrefix = "Programs/$($ProgramDirectory.Name)/blender themes/Packages/"
+    $programFiles = @($trackedFiles | Where-Object { -not $_.StartsWith($themePrefix, [StringComparison]::OrdinalIgnoreCase) })
+  }
+  Copy-TrackedProgramFolder $ProgramDirectory $destination $programFiles
+  if ($contract.Manifest.programId -eq 'blender') {
+    $themes = Copy-BlenderThemePackages -SourceLibrary $resolvedBlenderThemeLibrary -Destination (Join-Path $destination 'blender themes/Packages')
+    Write-Host "Blender themes: $($themes.PackageCount) packages, $($themes.AssetCount) assets from $resolvedBlenderThemeLibrary"
+  }
   $catalogRelative = Convert-ToSafeRelativeFolder ([string]$contract.Manifest.gitScriptsFolder) 'gitScriptsFolder' $ProgramDirectory.Name
   $baselineRelative = "$($contract.Manifest.supportScriptsFolder)/catalog-baseline.json"
   [void](Assert-TrackedProgramReference $ProgramDirectory $trackedFiles $baselineRelative 'catalog baseline' -RequireFile)
@@ -293,6 +306,16 @@ if (-not (Test-Path -LiteralPath $ProgramsRoot -PathType Container)) {
   Stop-Package "Required folder missing: $ProgramsRoot"
 }
 
+$programDirs = @(& git -C $RepoRoot -c core.quotePath=false ls-files -- 'Programs/*/flowcell.program.json' | ForEach-Object { Get-Item -LiteralPath (Split-Path -Parent (Join-Path $RepoRoot $_)) } | Sort-Object Name)
+if ($LASTEXITCODE -ne 0) { Stop-Package 'Could not discover tracked program manifests.' }
+$resolvedBlenderThemeLibrary = $null
+foreach ($programDir in $programDirs) {
+  $contract = Get-ProgramPackageContract $programDir
+  if ($contract.Manifest.programId -eq 'blender') {
+    $resolvedBlenderThemeLibrary = Resolve-BlenderThemePackageLibrary -LibraryPath $BlenderThemeLibrary
+  }
+}
+
 & node (Join-Path $PSScriptRoot 'add-catalog-updaters.mjs')
 if ($LASTEXITCODE -ne 0) { Stop-Package 'Published program updater validation failed.' }
 if (-not $ProgramsOnly) {
@@ -304,8 +327,6 @@ if (-not $ProgramsOnly) {
 New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $StagingRoot -Force | Out-Null
 
-$programDirs = @(& git -C $RepoRoot -c core.quotePath=false ls-files -- 'Programs/*/flowcell.program.json' | ForEach-Object { Get-Item -LiteralPath (Split-Path -Parent (Join-Path $RepoRoot $_)) } | Sort-Object Name)
-if ($LASTEXITCODE -ne 0) { Stop-Package 'Could not discover tracked program manifests.' }
 try {
   if (-not $ProgramsOnly) { New-FlowCellCorePackage $builtExePath $ahk $ahkLicense }
 

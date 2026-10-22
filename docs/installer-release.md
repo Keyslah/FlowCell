@@ -76,12 +76,32 @@ provided. Default invocation validates the generated packages and their helper
 contents. This publishing requirement never applies to arbitrary local programs
 created with Any program.
 
-Program packaging still copies only Git-tracked eligible content, rejects
+Program packaging copies Git-tracked eligible content, rejects
 mutable folders/reparse paths and validates manifest references. At staging it
 fills the baseline placeholder with hashes of the actual delivered catalog
 bytes. `verify-release.ps1` checks the complete ZIP inventory, baseline coverage,
 hashes, declared script/tool-set source files and archive boundaries. Panels,
 Local Scripts, runtime state, credentials and ignored files are not packaged.
+
+Blender's saved theme library is the explicit data exception: staging reads
+`blenderThemeLibrary` from the ignored
+`flowcellbackend/local/program-package-sources.json`, or an explicit
+`-BlenderThemeLibrary` argument to either packaging driver. Each build collects
+the current saved packages and only their referenced image assets into
+`Programs/Blender/blender themes/Packages/`. Newly saved themes and updated images
+are included automatically in **FlowCell-Blender.zip**, the same program ZIP
+attached to FlowCell releases. Removed themes are not restored from older
+exports. Manifest image paths are made relative in the staged copies. Saved
+themes and source files are never modified. Missing source configuration or a
+missing source folder stops both release entry points before they build or write
+release assets. Invalid packages or missing images stop packaging.
+
+There is no repository snapshot fallback or manual snapshot-refresh step.
+Every build runner needs access to the actual saved themes folder. The GitHub
+workflow checks the repository variable `FLOWCELL_BLENDER_THEME_LIBRARY` as a
+runner-accessible folder before starting the build. Hosted runners cannot access
+this machine's saved library, so the workflow stops unless that source folder is
+made available to the runner. See the [theme library notes](../Programs/Blender/blender%20themes/README.md).
 
 ## Reproducible build and publication
 

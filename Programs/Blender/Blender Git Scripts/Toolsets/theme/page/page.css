@@ -738,12 +738,6 @@ select:focus-visible {
   gap: 3px;
 }
 
-.button-theme-gradient__pick {
-  grid-column: 1 / -1;
-  min-height: 24px;
-  padding: 2px 5px;
-}
-
 .button-theme-gradient__color-inputs input[type="color"] {
   width: 28px;
   min-width: 28px;

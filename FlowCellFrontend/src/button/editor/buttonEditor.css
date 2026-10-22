@@ -592,6 +592,104 @@
   line-height: 1.45;
 }
 
+.button-animation-fade {
+  min-width: 0;
+  margin: 16px 0;
+  padding: 10px;
+  border: 1px solid #485463;
+  border-radius: 8px;
+}
+
+.button-animation-fade legend {
+  padding: 0 5px;
+  color: #d9e0e8;
+  font-weight: 600;
+}
+
+.button-animation-fade__graph {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  border-radius: 5px;
+  background: #141a21;
+  touch-action: none;
+  user-select: none;
+}
+
+.button-animation-fade__grid line {
+  stroke: #354151;
+  stroke-width: 1;
+}
+
+.button-animation-fade__grid text,
+.button-animation-fade__axis {
+  fill: #aebdcc;
+  font-size: 10px;
+}
+
+.button-animation-fade__curve {
+  fill: none;
+  stroke: #77baf0;
+  stroke-width: 2.5;
+  pointer-events: none;
+}
+
+.button-animation-fade__point {
+  fill: #203c54;
+  stroke: #a8d8ff;
+  stroke-width: 2;
+  cursor: grab;
+  outline: none;
+}
+
+.button-animation-fade__point.is-selected,
+.button-animation-fade__point:focus-visible {
+  fill: #d9efff;
+  stroke: #4e9fdf;
+  stroke-width: 3;
+}
+
+.button-animation-fade__point:active {
+  cursor: grabbing;
+}
+
+.button-animation-fade:disabled .button-animation-fade__graph {
+  opacity: .5;
+}
+
+.button-animation-fade__point-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.button-animation-fade__point-controls label {
+  min-width: 0;
+}
+
+.button-animation-fade__point-controls input {
+  width: 100%;
+}
+
+.button-animation-fade__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.button-animation-fade__actions button {
+  flex: 1 1 auto;
+}
+
+.button-animation-fade__hint {
+  margin: 9px 0 0;
+  color: #9eaab7;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .button-skin-paste textarea,
 .button-skin-section textarea {
   resize: vertical;

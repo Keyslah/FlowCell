@@ -21,6 +21,10 @@ installed-page host. Theme UI, labels, field definitions, tone logic, action
 mappings, and Blender command selection all live in this package; Core does not
 select a Theme renderer or infer this package from a product identifier.
 
+Theme 3.0.36 uses the original eyedropper inside each color swatch's popup.
+The separate buttons labeled `Eyedropper` under Fill/Text gradient stops have
+been removed. Swatches, hex fields and existing Apply behavior are unchanged.
+
 ## Install And Ownership
 
 Use Add Button and select `flowcell.script.json` or its package folder. FlowCell

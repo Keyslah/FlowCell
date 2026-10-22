@@ -1,5 +1,5 @@
 import { isButtonWindowCloseOffset } from "../windows/buttonWindowCloseControl.js";
-import { isButtonActivationAnimationPresetId, isButtonAnimationFrequency, isButtonAnimationOpacity } from "../animations/buttonActivationAnimations.js";
+import { isButtonActivationAnimationPresetId, isButtonAnimationFadeCurve, isButtonAnimationFrequency, isButtonAnimationOpacity } from "../animations/buttonActivationAnimations.js";
 import type {
   ButtonActivationBehavior,
   ButtonActivationAnimation,
@@ -293,7 +293,7 @@ function validateAnimation(value: unknown, path: string, issues: string[]): void
     issues.push(`${path}: Expected null or an activation-animation object.`);
     return;
   }
-  hasExactKeys({ opacity: 1, frequency: undefined, ...value }, ["presetId", "desktopBounds", "opacity", "frequency"], path, issues);
+  hasExactKeys({ opacity: 1, frequency: undefined, fadeCurve: undefined, ...value }, ["presetId", "desktopBounds", "opacity", "frequency", "fadeCurve"], path, issues);
   if (!isButtonActivationAnimationPresetId(value.presetId)) {
     issues.push(`${path}.presetId: Unsupported activation-animation preset.`);
   }
@@ -302,6 +302,9 @@ function validateAnimation(value: unknown, path: string, issues: string[]): void
   }
   if (value.frequency !== undefined && !isButtonAnimationFrequency(value.frequency)) {
     issues.push(`${path}.frequency: Expected every press, a press count, or an ordered random range from 1 to 10000.`);
+  }
+  if (value.fadeCurve !== undefined && !isButtonAnimationFadeCurve(value.fadeCurve)) {
+    issues.push(`${path}.fadeCurve: Expected 2-16 ordered fade points spanning time 0 to 1 with opacity from 0 to 1.`);
   }
   validateBounds(value.desktopBounds, `${path}.desktopBounds`, issues);
 }
