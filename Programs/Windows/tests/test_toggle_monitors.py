@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -103,8 +104,11 @@ class ToggleMonitorEngineTests(unittest.TestCase):
         )
         self.details_patch.start()
         self.source_patch.start()
+        self.capture_windows_patch = mock.patch.object(tm, "capture_window_placements", return_value=[])
+        self.capture_windows = self.capture_windows_patch.start()
 
     def tearDown(self):
+        self.capture_windows_patch.stop()
         self.source_patch.stop()
         self.details_patch.stop()
 
@@ -155,6 +159,72 @@ class ToggleMonitorEngineTests(unittest.TestCase):
         self.assertNotIn("/", first)
         self.assertEqual(tm.decode_target_descriptor(first), descriptor)
 
+    def test_window_snapshots_are_separate_for_each_side_and_connected_subset(self):
+        snapshot, _, _ = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 1920, 1080)])
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one", "two"], ["three"], Path(temporary))
+            toggle.group_keys = {1: ["one", "two"], 2: ["three"]}
+            self.capture_windows.return_value = [{"hwnd": 100}]
+            toggle.capture_side_windows(1)
+            complete_path = toggle.window_placements_path(1)
+            complete_bytes = complete_path.read_bytes()
+            self.capture_windows.return_value = [{"hwnd": 200}]
+            toggle.capture_side_windows(2)
+            toggle.group_keys[1] = ["one"]
+            toggle.group_unavailable_labels[1] = ["two"]
+            self.capture_windows.return_value = [{"hwnd": 300}]
+            toggle.capture_side_windows(1)
+            self.assertNotEqual(toggle.window_placements_path(1), complete_path)
+            self.assertEqual(complete_path.read_bytes(), complete_bytes)
+            with mock.patch.object(tm, "restore_window_placements") as restore, mock.patch.object(tm.time, "sleep"):
+                toggle.restore_side_windows(1, snapshot)
+                self.assertEqual(restore.call_args.args[0], [{"hwnd": 300}])
+                toggle.restore_side_windows(2, snapshot)
+                self.assertEqual(restore.call_args.args[0], [{"hwnd": 200}])
+                toggle.group_selectors[2] = ["different"]
+                toggle.restore_side_windows(1, snapshot)
+                self.assertEqual(restore.call_count, 2)
+
+    def test_switch_captures_outgoing_windows_before_apply_and_restores_after_success(self):
+        before, before_paths, before_modes = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 1920, 1080)])
+        after, after_paths, after_modes = make_snapshot([make_path(2, 2, 0)], [make_source_mode(2, 0, 0, 1920, 1080)])
+        events = []
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], Path(temporary))
+            toggle.group_keys = {1: [self.descriptor(1).identity_key()], 2: [self.descriptor(2).identity_key()]}
+            def activate(*_args):
+                events.append("activate")
+                return after, after_paths, after_modes, set(toggle.group_keys[2]), set()
+            with (
+                mock.patch.object(toggle, "capture_side_layout"),
+                mock.patch.object(toggle, "capture_side_windows", side_effect=lambda _side: events.append("capture") or []),
+                mock.patch.object(toggle, "activate_side", side_effect=activate),
+                mock.patch.object(toggle, "mark_group_2_owner"),
+                mock.patch.object(toggle, "restore_side_windows", side_effect=lambda *_args: events.append("restore")),
+            ):
+                toggle.switch_to_side(2, before, before_paths, before_modes, 1)
+            self.assertEqual(events, ["capture", "activate", "restore"])
+
+    def test_failed_switch_restores_source_windows_after_exact_topology_rollback(self):
+        before, paths, modes = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 1920, 1080)])
+        events = []
+        windows = [{"hwnd": 100}]
+        self.capture_windows.return_value = windows
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], Path(temporary))
+            toggle.group_keys[1] = [self.descriptor(1).identity_key()]
+            with (
+                mock.patch.object(toggle, "capture_side_layout"),
+                mock.patch.object(toggle, "activate_side", side_effect=OSError("failed")),
+                mock.patch.object(toggle, "clear_group_2_owner"),
+                mock.patch.object(tm, "apply_snapshot_exact", side_effect=lambda *_args, **_kwargs: events.append("topology")),
+                mock.patch.object(tm, "restore_window_placements", side_effect=lambda *_args: events.append("windows")) as restore,
+            ):
+                with self.assertRaisesRegex(OSError, "failed"):
+                    toggle.switch_to_side(2, before, paths, modes, 1)
+            self.assertEqual(events, ["topology", "windows"])
+            self.assertEqual(restore.call_args.args[0], windows)
+
     def test_startup_installer_is_current_user_only_and_has_required_triggers(self):
         installer = STARTUP_INSTALLER_PATH.read_text(encoding="utf-8")
         self.assertIn("<LogonType>InteractiveToken</LogonType>", installer)
@@ -174,7 +244,8 @@ class ToggleMonitorEngineTests(unittest.TestCase):
         self.assertIn('" -ButtonConfigPath " & q & configPath & q', launcher)
         self.assertIn('" -PythonwPath " & q & pythonwPath & q', launcher)
         picker = PICKER_PATH.read_text(encoding="utf-8")
-        self.assertIn("Group 1 is also the normal set restored at sign-in and wake", picker)
+        self.assertIn("Startup and wake recovery enable every available display", picker)
+        self.assertIn("each side remembers that arrangement", picker)
 
     def test_installer_preserves_disabled_recovery_during_button_refresh(self):
         installer = STARTUP_INSTALLER_PATH.read_text(encoding="utf-8")
@@ -1533,6 +1604,114 @@ class ToggleMonitorEngineTests(unittest.TestCase):
             ):
                 toggle.watch_wireless_drop_and_restore(poll_seconds=0, missing_grace_polls=1)
             restore_group_1.assert_called_once_with()
+
+
+class WindowPlacementTests(unittest.TestCase):
+    def setUp(self):
+        self.identity = (1000, 1001, 987654321, "editor.exe")
+        self.window = tm.TopLevelWindow(100, tm.Rect(2000, 80, 2800, 680), "EditorWindow", "Document")
+        self.show_command = 1
+        self.placements = []
+
+        def get_placement(_hwnd, pointer):
+            placement = pointer._obj
+            placement.length = tm.ctypes.sizeof(placement)
+            placement.showCmd = self.show_command
+            placement.rcNormalPosition = tm.RECTL(2000, 40, 2800, 640)
+            return True
+
+        def set_placement(_hwnd, pointer):
+            self.placements.append(tm.WINDOWPLACEMENT.from_buffer_copy(bytes(pointer._obj)))
+            return True
+
+        self.patchers = [
+            mock.patch.object(tm, "physical_window_coordinates", side_effect=nullcontext),
+            mock.patch.object(tm, "enumerate_top_level_windows", return_value=[self.window]),
+            mock.patch.object(tm, "window_process_identity", return_value=self.identity),
+            mock.patch.object(tm.user32, "GetWindowPlacement", side_effect=get_placement),
+            mock.patch.object(tm.user32, "SetWindowPlacement", side_effect=set_placement),
+            mock.patch.object(tm.user32, "SetWindowPos", return_value=True),
+            mock.patch.object(tm.user32, "IsIconic", return_value=False),
+            mock.patch.object(tm, "window_lifetime_token", return_value=123456),
+        ]
+        self.mocks = [patcher.start() for patcher in self.patchers]
+
+    def tearDown(self):
+        for patcher in reversed(self.patchers):
+            patcher.stop()
+
+    def test_capture_and_restore_keeps_screen_and_workspace_coordinates_separate_without_focus(self):
+        saved = tm.capture_window_placements()
+        self.assertEqual(saved[0]["identity"], list(self.identity))
+        self.assertEqual(saved[0]["rect"], [2000, 80, 2800, 680])
+        tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
+        placement = self.placements[0]
+        self.assertEqual(tm.rect_from_rectl(placement.rcNormalPosition), tm.Rect(2000, 40, 2800, 640))
+        self.assertEqual(placement.showCmd, tm.SW_SHOWNA)
+        self.assertTrue(placement.flags & tm.WPF_ASYNCWINDOWPLACEMENT)
+        flags = tm.SWP_NOACTIVATE | tm.SWP_NOZORDER | tm.SWP_NOOWNERZORDER | tm.SWP_ASYNCWINDOWPOS
+        self.mocks[5].assert_called_once_with(100, None, 2000, 80, 800, 600, flags)
+
+    def test_closed_restarted_or_replaced_windows_are_not_restored(self):
+        saved = tm.capture_window_placements()
+        for windows, identity in [
+            ([], self.identity),
+            ([self.window], (1000, 1001, 987654322, "editor.exe")),
+            ([tm.TopLevelWindow(100, self.window.rect, "OtherClass", "Other")], self.identity),
+        ]:
+            with self.subTest(windows=windows, identity=identity):
+                self.mocks[1].return_value = windows
+                self.mocks[2].return_value = identity
+                tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
+        self.mocks[4].assert_not_called()
+        self.mocks[5].assert_not_called()
+
+    def test_minimized_window_is_not_unminimized_or_raised(self):
+        saved = tm.capture_window_placements()
+        self.mocks[6].return_value = True
+        self.show_command = 2
+        tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
+        self.assertEqual(self.placements[0].showCmd, tm.SW_SHOWMINNOACTIVE)
+        self.mocks[5].assert_not_called()
+
+    def test_recycled_hwnd_in_same_process_and_thread_is_not_restored(self):
+        saved = tm.capture_window_placements()
+        self.mocks[7].return_value = 654321
+        tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
+        self.mocks[4].assert_not_called()
+        self.mocks[5].assert_not_called()
+
+    def test_previously_maximized_window_does_not_replace_normal_bounds_with_maximized_rect(self):
+        self.show_command = 3
+        saved = tm.capture_window_placements()
+        self.show_command = 1
+        tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
+        self.assertEqual(tm.rect_from_rectl(self.placements[0].rcNormalPosition), tm.Rect(2000, 40, 2800, 640))
+        self.mocks[5].assert_not_called()
+
+    def test_maximized_window_keeps_show_state_without_forcing_normal_screen_bounds(self):
+        saved = tm.capture_window_placements()
+        self.show_command = 3
+        tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
+        self.assertEqual(self.placements[0].showCmd, tm.SW_SHOWNA)
+        self.mocks[5].assert_not_called()
+
+    def test_unavailable_screen_uses_window_placement_visibility_clamp(self):
+        saved = tm.capture_window_placements()
+        tm.restore_window_placements(saved, [tm.Rect(0, 0, 1920, 1080)], mock.Mock())
+        self.assertEqual(len(self.placements), 1)
+        self.mocks[5].assert_not_called()
+
+    def test_flowcell_pop_and_fan_canvases_are_excluded_but_program_pages_are_captured(self):
+        self.mocks[2].return_value = (1000, 1001, 987654321, "flowcell_frontend.exe")
+        self.mocks[1].return_value = [
+            tm.TopLevelWindow(100, self.window.rect, "Tauri Window", "FlowCell - Button Popout"),
+            tm.TopLevelWindow(101, self.window.rect, "Tauri Window", "FlowCell - Button Fan"),
+            tm.TopLevelWindow(102, self.window.rect, "Tauri Window", "FlowCell - Program"),
+        ]
+        self.assertEqual([saved["hwnd"] for saved in tm.capture_window_placements()], [102])
+        self.mocks[2].return_value = self.identity
+        self.assertEqual(len(tm.capture_window_placements()), 3)
 
 
 if __name__ == "__main__":

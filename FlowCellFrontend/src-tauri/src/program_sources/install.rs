@@ -903,6 +903,8 @@ struct ScriptManifest {
     #[serde(default)]
     program: String,
     source: String,
+    #[serde(default)]
+    import_aliases: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bridge_data: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1158,6 +1160,45 @@ fn ensure_relative_source_path(value: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+fn validate_script_import_aliases(
+    package_root: &Path,
+    aliases: &[String],
+) -> Result<Vec<PathBuf>, String> {
+    let mut resolved = Vec::new();
+    let mut names = std::collections::BTreeSet::new();
+    for alias in aliases {
+        if alias.is_empty()
+            || alias != alias.trim()
+            || alias == "."
+            || alias == ".."
+            || alias.contains(['/', '\\', ':'])
+            || alias.eq_ignore_ascii_case(SCRIPT_MANIFEST_FILE_NAME)
+            || alias.eq_ignore_ascii_case(TOOLSET_MANIFEST_FILE_NAME)
+            || !names.insert(alias.to_ascii_lowercase())
+        {
+            return Err(
+                "Script importAliases must contain unique root-level companion file names."
+                    .to_string(),
+            );
+        }
+        let path = package_root.join(alias);
+        reject_package_source_reparse_point(&path)?;
+        if !path.is_file() {
+            return Err(format!(
+                "Script import alias '{}' is missing or is not a file.",
+                path.display()
+            ));
+        }
+        resolved.push(path.canonicalize().map_err(|error| {
+            format!(
+                "Script import alias '{}' could not be resolved: {error}",
+                path.display()
+            )
+        })?);
+    }
+    Ok(resolved)
+}
+
 fn recognized_root_manifest(
     folder: &Path,
     manifest_file_name: &str,
@@ -1367,6 +1408,7 @@ fn prepare_source(
                     executable.display()
                 ));
             }
+            let import_aliases = validate_script_import_aliases(package_root, &script.import_aliases)?;
             if let Some(selected) = selected_package_file.as_ref() {
                 let selected = selected.canonicalize().map_err(|error| {
                     format!(
@@ -1380,7 +1422,7 @@ fn prepare_source(
                         executable.display()
                     )
                 })?;
-                if selected != executable {
+                if selected != executable && !import_aliases.contains(&selected) {
                     return Err(format!(
                         "'{}' is a companion file in a script package. Add the declared source '{}' or its {} instead.",
                         selected.display(),
@@ -4801,6 +4843,79 @@ mod tests {
         };
         assert!(error.contains("companion file in a tool-set package"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn declared_script_import_aliases_copy_the_complete_package_and_keep_its_entry() {
+        let root = temporary_test_root("script-import-aliases");
+        let package = root.join("package");
+        fs::create_dir_all(&package).unwrap();
+        for name in ["entry.vbs", "picker.ps1", "engine.py", "setup.ps1"] {
+            fs::write(package.join(name), "# package dependency\n").unwrap();
+        }
+        fs::write(
+            package.join(SCRIPT_MANIFEST_FILE_NAME),
+            json!({"schemaVersion": 1, "label": "Monitor Toggle", "program": "Windows",
+                "source": "entry.vbs", "importAliases": ["picker.ps1", "engine.py"]}).to_string(),
+        ).unwrap();
+
+        for name in [SCRIPT_MANIFEST_FILE_NAME, "entry.vbs", "picker.ps1", "engine.py"] {
+            let selected = package.join(name);
+            let kind = detect_import_kind(&selected).unwrap();
+            let prepared = prepare_source(&windows_manifest(), &selected, kind).unwrap();
+            assert_eq!(prepared.package_source_root, package);
+            assert_eq!(prepared.source_relative_to_package, PathBuf::from("entry.vbs"));
+            assert_eq!(prepared.label, "Monitor Toggle");
+        }
+        assert!(prepare_source(&windows_manifest(), &package.join("setup.ps1"), "script").is_err());
+
+        let prepared = prepare_source(&windows_manifest(), &package.join("engine.py"), "script").unwrap();
+        let copied = root.join("copied");
+        super::copy_package_source(&prepared.package_source_root, &copied).unwrap();
+        for name in [SCRIPT_MANIFEST_FILE_NAME, "entry.vbs", "picker.ps1", "engine.py", "setup.ps1"] {
+            assert_eq!(fs::read(copied.join(name)).unwrap(), fs::read(package.join(name)).unwrap());
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn script_import_aliases_reject_missing_nested_duplicate_and_escaping_paths() {
+        let root = temporary_test_root("script-import-alias-validation");
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(root.join("entry.vbs"), "' entry\n").unwrap();
+        fs::write(root.join("picker.ps1"), "# helper\n").unwrap();
+        fs::write(root.join("nested").join("helper.ps1"), "# helper\n").unwrap();
+        for aliases in [
+            json!([""]), json!(["."]), json!([".."]), json!([" picker.ps1"]),
+            json!(["../picker.ps1"]), json!(["nested/helper.ps1"]),
+            json!(["nested\\helper.ps1"]), json!(["C:\\helper.ps1"]),
+            json!(["picker.ps1:stream"]), json!(["picker.ps1", "PICKER.PS1"]),
+            json!(["missing.ps1"]), json!(["nested"]), json!([SCRIPT_MANIFEST_FILE_NAME]),
+        ] {
+            fs::write(root.join(SCRIPT_MANIFEST_FILE_NAME),
+                json!({"schemaVersion": 1, "label": "Monitor Toggle", "program": "Windows",
+                    "source": "entry.vbs", "importAliases": aliases}).to_string()).unwrap();
+            assert!(prepare_source(&windows_manifest(), &root, "script").is_err(), "accepted {aliases}");
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn shipped_toggle_monitors_helpers_import_the_launcher_package() {
+        let package = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Programs/Windows/Windows Git Scripts/Utility/Toggle Monitors");
+        for name in ["Toggle Monitors Picker.ps1", "toggle_monitors.py"] {
+            let selected = package.join(name);
+            let kind = detect_import_kind(&selected).expect("detect monitor package alias");
+            let prepared = prepare_source(&windows_manifest(), &selected, kind)
+                .expect("import complete monitor package from helper selection");
+            assert_eq!(prepared.package_source_root, package);
+            assert_eq!(prepared.label, "Toggle Monitors");
+            assert_eq!(prepared.source_relative_to_package, PathBuf::from("Toggle Monitors.vbs"));
+        }
+        assert!(prepare_source(
+            &windows_manifest(), &package.join("Install Startup Safety.ps1"), "script",
+        ).is_err());
     }
 
     #[test]

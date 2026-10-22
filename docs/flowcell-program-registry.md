@@ -253,7 +253,9 @@ The manifest is loaded for every install, resolve, execute, update, and delete:
 - installed sources must remain inside
   `<localScriptsFolder>/<ownerButtonId>/`;
 - selecting the declared source beside `flowcell.script.json` promotes the
-  complete package, while selecting one of its companion files is rejected;
+  complete package, as does a root-level companion explicitly listed in the
+  manifest's optional `importAliases`; other companions are rejected, and
+  aliases never change the declared executable `source`;
 - Update preserves only the owner package's `runtime/` subtree; immutable
   package source is replaced from the selected package;
 - tool-set packages are rejected unless `supportsToolsetManifests` is true;

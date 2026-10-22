@@ -2,7 +2,8 @@
   "schemaVersion": 1,
   "id": "windows.toggle-monitors",
   "label": "Toggle Monitors",
-  "tooltip": "Choose two checkbox monitor groups; startup and wake recovery enable every available display, including dummy monitors, regardless of either group.",
+  "tooltip": "Choose two monitor groups and retain each group's window positions and sizes. Arrange each side before toggling away. Startup and wake recovery enable every available display.",
   "program": "Windows",
-  "source": "Toggle Monitors.vbs"
+  "source": "Toggle Monitors.vbs",
+  "importAliases": ["Toggle Monitors Picker.ps1", "toggle_monitors.py"]
 }

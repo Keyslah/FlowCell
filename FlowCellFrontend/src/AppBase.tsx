@@ -39,6 +39,7 @@ import AddPanelWindowPage from "./pages/program-setup/AddPanelWindowPage";
 import TooltipWindowPage from "./pages/tooltip/TooltipWindowPage";
 import { runFrontendMacro } from "./lib/macros";
 import { installThemeRuntime } from "./theme/themeRuntime";
+import { startMonitorButtonLayoutObserver } from "./lib/monitorWindowLayouts";
 
 function resolveScopedTopmostProgramName(
   windowContext: ReturnType<typeof getWindowContextFromLocation>
@@ -82,6 +83,11 @@ export default function App() {
     windowContext.kind === "installed-page" && windowContext.alwaysOnTop;
 
   useEffect(() => installThemeRuntime(), []);
+
+  useEffect(() => {
+    const metadata = (window as Window & { __TAURI_INTERNALS__?: { metadata?: unknown } }).__TAURI_INTERNALS__?.metadata;
+    if (metadata && windowContext.kind === "main") return startMonitorButtonLayoutObserver();
+  }, [windowContext.kind]);
 
   useEffect(() => {
     const tauriInternals = (

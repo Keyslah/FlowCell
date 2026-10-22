@@ -8,6 +8,11 @@ import {
 } from "react";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import type { ButtonFanWindowContext } from "../../lib/windowContext";
+import {
+  listenForMonitorButtonGeometry,
+  monitorGeometryBounds,
+  publishMonitorButtonGeometry
+} from "../../lib/monitorWindowLayouts";
 import { setButtonFanExpanded } from "../../lib/tauri";
 import {
   writeRegisteredLayoutWindowButtonDisplayMode,
@@ -476,6 +481,55 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     pendingEnvelopeRef.current = envelope;
     return flushEnvelope();
   }, [flushEnvelope]);
+
+  useEffect(() => {
+    if (!geometryInitialized || !collapsedBoundsRef.current) return;
+    const scale = appliedCanvasRef.current?.scaleFactor ?? canvasMetrics.scaleFactor;
+    const origin = surfaceOriginRef.current;
+    publishMonitorButtonGeometry({
+      kind: "button-fan", bounds: monitorGeometryBounds(collapsedBoundsRef.current),
+      ...(origin ? { collapsedOrigin: {
+        x: origin.x + (renderedExpanded ? ownerPlacement?.x ?? 0 : 0) * scale,
+        y: origin.y + (renderedExpanded ? ownerPlacement?.y ?? 0 : 0) * scale
+      } } : {})
+    });
+  }, [geometryInitialized, appliedFrameBounds, renderedExpanded, dragging, ownerPlacement?.x, ownerPlacement?.y,
+    canvasMetrics.scaleFactor]);
+
+  useEffect(() => {
+    if (!setup) return;
+    const unlisten = listenForMonitorButtonGeometry(async (geometry, isCurrent) => {
+      if (geometry.kind !== "button-fan") return;
+      await scheduleNativeGeometryTransition(async () => {
+        if (!await isCurrent()) return;
+        const restored = buttonDesktopBoundsFromFlowCellBounds(geometry.bounds);
+        if (!restored) return;
+        const canvas = await applyCanvasForFrame(restored);
+        const envelope = collapsedEnvelope.resting;
+        const ownerOrigin = geometry.collapsedOrigin ?? {
+          x: restored.left - envelope.x * canvas.scaleFactor,
+          y: restored.top - envelope.y * canvas.scaleFactor
+        };
+        const collapsed = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+          surfaceOrigin: ownerOrigin, envelope, contentScale: 1, scaleFactor: canvas.scaleFactor
+        });
+        surfaceOriginRef.current = {
+          x: ownerOrigin.x - (renderedExpandedRef.current ? ownerPlacement?.x ?? 0 : 0) * canvas.scaleFactor,
+          y: ownerOrigin.y - (renderedExpandedRef.current ? ownerPlacement?.y ?? 0 : 0) * canvas.scaleFactor
+        };
+        collapsedBoundsRef.current = collapsed;
+        restingEnvelopeFrameRef.current = { envelope, bounds: collapsed };
+        await commitAppliedEnvelope(appliedEnvelopeRef.current ?? envelope);
+        writeRegisteredLayoutWindowSnapshotBounds(getCurrentWindow().label, monitorGeometryBounds(collapsed));
+        publishMonitorButtonGeometry({ kind: "button-fan", bounds: monitorGeometryBounds(collapsed), collapsedOrigin: ownerOrigin });
+      }).catch((error) => {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+        throw error;
+      });
+    });
+    return () => { void unlisten.then((stop) => stop()).catch(() => {}); };
+  }, [setup?.id, applyCanvasForFrame, scheduleNativeGeometryTransition, commitAppliedEnvelope, collapsedEnvelope.resting,
+    ownerPlacement?.x, ownerPlacement?.y]);
 
   const preparePlacementVisualStateChange = useCallback(async (
     placementId: string,

@@ -12,6 +12,11 @@ import {
 } from "@tauri-apps/api/window";
 import type { ButtonPopoutWindowContext } from "../../lib/windowContext";
 import {
+  listenForMonitorButtonGeometry,
+  monitorGeometryBounds,
+  publishMonitorButtonGeometry
+} from "../../lib/monitorWindowLayouts";
+import {
   writeRegisteredLayoutWindowButtonDisplayMode,
   writeRegisteredLayoutWindowSnapshotBounds
 } from "../../lib/layoutSnapshots";
@@ -533,6 +538,66 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     pendingEnvelopeRef.current = envelope;
     return flushEnvelope();
   }, [flushEnvelope]);
+
+  useEffect(() => {
+    if (!geometryInitialized || !expandedBoundsRef.current) return;
+    publishMonitorButtonGeometry({
+      kind: "button-popout",
+      bounds: monitorGeometryBounds(expandedBoundsRef.current),
+      ...(collapsedOriginRef.current ? { collapsedOrigin: { ...collapsedOriginRef.current } } : {})
+    });
+  }, [geometryInitialized, appliedFrameBounds, renderedDisplayMode, dragging, resizing]);
+
+  useEffect(() => {
+    if (!unit) return;
+    const unlisten = listenForMonitorButtonGeometry(async (geometry, isCurrent) => {
+      if (geometry.kind !== "button-popout") return;
+      await scheduleNativeGeometryTransition(async () => {
+        if (!await isCurrent()) return;
+        const restored = buttonDesktopBoundsFromFlowCellBounds(geometry.bounds);
+        if (!restored) return;
+        const canvas = await applyCanvasForFrame(restored);
+        const scale = resolveUniformSurfaceScale({
+          viewportWidth: restored.width / canvas.scaleFactor,
+          viewportHeight: restored.height / canvas.scaleFactor,
+          surfaceWidth: savedExpandedEnvelope.width,
+          surfaceHeight: savedExpandedEnvelope.height
+        });
+        expandedBoundsRef.current = restored;
+        expandedContentScaleRef.current = scale;
+        restingEnvelopeFrameRef.current = { envelope: savedExpandedEnvelope, bounds: restored };
+        const expandedOrigin = {
+          x: restored.left - savedExpandedEnvelope.x * scale * canvas.scaleFactor,
+          y: restored.top - savedExpandedEnvelope.y * scale * canvas.scaleFactor
+        };
+        const ownerOffset = authoredFan && savedOwnerPlacement
+          ? { x: savedOwnerPlacement.x, y: savedOwnerPlacement.y } : { x: 0, y: 0 };
+        collapsedOriginRef.current = geometry.collapsedOrigin ?? {
+          x: expandedOrigin.x + ownerOffset.x * scale * canvas.scaleFactor,
+          y: expandedOrigin.y + ownerOffset.y * scale * canvas.scaleFactor
+        };
+        const expanded = !collapsiblePopout || appliedFanModeRef.current === "expanded";
+        surfaceOriginRef.current = expanded ? expandedOrigin : { ...collapsedOriginRef.current };
+        await commitAppliedEnvelope(
+          appliedEnvelopeRef.current ?? (expanded ? savedExpandedEnvelope : collapsedWindowEnvelope.resting),
+          expanded ? scale : 1
+        );
+        const resting = expanded ? restored : resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+          surfaceOrigin: collapsedOriginRef.current,
+          envelope: collapsedWindowEnvelope.resting,
+          contentScale: 1,
+          scaleFactor: appliedCanvasRef.current?.scaleFactor ?? canvas.scaleFactor
+        });
+        writeRegisteredLayoutWindowSnapshotBounds(getCurrentWindow().label, monitorGeometryBounds(resting));
+        publishMonitorButtonGeometry({ ...geometry, collapsedOrigin: { ...collapsedOriginRef.current } });
+      }).catch((error) => {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+        throw error;
+      });
+    });
+    return () => { void unlisten.then((stop) => stop()).catch(() => {}); };
+  }, [unit?.id, applyCanvasForFrame, scheduleNativeGeometryTransition, commitAppliedEnvelope,
+    savedExpandedEnvelope, savedOwnerPlacement, authoredFan, collapsiblePopout, collapsedWindowEnvelope.resting]);
 
   const preparePlacementVisualStateChange = useCallback(async (
     placementId: string,

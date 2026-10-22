@@ -10,11 +10,13 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
@@ -116,6 +118,15 @@ DEFAULT_TARGET_DISPLAY = ""
 WH_KEYBOARD_LL = 13
 HC_ACTION = 0
 GW_OWNER = 4
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+SW_SHOWMINNOACTIVE = 7
+SW_SHOWNA = 8
+WPF_ASYNCWINDOWPLACEMENT = 0x0004
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_NOOWNERZORDER = 0x0200
+SWP_ASYNCWINDOWPOS = 0x4000
+WINDOW_LIFETIME_PROPERTY = "FlowCell.ToggleMonitors.WindowLifetime"
 
 
 class LUID(ctypes.Structure):
@@ -128,6 +139,13 @@ class POINTL(ctypes.Structure):
 
 class RECTL(ctypes.Structure):
     _fields_ = [("left", LONG), ("top", LONG), ("right", LONG), ("bottom", LONG)]
+
+
+class WINDOWPLACEMENT(ctypes.Structure):
+    _fields_ = [
+        ("length", UINT32), ("flags", UINT32), ("showCmd", UINT32),
+        ("ptMinPosition", POINTL), ("ptMaxPosition", POINTL), ("rcNormalPosition", RECTL),
+    ]
 
 
 class DISPLAYCONFIG_RATIONAL(ctypes.Structure):
@@ -409,6 +427,26 @@ user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 user32.GetWindowTextW.restype = ctypes.c_int
 user32.MoveWindow.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, BOOL]
 user32.MoveWindow.restype = BOOL
+user32.GetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WINDOWPLACEMENT)]
+user32.GetWindowPlacement.restype = BOOL
+user32.SetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WINDOWPLACEMENT)]
+user32.SetWindowPlacement.restype = BOOL
+user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, UINT32]
+user32.SetWindowPos.restype = BOOL
+user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+user32.GetPropW.argtypes = [wintypes.HWND, wintypes.LPCWSTR]
+user32.GetPropW.restype = wintypes.HANDLE
+user32.SetPropW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.HANDLE]
+user32.SetPropW.restype = BOOL
+user32.SetThreadDpiAwarenessContext.argtypes = [wintypes.HANDLE]
+user32.SetThreadDpiAwarenessContext.restype = wintypes.HANDLE
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, BOOL, wintypes.DWORD]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+kernel32.GetProcessTimes.restype = BOOL
+kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+kernel32.QueryFullProcessImageNameW.restype = BOOL
 user32.SetWindowsHookExW.argtypes = [ctypes.c_int, ctypes.c_void_p, wintypes.HINSTANCE, wintypes.DWORD]
 user32.SetWindowsHookExW.restype = wintypes.HANDLE
 user32.CallNextHookEx.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
@@ -1250,7 +1288,7 @@ def preferred_destination_rect(snapshot: DisplayConfigSnapshot, exclude_source: 
     return primary_rect or fallback_rect
 
 
-def enumerate_top_level_windows() -> list[TopLevelWindow]:
+def enumerate_top_level_windows(include_minimized_and_owned: bool = False) -> list[TopLevelWindow]:
     windows: list[TopLevelWindow] = []
     ignored_classes = {"Shell_TrayWnd", "Progman", "WorkerW", "NotifyIconOverflowWindow"}
 
@@ -1258,16 +1296,16 @@ def enumerate_top_level_windows() -> list[TopLevelWindow]:
     def callback(hwnd, _lparam):
         if not user32.IsWindowVisible(hwnd):
             return True
-        if user32.IsIconic(hwnd):
+        if user32.IsIconic(hwnd) and not include_minimized_and_owned:
             return True
-        if user32.GetWindow(hwnd, GW_OWNER):
+        if user32.GetWindow(hwnd, GW_OWNER) and not include_minimized_and_owned:
             return True
 
         rect = RECTL()
         if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
             return True
         window_rect = rect_from_rectl(rect)
-        if window_rect.width < 80 or window_rect.height < 40:
+        if not include_minimized_and_owned and (window_rect.width < 80 or window_rect.height < 40):
             return True
 
         class_buffer = ctypes.create_unicode_buffer(256)
@@ -1285,6 +1323,136 @@ def enumerate_top_level_windows() -> list[TopLevelWindow]:
     if not user32.EnumWindows(callback, 0):
         raise_win32(ctypes.get_last_error(), "EnumWindows")
     return windows
+
+
+@contextmanager
+def physical_window_coordinates():
+    # Match DisplayConfig's physical desktop pixels on mixed-DPI monitors.
+    previous = user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+    try:
+        yield
+    finally:
+        if previous:
+            user32.SetThreadDpiAwarenessContext(previous)
+
+
+def window_process_identity(hwnd: int) -> Optional[tuple[int, int, int, str]]:
+    process_id = wintypes.DWORD()
+    thread_id = user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+    if not thread_id or not process_id.value:
+        return None
+    process = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, process_id.value)
+    if not process:
+        return None
+    try:
+        created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+        if not kernel32.GetProcessTimes(process, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+        image_path = ctypes.create_unicode_buffer(32768)
+        image_length = wintypes.DWORD(len(image_path))
+        if not kernel32.QueryFullProcessImageNameW(process, 0, image_path, ctypes.byref(image_length)):
+            return None
+        return (process_id.value, int(thread_id), (created.dwHighDateTime << 32) | created.dwLowDateTime, Path(image_path.value).name.casefold())
+    finally:
+        kernel32.CloseHandle(process)
+
+
+def capture_window_placements() -> list[dict[str, object]]:
+    placements = []
+    with physical_window_coordinates():
+        for window in enumerate_top_level_windows(include_minimized_and_owned=True):
+            if window.class_name in {"#32768", "tooltips_class32", "TaskListThumbnailWnd"}:
+                continue
+            placement = WINDOWPLACEMENT()
+            placement.length = ctypes.sizeof(placement)
+            if not user32.GetWindowPlacement(window.hwnd, ctypes.byref(placement)):
+                continue
+            normal = rect_from_rectl(placement.rcNormalPosition)
+            if normal.width < 80 or normal.height < 40:
+                continue
+            identity = window_process_identity(window.hwnd)
+            if identity is None:
+                continue
+            if identity[3] == "flowcell_frontend.exe" and window.title in {"FlowCell - Button Popout", "FlowCell - Button Fan"}:
+                # These HWNDs cover a monitor; FlowCell restores their semantic
+                # content bounds itself when it observes the display change.
+                continue
+            lifetime = window_lifetime_token(window.hwnd, create=True)
+            if lifetime is None:
+                continue
+            placements.append({
+                "hwnd": window.hwnd,
+                "lifetime": lifetime,
+                "identity": list(identity),
+                "class_name": window.class_name,
+                "placement": base64.b64encode(bytes(placement)).decode("ascii"),
+                "rect": [window.rect.left, window.rect.top, window.rect.right, window.rect.bottom],
+            })
+    return placements
+
+
+def window_lifetime_token(hwnd: int, create: bool = False) -> Optional[int]:
+    # A process can recycle an HWND for a new document on the same UI thread.
+    # Window properties die with that window, unlike HWND/PID/class identity.
+    token = user32.GetPropW(hwnd, WINDOW_LIFETIME_PROPERTY)
+    if not token and create:
+        token = secrets.randbits(ctypes.sizeof(wintypes.HANDLE) * 8 - 1) or 1
+        if not user32.SetPropW(hwnd, WINDOW_LIFETIME_PROPERTY, token):
+            return None
+        token = user32.GetPropW(hwnd, WINDOW_LIFETIME_PROPERTY)
+    return int(token) if token else None
+
+
+def restore_window_placements(placements: list[dict[str, object]], active_rects: Iterable[Rect], logger: logging.Logger) -> None:
+    active_rects = list(active_rects)
+    restored = 0
+    with physical_window_coordinates():
+        live = {window.hwnd: window for window in enumerate_top_level_windows(include_minimized_and_owned=True)}
+        for saved in placements:
+            try:
+                hwnd = int(saved["hwnd"])
+                window = live.get(hwnd)
+                if window is None or window.class_name != saved.get("class_name"):
+                    continue
+                identity = window_process_identity(hwnd)
+                if identity is None or list(identity) != saved.get("identity"):
+                    continue
+                lifetime = window_lifetime_token(hwnd)
+                if lifetime is None or lifetime != saved.get("lifetime"):
+                    continue
+                blob = base64.b64decode(str(saved["placement"]), validate=True)
+                if len(blob) != ctypes.sizeof(WINDOWPLACEMENT):
+                    continue
+                placement = WINDOWPLACEMENT.from_buffer_copy(blob)
+                saved_show_command = placement.showCmd
+                normal = rect_from_rectl(placement.rcNormalPosition)
+                if normal.width < 80 or normal.height < 40:
+                    continue
+                current = WINDOWPLACEMENT()
+                current.length = ctypes.sizeof(current)
+                if not user32.GetWindowPlacement(hwnd, ctypes.byref(current)):
+                    continue
+                # Keep the user's current minimized/maximized state. SHOWNA and
+                # SHOWMINNOACTIVE avoid activating windows during restoration.
+                iconic = bool(user32.IsIconic(hwnd))
+                placement.length = ctypes.sizeof(placement)
+                placement.flags = current.flags | WPF_ASYNCWINDOWPLACEMENT
+                placement.showCmd = SW_SHOWMINNOACTIVE if iconic else SW_SHOWNA
+                if not user32.SetWindowPlacement(hwnd, ctypes.byref(placement)):
+                    raise_win32(ctypes.get_last_error(), f"SetWindowPlacement(hwnd={hwnd})")
+                saved_rect = Rect(*(int(value) for value in saved["rect"]))
+                # WINDOWPLACEMENT handles work-area offsets and clamps completely
+                # off-screen windows. Use screen coordinates only for the exact
+                # visible rectangle when the original monitor still exists.
+                anchor = (saved_rect.left + min(saved_rect.width // 2, 40), saved_rect.top + min(saved_rect.height // 2, 20))
+                if not iconic and saved_show_command == 1 and current.showCmd == 1 and saved_rect.width >= 80 and saved_rect.height >= 40 and any(rect.contains_point(*anchor) for rect in active_rects):
+                    flags = SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS
+                    if not user32.SetWindowPos(hwnd, None, saved_rect.left, saved_rect.top, saved_rect.width, saved_rect.height, flags):
+                        raise_win32(ctypes.get_last_error(), f"SetWindowPos(hwnd={hwnd})")
+                restored += 1
+            except (OSError, ValueError, TypeError, KeyError, DisplayConfigError) as error:
+                logger.warning("Skipping window placement restore: %s", error)
+    logger.info("Restored %d still-open program window placements", restored)
 
 
 def relocate_window(hwnd: int, source_rect: Rect, destination_rect: Rect, ordinal: int) -> None:
@@ -3415,6 +3583,34 @@ class ButtonMonitorToggle:
             return False
         return True
 
+    def window_placements_path(self, side: int) -> Path:
+        normal_path, _ = self.side_paths(side)
+        return normal_path.with_name(f"{normal_path.stem}-windows.json")
+
+    def capture_side_windows(self, side: int) -> list[dict[str, object]]:
+        placements = capture_window_placements()
+        write_json_object(self.window_placements_path(side), {
+            "schema": 1,
+            "configuration_fingerprint": self.configuration_fingerprint(),
+            "physical_keys": sorted(self.group_keys[side]),
+            "windows": placements,
+        })
+        self.logger.info("Captured %d program window placements for Group %d", len(placements), side)
+        return placements
+
+    def restore_side_windows(self, side: int, snapshot: DisplayConfigSnapshot) -> None:
+        saved = read_json_object(self.window_placements_path(side))
+        if saved.get("schema") != 1 or not self.marker_matches_configuration(saved):
+            return
+        if saved.get("physical_keys") != sorted(self.group_keys[side]):
+            return
+        placements = saved.get("windows")
+        if not isinstance(placements, list) or not placements:
+            return
+        # Let the display-change/DPI messages reach applications before restoring.
+        time.sleep(0.4)
+        restore_window_placements(placements, snapshot_source_rects(snapshot).values(), self.logger)
+
     def load_matching_side_snapshot(self, side: int, path: Path) -> DisplayConfigSnapshot:
         snapshot = load_snapshot(path)
         physical, _ = target_key_sets(snapshot.path_array(), snapshot.path_count)
@@ -3525,8 +3721,10 @@ class ButtonMonitorToggle:
     ) -> None:
         current_physical, _ = target_key_sets(active_paths, active_snapshot.path_count)
         current_signature = topology_fingerprint(active_paths, active_modes, active_snapshot.path_count)
+        source_windows = []
         if source_side is not None:
             self.capture_side_layout(source_side, active_snapshot, active_paths)
+            source_windows = self.capture_side_windows(source_side)
         else:
             self.logger.info("Current layout matches neither configured group; applying Group 1 without capturing it")
 
@@ -3546,12 +3744,18 @@ class ButtonMonitorToggle:
             else:
                 self.clear_group_2_owner()
             self.write_metadata(transition=f"group_{target_side}")
+            try:
+                self.restore_side_windows(target_side, target_snapshot)
+            except Exception as error:
+                self.logger.warning("Program window restoration failed after successful monitor switch: %s", error)
         except Exception:
             try:
                 # A failed SetDisplayConfig can retain the same monitor set and
                 # desktop geometry while changing rotation, refresh, or target
                 # modes. Restore the complete pre-switch snapshot unconditionally.
                 apply_snapshot_exact(active_snapshot, save_to_database=False)
+                if source_windows:
+                    restore_window_placements(source_windows, snapshot_source_rects(active_snapshot).values(), self.logger)
                 if source_side == 2:
                     self.mark_group_2_owner(current_physical, current_signature)
                 elif source_side == 1:

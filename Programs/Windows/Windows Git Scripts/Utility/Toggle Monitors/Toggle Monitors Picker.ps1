@@ -208,7 +208,7 @@ function Show-MonitorGroupPicker {
     $groupTop = 76
     $groupHeight = $listHeight + 44
     $noteTop = $groupTop + $groupHeight + 10
-    $errorTop = $noteTop + 42
+    $errorTop = $noteTop + 78
     $buttonTop = $errorTop + 42
 
     $form = New-Object System.Windows.Forms.Form
@@ -228,11 +228,11 @@ function Show-MonitorGroupPicker {
         $instruction.AutoSize = $false
         $instruction.Location = New-Object System.Drawing.Point(16, 14)
         $instruction.Size = New-Object System.Drawing.Size(828, 50)
-        $instruction.Text = 'Choose the exact monitors for each side. Group 1 is also the normal set restored at sign-in and wake, so include at least one screen you can physically see.'
+        $instruction.Text = 'Choose the monitors for Group 1 and Group 2. Include at least one screen you can physically see. Startup and wake recovery enable every available display, regardless of these groups.'
         $form.Controls.Add($instruction)
 
         $group1Box = New-Object System.Windows.Forms.GroupBox
-        $group1Box.Text = 'Group 1 - normal / startup'
+        $group1Box.Text = 'Group 1'
         $group1Box.Location = New-Object System.Drawing.Point(16, $groupTop)
         $group1Box.Size = New-Object System.Drawing.Size(408, $groupHeight)
         $form.Controls.Add($group1Box)
@@ -267,8 +267,8 @@ function Show-MonitorGroupPicker {
         $note = New-Object System.Windows.Forms.Label
         $note.AutoSize = $false
         $note.Location = New-Object System.Drawing.Point(16, $noteTop)
-        $note.Size = New-Object System.Drawing.Size(828, 36)
-        $note.Text = 'A monitor may belong to both groups; unchecked in both means off on both sides. Disconnected saved members are ignored while the connected members continue toggling.'
+        $note.Size = New-Object System.Drawing.Size(828, 72)
+        $note.Text = "A monitor may belong to both groups. Unchecked in both means off while toggling; disconnected members are skipped.`r`nFor monitor placement, use Windows Settings > System > Display on each side. Move and resize your program windows as wanted before toggling away; each side remembers that arrangement."
         $form.Controls.Add($note)
 
         $errorLabel = New-Object System.Windows.Forms.Label

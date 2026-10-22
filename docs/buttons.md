@@ -880,9 +880,13 @@ another authorized installation or synchronization workflow invokes it:
    manifests do not classify the selected folder.
 2. When a selected root-level file is the declared entry beside either
    `flowcell.script.json` or `flowcell.toolset.json`, FlowCell installs the
-   complete Script or Tool Set package automatically. Selecting a sibling
-   companion directly is rejected instead of creating a broken partial install;
-   a root containing both manifest kinds also fails closed.
+   complete Script or Tool Set package automatically. A Script manifest can
+   explicitly list root-level companion filenames in `importAliases`; selecting
+   one imports that same complete package and still executes its declared
+   `source`. Aliases must be unique existing regular files, with no subdirectory,
+   traversal, or reparse-point paths. Other companions are rejected instead of
+   creating a broken partial install; a root containing both manifest kinds also
+   fails closed.
 3. Native install validates the program manifest and source contract.
 4. FlowCell copies the source package into the owner Button's Local Scripts
    package and writes `flowcell.install.json` inside it.
