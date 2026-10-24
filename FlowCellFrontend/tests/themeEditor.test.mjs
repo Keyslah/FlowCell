@@ -342,7 +342,7 @@ test("Theme and managed-window Layout schemas remain independent in both load or
   assert.match(packageJson.scripts["test:button"], /tests\/themeModelBehavior\.test\.mjs/);
 });
 
-test("Main page offers Grey and Concrete presets and a bundled Concrete background", () => {
+test("Main page offers Default (gray) and Concrete presets and a bundled Concrete background", () => {
   const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
   const runtime = read("src", "theme", "themeRuntime.ts");
   assert.match(editor, /<option value="concrete">Concrete<\/option>/);

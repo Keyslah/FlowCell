@@ -1773,8 +1773,8 @@ test("FlowCell page registry round-trips Main background and individual rail tok
   assert.equal(isFlowCellThemeFile(wrongPage), false);
 });
 
-test("Grey and Concrete Main presets draw every rail box and leave Buttons unchanged", () => {
-  assert.deepEqual(MAIN_THEME_PRESETS.map((preset) => preset.label), ["Grey", "Concrete"]);
+test("Default (gray) and Concrete Main presets draw every rail box and leave Buttons unchanged", () => {
+  assert.deepEqual(MAIN_THEME_PRESETS.map((preset) => preset.label), ["Default", "Concrete"]);
   assert.equal(mainThemePresetAppearance("missing"), null);
   for (const preset of MAIN_THEME_PRESETS) {
     const page = mainThemePresetAppearance(preset.id);
@@ -1800,8 +1800,9 @@ test("Grey and Concrete Main presets draw every rail box and leave Buttons uncha
     assert.deepEqual(applyThemeFile(document, theme).document, document);
   }
 
-  const grey = mainThemePresetAppearance("grey");
-  assert.deepEqual(grey.assets["background-image"], { mode: "none", path: null });
+  const gray = mainThemePresetAppearance("default");
+  assert.deepEqual(gray.assets["background-image"], { mode: "none", path: null });
+  assert.equal(gray.tokens["background-color"], "#8E9195");
   const concrete = mainThemePresetAppearance("concrete");
   assert.deepEqual(concrete.assets["background-image"], { mode: "concrete", path: null });
   const concreteWithPath = structuredClone(concrete);

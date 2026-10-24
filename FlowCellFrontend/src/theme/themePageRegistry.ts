@@ -417,8 +417,8 @@ export interface MainThemePreset {
 // image, so presets give every rail its own frosted fill and edge.
 export const MAIN_THEME_PRESETS: readonly MainThemePreset[] = [
   {
-    id: "grey",
-    label: "Grey",
+    id: "default",
+    label: "Default",
     backgroundColor: "#8E9195",
     backgroundImageMode: "none",
     railBackground: "rgba(255, 255, 255, 0.14)",
