@@ -1,6 +1,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { makeSafeTauriUnlisten } from "../lib/safeTauriUnlisten.js";
+import concreteBackground from "../assets/backgrounds/concrete.jpg";
 import {
   defaultMainThemeAppearance,
   mainThemeAppearanceToPageAppearance,
@@ -197,9 +198,11 @@ function buildThemePageCssUpdate(appearance: ThemePageAppearance): ThemePageCssU
       const asset = appearance.assets[assetDefinition.id];
       const cssValue = asset.mode === "none"
         ? "none"
-        : asset.mode === "custom" && asset.path
-          ? cssUrl(asset.path)
-          : null;
+        : asset.mode === "concrete"
+          ? `url("${concreteBackground}")`
+          : asset.mode === "custom" && asset.path
+            ? cssUrl(asset.path)
+            : null;
       return [assetDefinition.cssProperty, cssValue] as const;
     })
   };
