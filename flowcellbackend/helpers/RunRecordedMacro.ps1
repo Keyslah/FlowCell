@@ -44,15 +44,19 @@ function Get-IniValue {
 }
 
 $projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$localRoot = Join-Path $projectRoot 'local'
+. (Join-Path $PSScriptRoot 'FlowCellPaths.ps1')
+. (Join-Path $PSScriptRoot 'AutoHotkeyState.ps1')
+$localRoot = $FlowCellLocalRoot
 $recordedActionsPath = Join-Path $localRoot 'recorded_actions'
 $statusPath = Join-Path $localRoot 'logs\last_action_status.txt'
 $ahkScriptPath = Join-Path $projectRoot 'FlowCellBackend.ahk'
-$ahkExePath = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
-
-if (-not (Test-Path -LiteralPath $ahkExePath)) {
-    $ahkExePath = 'C:\Program Files\AutoHotkey\v2\AutoHotkey.exe'
-}
+$ahkExePath = @(
+    (Join-Path $projectRoot 'runtime\AutoHotkey64.exe'),
+    (Join-Path $projectRoot 'runtime\AutoHotkey.exe'),
+    (Join-Path $projectRoot 'local\bin\AutoHotkey64.exe'),
+    'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe',
+    'C:\Program Files\AutoHotkey\v2\AutoHotkey.exe'
+) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 
 if (Test-Path -LiteralPath $SignalPath) {
     Remove-Item -LiteralPath $SignalPath -Force -ErrorAction SilentlyContinue
@@ -86,7 +90,7 @@ try {
         throw "Recorded macro '$Label' is missing an Id."
     }
 
-    if (-not (Test-Path -LiteralPath $ahkExePath)) {
+    if (-not $ahkExePath) {
         throw "AutoHotkey executable was not found."
     }
 
@@ -98,12 +102,18 @@ try {
         Remove-Item -LiteralPath $statusPath -Force -ErrorAction SilentlyContinue
     }
 
-    $process = Start-Process -FilePath $ahkExePath `
-        -ArgumentList @('/ErrorStdOut', $ahkScriptPath, "--run-action=$($match.Id)") `
-        -WorkingDirectory $projectRoot `
-        -WindowStyle Hidden `
-        -Wait `
-        -PassThru
+    $launchLock = Enter-FlowCellAutoHotkeyLock
+    try {
+        if (-not (Get-FlowCellAutoHotkeyState).Enabled) {
+            throw 'AutoHotkey is OFF for this Windows sign-in session. Turn Toggle AutoHotkey ON to run this macro.'
+        }
+        $process = Start-Process -FilePath $ahkExePath `
+            -ArgumentList @('/ErrorStdOut', ('"' + $ahkScriptPath + '"'), "--backend-role=$env:FLOWCELL_BACKEND_ROLE", "--run-action=$($match.Id)") `
+            -WorkingDirectory $projectRoot `
+            -WindowStyle Hidden `
+            -PassThru
+    } finally { Exit-FlowCellAutoHotkeyLock -Mutex $launchLock }
+    $process.WaitForExit()
     $exitCode = $process.ExitCode
 
     if ($exitCode -ne 0) {

@@ -5,10 +5,208 @@ import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 import { fileURLToPath } from "node:url";
+import { buildPanelRailButtons } from "./.compiled-button-system/pages/main/mainLayout.js";
+import { buttonRectsOverlap } from "./.compiled-button-system/button/geometry/buttonGeometry.js";
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readSource = (...segments) =>
   readFileSync(path.join(frontendRoot, ...segments), "utf8");
+
+for (const unavailable of [false, true]) {
+  test(`layout connects its programs once before restoring panels, unavailable=${unavailable}`, async () => {
+    const source = readSource("src", "pages", "main", "MainPage.tsx");
+    const start = source.indexOf("const restoreLayoutSnapshotState =");
+    const end = source.indexOf("const handleSaveLayout =", start);
+    const compiled = ts.transpileModule(source.slice(start, end) + "\nglobalThis.restore = restoreLayoutSnapshotState;", {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+    }).outputText;
+    const events = [];
+    const sandbox = {
+      isValidFlowCellBounds: () => true,
+      resolveInstalledPageOpenDescriptor: async () => ({ window: { title: "Layer Tree", width: 360, height: 640 } }),
+      closeManagedLayoutWindows: async () => events.push("close"),
+      connectRunningLayoutPrograms: async (names) => {
+        events.push(["connect", ...names]);
+        if (unavailable) throw new Error("Illustrator closed during connection");
+      },
+      openButtonEditorWindow: async (args) => events.push(["editor", args.programName]),
+      openInstalledPageWindow: async () => events.push("layer-tree"),
+      console: { warn: () => events.push("unavailable") }
+    };
+    vm.runInNewContext(compiled, sandbox);
+    const bounds = { Left: 10, Top: 20, Width: 360, Height: 640 };
+    const snapshot = { Windows: [
+      { Kind: "button-editor", ProgramName: "Illustrator", Bounds: bounds },
+      { Kind: "button-editor", ProgramName: "Blender", Bounds: bounds },
+      { Kind: "installed-page", ProgramName: "Illustrator", PanelName: "Layers", ButtonOwnerId: "tree",
+        InstalledPageFileName: "layers.jsx", InstalledPageId: "illustrator.layer-tree", Bounds: bounds }
+    ] };
+    const original = structuredClone(snapshot);
+    await sandbox.restore(snapshot);
+    assert.deepEqual(events, [
+      "close", ["connect", "Illustrator", "Blender"],
+      ...(unavailable ? ["unavailable"] : []),
+      ["editor", "Illustrator"], ["editor", "Blender"], "layer-tree"
+    ]);
+    assert.deepEqual(snapshot, original, "connection must not change the saved layout");
+  });
+}
+
+async function runStartupScenario({ savedLayout = false, connectionFails = false,
+  programListFails = false, layoutLoadFails = false } = {}) {
+  const source = readSource("src", "pages", "main", "MainPage.tsx");
+  const settingsHandler = source.indexOf("const handleStartupSettingChange =");
+  const start = source.indexOf("void (async () => {", settingsHandler);
+  const end = source.indexOf("})();", start);
+  assert.ok(settingsHandler >= 0 && start > settingsHandler && end > start,
+    "execute the actual Main startup IIFE");
+  const startup = source.slice(start, end + "})();".length)
+    .replace(/^void /, "globalThis.startup = ");
+  const compiled = ts.transpileModule(startup, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+  }).outputText;
+  const names = ["Illustrator", "Blender", "Fusion 360", "Krita", "Fresco", "Photoshop", "Windows",
+    ...Array.from({ length: 12 }, (_, index) => `Custom Host ${index}`)];
+  const snapshot = { Windows: [{ Kind: "button-editor", ProgramName: "Illustrator" }] };
+  const events = [];
+  const timers = [];
+  const rejectTimer = () => {
+    timers.push("timer");
+    throw new Error("Startup program connection must not schedule a timer");
+  };
+  const sandbox = {
+    cancelled: false,
+    currentWindow: { minimize: async () => events.push(["minimize"]) },
+    readStartupSettings: () => ({ loadLastLayoutOnStartup: savedLayout, minimizeMainOnStartup: false }),
+    listProgramFolders: async () => {
+      events.push(["list-programs"]);
+      if (programListFails) throw new Error("program listing failed");
+      return names;
+    },
+    setProgramNames: value => events.push(["programs", ...value]),
+    setSelectedProgramName: update => events.push(["selection", update(null)]),
+    resolveFolderSelection: (values, current) => current ?? values[0],
+    connectRunningLayoutPrograms: async value => {
+      events.push(["connect", ...value]);
+      if (connectionFails) throw new Error("host connection unavailable");
+    },
+    readLastLayoutPath: () => "saved.flowlayout.json",
+    loadLayoutSnapshot: async layoutPath => {
+      events.push(["load-layout", layoutPath]);
+      if (layoutLoadFails) throw new Error("saved layout invalid");
+      return snapshot;
+    },
+    restoreLayoutSnapshotState: async (value, connectPrograms) => {
+      assert.equal(value, snapshot);
+      events.push(["restore", connectPrograms]);
+    },
+    writeLastLayoutPath: value => events.push(["last-layout", value]),
+    formatErrorMessage: error => error.message,
+    console: {
+      warn: () => events.push(["connection-warning"]),
+      error: message => events.push(["error", message])
+    },
+    window: { alert: () => events.push(["alert"]), setTimeout: rejectTimer, setInterval: rejectTimer },
+    setTimeout: rejectTimer,
+    setInterval: rejectTimer
+  };
+  vm.runInNewContext(compiled, sandbox);
+  await sandbox.startup;
+  assert.deepEqual(timers, [], "startup checks must not become background polling");
+  return { events, names };
+}
+
+test("startup without a saved window layout prepares every Main program once", async () => {
+  const { events, names } = await runStartupScenario();
+  assert.deepEqual(events, [
+    ["list-programs"], ["programs", ...names], ["selection", names[0]], ["connect", ...names]
+  ]);
+});
+
+for (const connectionFails of [false, true]) {
+  test(`startup restores saved panels without a second connection pass, unavailable=${connectionFails}`, async () => {
+    const { events, names } = await runStartupScenario({ savedLayout: true, connectionFails });
+    assert.deepEqual(events, [
+      ["list-programs"], ["programs", ...names], ["selection", names[0]], ["connect", ...names],
+      ...(connectionFails ? [["connection-warning"]] : []),
+      ["load-layout", "saved.flowlayout.json"], ["restore", false], ["last-layout", "saved.flowlayout.json"]
+    ]);
+  });
+}
+
+test("startup program-list failure still lets the saved layout prepare its programs", async () => {
+  const { events } = await runStartupScenario({ savedLayout: true, programListFails: true });
+  assert.deepEqual(events, [
+    ["list-programs"], ["error", "Failed to load program folders."], ["alert"],
+    ["load-layout", "saved.flowlayout.json"], ["restore", true], ["last-layout", "saved.flowlayout.json"]
+  ]);
+});
+
+test("a broken saved layout does not undo or repeat Main's startup connection pass", async () => {
+  const { events, names } = await runStartupScenario({ savedLayout: true, layoutLoadFails: true });
+  assert.deepEqual(events, [
+    ["list-programs"], ["programs", ...names], ["selection", names[0]], ["connect", ...names],
+    ["load-layout", "saved.flowlayout.json"], ["last-layout", null],
+    ["error", "Failed to load last layout on startup."]
+  ]);
+});
+
+test("layout restore skips connection when startup has already checked the programs", async () => {
+  const source = readSource("src", "pages", "main", "MainPage.tsx");
+  const start = source.indexOf("const restoreLayoutSnapshotState =");
+  const end = source.indexOf("const handleSaveLayout =", start);
+  const compiled = ts.transpileModule(source.slice(start, end) + "\nglobalThis.restore = restoreLayoutSnapshotState;", {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+  }).outputText;
+  const events = [];
+  const sandbox = {
+    isValidFlowCellBounds: () => true,
+    closeManagedLayoutWindows: async () => events.push("close"),
+    connectRunningLayoutPrograms: async () => { events.push("unexpected-connect"); },
+    openButtonEditorWindow: async args => events.push(["editor", args.programName])
+  };
+  vm.runInNewContext(compiled, sandbox);
+  await sandbox.restore({ Windows: [{ Kind: "button-editor", ProgramName: "Illustrator",
+    Bounds: { Left: 10, Top: 20, Width: 360, Height: 640 } }] }, false);
+  assert.deepEqual(events, ["close", ["editor", "Illustrator"]]);
+});
+
+test("new Startup fallback avoids custom saved panels without moving or changing them", () => {
+  const savedPanels = [
+    { panelName: "Files", rect: { x: 216, y: 112, width: 72, height: 48.156 } },
+    { panelName: "Utility", rect: { x: 216, y: 179.264, width: 72, height: 45.948 } },
+    { panelName: "Test", rect: { x: 216, y: 240, width: 72, height: 50.515 } }
+  ];
+  const original = structuredClone(savedPanels);
+  const buttons = buildPanelRailButtons(["Files", "Startup", "Test", "Utility"], "Startup", savedPanels);
+  const startup = buttons.find((button) => button.folderName === "Startup");
+  assert.ok(startup);
+  assert.equal(startup.isSelected, true);
+  for (const saved of savedPanels) {
+    assert.equal(buttonRectsOverlap(startup, saved.rect), false, `Startup overlaps ${saved.panelName}`);
+    const rendered = buttons.find((button) => button.folderName === saved.panelName);
+    assert.deepEqual(
+      { x: rendered.x, y: rendered.y, width: rendered.width, height: rendered.height },
+      saved.rect,
+      `${saved.panelName} was moved`
+    );
+  }
+  assert.deepEqual(savedPanels, original, "navigation must not mutate saved placements");
+  const withoutSaved = buildPanelRailButtons(["Files", "Startup", "Test", "Utility"], "Startup");
+  assert.deepEqual(buttons.at(-1), withoutSaved.at(-1), "Add Panel control must stay unchanged");
+});
+
+test("multiple newly discovered panel fallbacks reserve each other's free slots", () => {
+  const savedPanels = [{ panelName: "Utility", rect: { x: 199, y: 125, width: 132, height: 90 } }];
+  const buttons = buildPanelRailButtons(["Alpha", "Startup", "Utility"], null, savedPanels)
+    .filter((button) => button.folderName);
+  for (let index = 0; index < buttons.length; index += 1) {
+    for (let other = index + 1; other < buttons.length; other += 1) {
+      assert.equal(buttonRectsOverlap(buttons[index], buttons[other]), false);
+    }
+  }
+  assert.deepEqual(savedPanels[0].rect, { x: 199, y: 125, width: 132, height: 90 });
+});
 
 test("layout capture omits live Fan display mode but keeps Pop-out mode and semantic bounds", async () => {
   const source = readSource("src", "pages", "main", "MainPage.tsx");

@@ -675,7 +675,15 @@ function Invoke-FlowCellControllerCli([string[]]$Arguments) {
             }
         }
     ) -join ' '
-    $process = Start-Process -FilePath $ahkExe -ArgumentList $quotedArguments -PassThru -Wait -WindowStyle Hidden
+    . (Join-Path $script:ProjectRoot 'helpers\AutoHotkeyState.ps1')
+    $launchLock = Enter-FlowCellAutoHotkeyLock
+    try {
+        if (-not (Get-FlowCellAutoHotkeyState).Enabled) {
+            throw 'AutoHotkey is OFF for this Windows sign-in session. Turn Toggle AutoHotkey ON to run this action.'
+        }
+        $process = Start-Process -FilePath $ahkExe -ArgumentList $quotedArguments -PassThru -WindowStyle Hidden
+    } finally { Exit-FlowCellAutoHotkeyLock -Mutex $launchLock }
+    $process.WaitForExit()
     return [int]$process.ExitCode
 }
 

@@ -11,6 +11,7 @@ if($env:GITHUB_ACTIONS -ne 'true' -or -not $env:RUNNER_TEMP){throw 'Installer sm
 $install=Join-Path $env:RUNNER_TEMP 'FlowCell Install With Spaces'
 $local=Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'FlowCell/local'
 $startupPath=Join-Path ([Environment]::GetFolderPath('Startup')) 'FlowCell Background.lnk'
+$togglePath=Join-Path ([Environment]::GetFolderPath('Desktop')) 'Toggle AutoHotkey.lnk'
 if(Test-Path -LiteralPath $local){throw 'Expected a fresh CI user data root.'}
 Remove-Item Env:FLOWCELL_LOCAL_ROOT -ErrorAction SilentlyContinue
 Remove-Item Env:FLOWCELL_PROGRAMS_ROOT -ErrorAction SilentlyContinue
@@ -23,15 +24,24 @@ function Run-Setup {
 function Stop-SmokeApp {
     Get-Process -Name flowcell_frontend -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq (Join-Path $install 'flowcell_frontend.exe')} | Stop-Process -Force
 }
-function Check-StartupBackend {
+function Check-StartupBackend([switch]$ExpectedOff) {
     if(-not (Test-Path -LiteralPath $startupPath -PathType Leaf)){throw 'Installer did not register the background backend at sign-in.'}
     $shell=New-Object -ComObject WScript.Shell
-    if($shell.CreateShortcut($startupPath).TargetPath -ne (Join-Path $install 'flowcellbackend/run_backend_hidden.vbs')){throw 'Startup shortcut targets a different resource root.'}
+    $startup=$shell.CreateShortcut($startupPath)
+    if($startup.TargetPath -ne (Join-Path $install 'flowcellbackend/run_backend_hidden.vbs') -or $startup.Arguments -ne '--logon'){throw 'Startup shortcut targets a different resource root or omits sign-in initialization.'}
+    if(-not (Test-Path -LiteralPath $togglePath -PathType Leaf)){throw 'Default installation did not create the AutoHotkey desktop toggle.'}
+    $toggle=$shell.CreateShortcut($togglePath)
+    if($toggle.TargetPath -ne (Join-Path $env:SystemRoot 'System32/wscript.exe') -or $toggle.Arguments -ne ('"'+(Join-Path $install 'tools/autohotkey v2 on off/Toggle-AutoHotkey.vbs')+'"')){throw 'Desktop toggle is not backed by the installed Windows script launcher.'}
+    foreach($name in @('Toggle-AutoHotkey.ps1','Toggle-AutoHotkey.vbs','Toggle-AutoHotkey-On.ico','Toggle-AutoHotkey-Off.ico')){if(-not (Test-Path -LiteralPath (Join-Path $install ('tools/autohotkey v2 on off/'+$name)) -PathType Leaf)){throw "Missing installed toggle resource: $name"}}
     if((Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\FlowCell' -Name InstalledResourceRoot) -ne $install){throw 'Installed resource pointer is missing.'}
     $runtime=Join-Path $install 'flowcellbackend/runtime/AutoHotkey64.exe'
     $deadline=[DateTime]::UtcNow.AddSeconds(30)
     do {
         $backend=@(Get-CimInstance Win32_Process -Filter "Name = 'AutoHotkey64.exe'"|Where-Object {$_.ExecutablePath -eq $runtime -and $_.CommandLine -like '*--backend-role=installed*'})
+        if($ExpectedOff){
+            if($backend.Count -gt 0){throw 'Upgrade overrode a manual AutoHotkey OFF choice in this Windows session.'}
+            return
+        }
         if($backend.Count -eq 1){return}
         Start-Sleep -Milliseconds 300
     } while([DateTime]::UtcNow -lt $deadline)
@@ -66,9 +76,14 @@ Check-StartupBackend
 Launch-And-Check $local
 $userFile=Join-Path $local 'Programs/Windows/preserve-user-data.txt'
 [IO.File]::WriteAllText($userFile,'keep through upgrade and uninstall')
+$toggleScript=Join-Path $install 'tools/autohotkey v2 on off/Toggle-AutoHotkey.ps1'
+& $toggleScript -Quiet
+if(@(Get-CimInstance Win32_Process -Filter "Name LIKE 'AutoHotkey%.exe'").Count -ne 0){throw 'Desktop toggle script did not stop all AutoHotkey processes.'}
 Run-Setup
-Check-StartupBackend
+Check-StartupBackend -ExpectedOff
 if([IO.File]::ReadAllText($userFile) -ne 'keep through upgrade and uninstall'){throw 'Upgrade modified user data.'}
+& $toggleScript -EnsureOn -Quiet
+Check-StartupBackend
 Launch-And-Check $local
 & (Join-Path $install 'flowcellbackend/helpers/Stop-InstalledBackend.ps1') -ResourceRoot $install
 $override=Join-Path $env:RUNNER_TEMP 'Explicit Local Data With Spaces'
@@ -84,6 +99,7 @@ Start-Sleep -Seconds 3
 if([IO.File]::ReadAllText($userFile) -ne 'keep through upgrade and uninstall'){throw 'Uninstall modified user data.'}
 if(Test-Path -LiteralPath (Join-Path $install 'flowcell_frontend.exe')){throw 'Application remained after uninstall.'}
 if(Test-Path -LiteralPath $startupPath){throw 'Owned startup shortcut remained after uninstall.'}
+if(Test-Path -LiteralPath $togglePath){throw 'Owned desktop toggle remained after uninstall.'}
 $remainingPointer=Get-ItemProperty -LiteralPath 'HKCU:\Software\FlowCell' -ErrorAction SilentlyContinue
 if($remainingPointer -and $remainingPointer.PSObject.Properties['InstalledResourceRoot'] -and $remainingPointer.InstalledResourceRoot -eq $install){throw 'Owned installed resource pointer remained after uninstall.'}
-Write-Output 'PASS: installer/startup backend, fresh Start Menu launch, backend persistence after UI closes, unrelated cwd, spaces, physical config over inherited environment, upgrade/uninstall user-data preservation and startup removal.'
+Write-Output 'PASS: installer/startup backend and default desktop toggle, fresh Start Menu launch, backend persistence after UI closes, unrelated cwd, spaces, physical config over inherited environment, upgrade/uninstall user-data preservation and owned shortcut removal.'

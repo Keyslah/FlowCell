@@ -57,3 +57,22 @@ Select bodies, then:
 - **Refresh** reads the selection's sizes.
 
 Scale works along world axes, so it skips bodies in rotated components.
+
+## Illustrator SVG import
+
+Illustrator's **Send SVG to Fusion** Button lands here through the internal
+`Import Illustrator SVG` action (not a panel Button). Like Insert SVG, it uses
+the active component (the root of a Part Design, which allows no other
+components). Each Illustrator layer becomes:
+
+- one sketch named after the layer on the component's XY plane;
+- one New Body extrude of the filled regions, from the XY plane up by the
+  layer's leading millimeter number (`(2.5) Base`, `14Main`; 1 mm otherwise).
+  Holes stay open, islands inside holes are kept, and disconnected islands
+  become bodies named `<layer> 1`, `<layer> 2`, ...
+
+Each layer keeps its physical Illustrator size, and the layers keep their
+positions relative to each other with the whole selection centered on the
+origin. A parametric batch is grouped as `Illustrator SVG` in the timeline, and
+the new bodies are left selected. If one layer fails, the whole batch is
+removed again. With no design open, a new design is created.

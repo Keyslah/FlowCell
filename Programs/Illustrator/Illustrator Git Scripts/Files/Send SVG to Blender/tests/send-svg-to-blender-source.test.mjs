@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -23,6 +23,14 @@ const blenderRegistryInstallerPath = path.resolve(
   "../../../../Blender/SupportScripts/Install-BlenderFlowCellButtons.ps1"
 );
 const blenderRegistryInstallerSource = readFileSync(blenderRegistryInstallerPath, "utf8");
+const fusionHandoffPath = path.join(packageRoot, "Send-SVG-To-Fusion.ps1");
+const fusionHandoffSource = readFileSync(fusionHandoffPath, "utf8");
+const fusionLauncherSource = readFileSync(path.join(packageRoot, "Send-SVG-To-Fusion.vbs"), "utf8");
+const repoRoot = path.resolve(packageRoot, "../../../../..");
+const fusionInstallerSource = readFileSync(
+  path.join(repoRoot, "Programs/Fusion 360/SupportScripts/Install-FusionFlowCellButtons.ps1"),
+  "utf8"
+);
 
 test("Windows PowerShell writes and replaces handoff status through long redirected paths", {
   skip: process.platform !== "win32"
@@ -61,7 +69,7 @@ if ($leftovers.Length) { throw 'Atomic status write left temporary files behind'
   }
 });
 
-function loadTestApi(postAction, appOverride, warnings) {
+function loadTestApi(postAction, appOverride, warnings, target) {
   const globalObject = { __FLOWCELL_SEND_SVG_TO_BLENDER_TEST__: true };
   const context = {
     $: { global: globalObject },
@@ -78,6 +86,9 @@ function loadTestApi(postAction, appOverride, warnings) {
   };
   if (postAction !== undefined) {
     context.FLOWCELL_SEND_SVG_POST_ACTION = postAction;
+  }
+  if (target !== undefined) {
+    context.FLOWCELL_SEND_SVG_TARGET = target;
   }
   if (appOverride !== undefined) {
     context.app = appOverride;
@@ -141,6 +152,33 @@ test("the optional Ill Orca marker is normalized without changing the normal but
   assert.equal(loadTestApi("orca").requestedPostAction(), "orca");
   assert.equal(loadTestApi(" ORCA ").requestedPostAction(), "orca");
   assert.equal(loadTestApi("unsupported").requestedPostAction(), "none");
+});
+
+test("the send target defaults to Blender and only Fusion switches the handoff files", () => {
+  const blender = {
+    label: "Blender",
+    requestFileName: "send-svg-to-blender.request.json",
+    statusFileName: "send-svg-to-blender.status.txt",
+    handoffFileName: "Send-SVG-To-Blender.vbs"
+  };
+  assert.deepEqual({ ...loadTestApi().sendTarget }, blender);
+  assert.deepEqual({ ...loadTestApi(undefined, undefined, undefined, "maya").sendTarget }, blender);
+  assert.deepEqual({ ...loadTestApi(undefined, undefined, undefined, " FUSION ").sendTarget }, {
+    label: "Fusion 360",
+    requestFileName: "send-svg-to-fusion.request.json",
+    statusFileName: "send-svg-to-fusion.status.txt",
+    handoffFileName: "Send-SVG-To-Fusion.vbs"
+  });
+  // Ill Orca continues from the Blender import only.
+  assert.equal(loadTestApi("orca", undefined, undefined, "fusion").requestedPostAction(), "none");
+  assert.equal(loadTestApi("orca", undefined, undefined, "blender").requestedPostAction(), "orca");
+
+  assert.match(source, /handoffFile: new File\(sourceFolder\.fsName \+ "\/" \+ SEND_TARGET\.handoffFileName\)/);
+  assert.match(source, /could not be normalized for " \+ SEND_TARGET\.label/);
+  assert.doesNotMatch(
+    source,
+    /normalized for Blender|sending it to Blender|Blender handoff|Blender reported|waiting for Blender|"Blender could not/
+  );
 });
 
 test("selection is grouped by nearest layer identity and ignores text cursors and ranges", () => {
@@ -873,4 +911,113 @@ test("handoff resolves each user's installation instead of embedding this comput
   assert.match(handoffSource, /CurrentVersion\\App Paths\\blender\.exe/);
   assert.match(handoffSource, /\$env:LOCALAPPDATA/);
   assert.match(handoffSource, /\$env:ProgramFiles/);
+});
+
+test("Fusion launcher starts the same-folder PowerShell handoff with the Fusion request", () => {
+  assert.match(fusionLauncherSource, /"send-svg-to-fusion\.request\.json"/);
+  assert.match(fusionLauncherSource, /"Send-SVG-To-Fusion\.ps1"/);
+  assert.match(fusionLauncherSource, /-WindowStyle Hidden -File/);
+  assert.match(fusionLauncherSource, /shell\.Run command, 0, False/);
+  assert.doesNotMatch(fusionLauncherSource, /Blender\.ps1|blender\.request/i);
+});
+
+test("Fusion handoff registers the SVG importer as a fixed internal Fusion action and invokes only it", () => {
+  assert.match(fusionHandoffSource, /\$internalImportOwnerButtonId = 'internal-illustrator-svg-import'/);
+  assert.match(
+    fusionHandoffSource,
+    /\$internalImportBridgeAction = 'flowcell_button_\{0\}' -f \$internalImportOwnerButtonId/
+  );
+  const importerMatch = /\$fusionImporterRelativePath = '([^']+)'/.exec(fusionHandoffSource);
+  assert.ok(importerMatch);
+  assert.ok(existsSync(path.join(repoRoot, importerMatch[1].replaceAll("\\", "/"))), importerMatch[1]);
+  assert.match(fusionHandoffSource, /Install-FusionFlowCellButtons\.ps1/);
+  assert.match(fusionHandoffSource, /-PanelName 'Internal'/);
+  assert.match(fusionHandoffSource, /\$registeredAction\.Trim\(\) -cne \$internalImportBridgeAction/);
+  assert.match(fusionHandoffSource, /-Action \$internalImportBridgeAction/);
+  assert.match(fusionHandoffSource, /payload = \$Payload/);
+  assert.match(fusionHandoffSource, /items = \$items/);
+  assert.match(fusionInstallerSource, /ValidatePattern\('\^\[A-Za-z0-9_-\]\{1,128\}\$'\)/);
+  assert.match(fusionInstallerSource, /\$action = 'flowcell_button_\{0\}' -f \$OwnerButtonId\.ToLowerInvariant\(\)/);
+});
+
+test("Fusion handoff targets a live bridge, publishes atomically, and never blocks bridge replaces", () => {
+  assert.match(fusionHandoffSource, /Get-Process Fusion360/);
+  assert.match(fusionHandoffSource, /\$state\.Trim\(\) -in @\('ready', 'handling'\) -and \$statusProcessId -eq \[string\]\$processId/);
+  assert.match(fusionHandoffSource, /\[System\.IO\.FileShare\]::ReadWrite -bor \[System\.IO\.FileShare\]::Delete/);
+  assert.match(fusionHandoffSource, /'\.request-\{0\}\.tmp'/);
+  assert.match(fusionHandoffSource, /\[System\.IO\.File\]::Replace\(\$StagedPath, \$RequestPath, \[NullString\]::Value\)/);
+  assert.doesNotMatch(fusionHandoffSource, /::Replace\([^)]*,\s*\$null\)/);
+  assert.match(fusionHandoffSource, /-Name 'requestId'\) -ceq \$bridgeRequestId/);
+  assert.match(fusionHandoffSource, /Fusion 360 closed before it finished the Illustrator SVG import/);
+  assert.match(fusionHandoffSource, /-Name 'ok'\) -ne \$true/);
+  assert.match(fusionHandoffSource, /Send SVG to Fusion does not support postAction/);
+  assert.match(fusionHandoffSource, /\$mutexName = 'Local\\FlowCell\.SendSvgToFusion'/);
+  assert.match(fusionHandoffSource, /\$statusFileName = 'send-svg-to-fusion\.status\.txt'/);
+});
+
+test("Fusion handoff launches only a closed Fusion and fits inside the Illustrator wait", () => {
+  assert.match(fusionHandoffSource, /Autodesk\\webdeploy\\production/);
+  assert.match(fusionHandoffSource, /FusionLauncher\.exe/);
+  assert.match(fusionHandoffSource, /if \(-not \$fusionWasRunning\) \{[\s\S]*?Start-Process -FilePath \$launcherPath/);
+  assert.match(fusionHandoffSource, /Utilities > Add-Ins/);
+  const seconds = (name) => Number(new RegExp(`\\$${name} = (\\d+)`).exec(fusionHandoffSource)[1]);
+  const statusTimeoutMs = Number(/STATUS_TIMEOUT_MS = (\d+)/.exec(source)[1]);
+  assert.ok(
+    (seconds("fusionLaunchTimeoutSeconds") + seconds("bridgeResponseTimeoutSeconds")) * 1000 < statusTimeoutMs,
+    "a cold Fusion launch plus the import must finish before Illustrator stops waiting"
+  );
+});
+
+test("Fusion handoff resolves each user's installation instead of embedding this computer's paths", () => {
+  assert.doesNotMatch(fusionHandoffSource + fusionLauncherSource, /C:\\Users\\|D:\\Dev\\workspace\\/i);
+  assert.doesNotMatch(fusionHandoffSource, /button-migrated-|flowcell_button_button-|\b\d{4,6}\\runtime_status/i);
+  assert.match(fusionHandoffSource, /function Resolve-FlowCellRepoRoot/);
+  assert.match(fusionHandoffSource, /\$env:LOCALAPPDATA/);
+});
+
+test("Windows PowerShell Fusion handoff replaces status and bridge request files atomically", {
+  skip: process.platform !== "win32"
+}, () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "flowcell-fusion-handoff-"));
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $parseErrors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:FLOWCELL_TEST_HANDOFF, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+foreach ($name in @('ConvertTo-SingleLineMessage', 'ConvertTo-ExtendedFilePath', 'Write-HandoffStatus', 'Read-SharedText', 'Publish-FusionBridgeRequest')) {
+  $function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+  . ([scriptblock]::Create($function.Extent.Text))
+}
+$directory = Join-Path $env:FLOWCELL_TEST_ROOT ('x' * 180)
+[IO.Directory]::CreateDirectory((ConvertTo-ExtendedFilePath $directory)) | Out-Null
+$status = Join-Path $directory 'send-svg-to-fusion.status.txt'
+if ($status.Length + 45 -le 260) { throw 'Fixture did not cross the Windows temporary-path limit' }
+Write-HandoffStatus -Path $status -CorrelationId 'first' -Status Ok -Message 'First write' -Count 1
+Write-HandoffStatus -Path $status -CorrelationId 'replacement' -Status Error -Message ('Two' + [char]10 + 'lines') -Count 2
+$result = [IO.File]::ReadAllText((ConvertTo-ExtendedFilePath $status))
+if ($result -notmatch 'RequestId=replacement' -or $result -notmatch 'Status=Error' -or $result -notmatch 'Message=Two lines') { throw "Status replacement failed: $result" }
+if ([IO.Directory]::GetFiles((ConvertTo-ExtendedFilePath $directory), '*.tmp').Length) { throw 'Status write left temporary files behind' }
+
+$bridge = Join-Path $env:FLOWCELL_TEST_ROOT 'bridge'
+New-Item -ItemType Directory -Path $bridge | Out-Null
+$request = Join-Path $bridge 'request.json'
+foreach ($text in @('{"requestId":"one"}', '{"requestId":"two"}')) {
+  $staged = Join-Path $bridge ('.request-' + [guid]::NewGuid().ToString('N') + '.tmp')
+  [IO.File]::WriteAllText($staged, $text)
+  Publish-FusionBridgeRequest -StagedPath $staged -RequestPath $request
+  if (Test-Path -LiteralPath $staged) { throw 'Publishing left the staged request behind' }
+  if ((Read-SharedText -Path $request) -ne $text) { throw "Published request mismatch: $text" }
+}
+`;
+  try {
+    const result = spawnSync("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")
+    ], {
+      encoding: "utf8", timeout: 30_000,
+      env: { ...process.env, FLOWCELL_TEST_HANDOFF: fusionHandoffPath, FLOWCELL_TEST_ROOT: temporaryRoot }
+    });
+    assert.equal(result.status, 0, result.error?.message ?? result.stderr ?? result.stdout);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
 });

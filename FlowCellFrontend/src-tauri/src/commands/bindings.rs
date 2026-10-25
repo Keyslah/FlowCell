@@ -994,7 +994,7 @@ pub(crate) fn write_program_registration_section(
             "generic",
             "generic",
             "",
-            "Files|Utility",
+            "Files|Utility|Startup",
             String::from("explorer|dopus|dopusrt"),
         ),
         _ => (
@@ -1132,6 +1132,28 @@ mod program_registration_tests {
         assert_eq!(
             registered_program_folder_names(&available, &document),
             vec![String::from("Illustrator")]
+        );
+    }
+
+    #[test]
+    fn windows_registration_includes_startup_without_changing_other_defaults() {
+        let mut document = IniDocument::new();
+        let program_id = upsert_program_registration(
+            &mut document,
+            "Windows",
+            Path::new(r"D:\FlowCell\Programs\Windows"),
+            "explorer.exe",
+        );
+        let registration = document
+            .get(&format!("ProgramTab_{program_id}"))
+            .expect("Windows registration");
+        assert_eq!(
+            registration.get("DefaultPanels").map(String::as_str),
+            Some("Files|Utility|Startup")
+        );
+        assert_eq!(
+            registration.get("ProcessNames").map(String::as_str),
+            Some("explorer|dopus|dopusrt")
         );
     }
 

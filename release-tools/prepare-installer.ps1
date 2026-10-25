@@ -18,11 +18,30 @@ $tracked=@(& git -C $repo -c core.quotePath=false ls-files -- flowcellbackend to
 if($LASTEXITCODE -ne 0){throw 'Could not inventory tracked runtime resources.'}
 $newBackendHelpers = @(
     'flowcellbackend/helpers/Start-FlowCellBackend.ps1',
+    'flowcellbackend/helpers/Start-FlowCellAutoHotkey.ps1',
+    'flowcellbackend/helpers/Start-FlowCellShortcut.ps1',
     'flowcellbackend/helpers/Configure-InstalledBackendStartup.ps1',
+    'flowcellbackend/helpers/AutoHotkeyState.ps1',
+    'flowcellbackend/helpers/AutoHotkeyState.ahk',
     'flowcellbackend/helpers/BackendIdentity.ahk'
 )
 foreach ($helper in $newBackendHelpers) {
     if ($tracked -notcontains $helper -and (Test-Path -LiteralPath (Join-Path $repo $helper) -PathType Leaf)) { $tracked += $helper }
+}
+foreach ($required in @(
+    'flowcellbackend/run_backend_hidden.vbs',
+    'flowcellbackend/helpers/Start-FlowCellBackend.ps1',
+    'flowcellbackend/helpers/Start-FlowCellAutoHotkey.ps1',
+    'flowcellbackend/helpers/Start-FlowCellShortcut.ps1',
+    'flowcellbackend/helpers/Configure-InstalledBackendStartup.ps1',
+    'flowcellbackend/helpers/AutoHotkeyState.ps1',
+    'flowcellbackend/helpers/AutoHotkeyState.ahk',
+    'tools/autohotkey v2 on off/Toggle-AutoHotkey.vbs',
+    'tools/autohotkey v2 on off/Toggle-AutoHotkey.ps1',
+    'tools/autohotkey v2 on off/Toggle-AutoHotkey-On.ico',
+    'tools/autohotkey v2 on off/Toggle-AutoHotkey-Off.ico'
+)) {
+    if ($tracked -notcontains $required -or -not (Test-Path -LiteralPath (Join-Path $repo $required) -PathType Leaf)) { throw "Required installed startup/toggle resource missing: $required" }
 }
 foreach($relative in $tracked){
     if($relative -match '(^|/)(local|\.git|node_modules|target)(/|$)|\.(log|tmp)$'){throw "Private/generated runtime resource rejected: $relative"}

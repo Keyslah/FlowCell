@@ -187,6 +187,7 @@ fn main() {
             save_layout_snapshot,
             load_layout_snapshot,
             authorize_flowcell_theme_asset,
+            get_flowcell_theme_directory,
             save_flowcell_theme_file,
             load_flowcell_theme_file,
             list_program_folders,
@@ -261,6 +262,7 @@ fn main() {
             run_panel_button_event,
             run_toolset_action,
             query_toolset_state,
+            connect_running_layout_programs,
             program_sources::execute::run_program_capability_action,
             program_sources::execute::set_program_capability_state,
             program_sources::installed_page::resolve_installed_page,
@@ -321,7 +323,6 @@ fn main() {
 
             #[cfg(windows)]
             {
-                start_illustrator_bridge_prewarm_worker();
                 let registry = app.state::<ScopedTopmostRegistry>().inner().clone();
                 start_scoped_topmost_worker(app.handle().clone(), registry);
                 start_native_input_worker(app.handle().clone());

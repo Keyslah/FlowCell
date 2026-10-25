@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $sourcePath = Join-Path (Split-Path -Parent $PSScriptRoot) 'Toggle-AutoHotkey.ps1'
+. (Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))) 'flowcellbackend/helpers/AutoHotkeyState.ps1')
 $tokens = $null
 $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tokens, [ref]$parseErrors)
@@ -30,6 +31,17 @@ $script:ToggleSnapshotPath = Join-Path $script:ToggleRoot 'AutoHotkeyToggleSnaps
 $script:ToggleLogPath = Join-Path $script:ToggleRoot 'AutoHotkeyToggle.log'
 $script:FixtureExePath = Join-Path $script:ToggleRoot 'fixture.exe'
 $script:FixtureArguments = '"fixture.ahk" --headless'
+$script:FlowCellLocalRoot = $script:ToggleRoot
+$script:FixtureSession = 'first-logon'
+function Get-FlowCellAutoHotkeyStateRoot { return $script:ToggleRoot }
+function Get-FlowCellAutoHotkeySessionId { return $script:FixtureSession }
+function Enter-FlowCellAutoHotkeyLock { $script:LockHeld = $true; return [pscustomobject]@{ Fixture = $true } }
+function Exit-FlowCellAutoHotkeyLock { param($Mutex) $script:LockHeld = $false }
+function Start-CurrentFlowCellBackend {
+    Assert-True $script:LockHeld 'Backend restore must hold the common launch lock.'
+    $script:BackendCalls++
+    if ($script:FailBackend) { throw 'Synthetic backend readiness failure' }
+}
 
 # Every process boundary is mocked, including guards against an accidental new
 # dependency on direct CIM/process access. No real hotkeys, shortcuts or popups.
@@ -38,6 +50,8 @@ function Get-AllAutoHotkeyProcesses { return @($script:FakeProcesses) }
 function Start-Process {
     param([string]$FilePath, $ArgumentList, [string]$WindowStyle)
     $script:StartCalls++
+    Assert-True $script:LockHeld 'Snapshot restore must hold the common launch lock.'
+    Assert-True ((Get-FlowCellAutoHotkeyState).Enabled) 'Snapshot restore requires enabled preference.'
     if ($script:FailStart) { throw 'Synthetic launch failure' }
     Assert-True ($FilePath -eq $script:FixtureExePath) 'An unexpected executable was requested.'
     $script:FakeProcesses = @([pscustomobject]@{
@@ -49,13 +63,16 @@ function Start-Process {
 function Stop-Process {
     param([int]$Id, [switch]$Force, [string]$ErrorAction)
     $script:StopCalls++
+    Assert-True $script:LockHeld 'Stopping processes must hold the common launch lock.'
+    Assert-True (-not (Get-FlowCellAutoHotkeyState).Enabled) 'OFF must latch before stopping any process.'
     Assert-True ($Id -eq 424242) 'An unexpected process stop was requested.'
-    $script:FakeProcesses = @()
+    if (-not $script:FailStop) { $script:FakeProcesses = @() }
 }
 function Start-ManagedHotkeyLaunchers { throw 'Fixture snapshot should supply the launcher.' }
 function Set-DesktopShortcut {
-    param([string]$State)
+    param([string]$State, [string]$Message = '')
     $script:ShortcutStates += $State
+    $script:ShortcutMessages += $Message
     if ($script:FailPresentation) { throw 'Synthetic shortcut failure' }
 }
 function New-Object {
@@ -74,13 +91,23 @@ function New-Object {
 function Reset-Fixture {
     param([bool]$Running = $false)
     $script:StatusOnly = $false
+    $script:EnsureOn = $false
+    $script:Quiet = $false
+    $script:FailureMessage = ''
+    $script:LockHeld = $false
+    $script:BackendCalls = 0
+    $script:FailBackend = $false
+    $script:FailStop = $false
     $script:StartCalls = 0
     $script:StopCalls = 0
     $script:FailStart = $false
     $script:FailPresentation = $false
     $script:ShortcutStates = @()
+    $script:ShortcutMessages = @()
     $script:Popups = @()
     $script:FakeProcesses = @()
+    $script:FixtureSession = 'first-logon'
+    Set-FlowCellAutoHotkeyEnabled -Enabled $true
     if ($Running) {
         $script:FakeProcesses = @([pscustomobject]@{
             ProcessId = 424242
@@ -102,7 +129,8 @@ try {
     Set-Content -LiteralPath $script:FixtureExePath -Value ''
 
     Reset-Fixture
-    Assert-True (Invoke-ToggleWithFeedback) 'Turning ON unexpectedly failed.'
+    $onResult = Invoke-ToggleWithFeedback
+    Assert-True $onResult ('Turning ON unexpectedly failed: ' + ($script:Popups.Message -join '; '))
     $status = Read-FixtureStatus
     Assert-True ($status.state -eq 'on' -and $status.processCount -eq 1) 'ON status must reflect the running process.'
     Assert-True ($script:StartCalls -eq 1 -and $script:StopCalls -eq 0) 'Turning ON must restore the snapshot once.'
@@ -114,18 +142,22 @@ try {
     $status = Read-FixtureStatus
     Assert-True ($status.state -eq 'off' -and $status.processCount -eq 0) 'OFF status must reflect zero processes.'
     Assert-True ($script:StopCalls -eq 1 -and $script:StartCalls -eq 0) 'Turning OFF must stop only the fixture.'
+    Assert-True (-not (Get-FlowCellAutoHotkeyState).Enabled) 'Manual OFF must persist for this logon.'
     Assert-True ($script:Popups.Count -eq 1 -and $script:Popups[0].Title -match 'OFF') 'OFF must produce a clearly titled popup.'
 
     foreach ($running in @($true, $false)) {
         Reset-Fixture -Running $running
         $snapshotBefore = Get-Content -LiteralPath $script:ToggleSnapshotPath -Raw
         $script:StatusOnly = $true
+        Set-FlowCellAutoHotkeyEnabled -Enabled $false
+        $preferenceBefore = Get-Content -LiteralPath (Get-FlowCellAutoHotkeyState).StatePath -Raw
         Assert-True (Invoke-ToggleWithFeedback) 'Status-only inspection unexpectedly failed.'
         $status = Read-FixtureStatus
         $expectedState = if ($running) { 'on' } else { 'off' }
         Assert-True ($status.state -eq $expectedState) 'Status-only must report the measured state.'
         Assert-True ($script:StartCalls -eq 0 -and $script:StopCalls -eq 0) 'Status-only must never start or stop a process.'
         Assert-True ((Get-Content -LiteralPath $script:ToggleSnapshotPath -Raw) -eq $snapshotBefore) 'Status-only must preserve the saved restart snapshot.'
+        Assert-True ((Get-Content -LiteralPath (Get-FlowCellAutoHotkeyState).StatePath -Raw) -eq $preferenceBefore) 'Status-only must not change the manual preference, even with stray active processes.'
         Assert-True ($script:Popups.Count -eq 1) 'Status-only must show feedback.'
     }
 
@@ -137,6 +169,76 @@ try {
     Assert-True ($script:Popups.Count -eq 1 -and $script:Popups[0].Message -match 'Synthetic launch failure') 'A hidden launch error must be shown to the user.'
     Assert-True ($script:Popups[0].Flags -eq 0x10010) 'Error feedback must be foreground-visible with an error icon.'
     Assert-True ((Get-Content -LiteralPath $script:ToggleLogPath -Raw) -match 'Synthetic launch failure') 'Launch errors must be logged.'
+    Assert-True ((Get-FlowCellAutoHotkeyState).Enabled) 'A failed ON attempt must not masquerade as a manual OFF choice.'
+
+    Reset-Fixture -Running $true
+    $script:EnsureOn = $true
+    Assert-True (Invoke-ToggleWithFeedback) 'Ensure ON unexpectedly failed.'
+    Assert-True ($script:StopCalls -eq 0 -and $script:StartCalls -eq 0 -and $script:BackendCalls -eq 1) 'Ensure ON must reuse running scripts and ensure backend without toggling OFF.'
+    Assert-True (Invoke-ToggleWithFeedback) 'Repeated Ensure ON unexpectedly failed.'
+    Assert-True ($script:StopCalls -eq 0 -and $script:StartCalls -eq 0 -and $script:BackendCalls -eq 2) 'Repeated Ensure ON must not launch duplicate scripts.'
+
+    Reset-Fixture
+    $entry = [pscustomobject]@{ ExecutablePath = $script:FixtureExePath; ArgumentString = $script:FixtureArguments }
+    Save-HotkeySnapshot -Entries @($entry, $entry, [pscustomobject]@{ ExecutablePath = 'obsolete.exe'; ArgumentString = '"C:\old-install\FlowCellBackend.ahk" --headless' })
+    Assert-True (Invoke-ToggleWithFeedback) 'Deduplicated restore unexpectedly failed.'
+    Assert-True ($script:StartCalls -eq 1 -and $script:BackendCalls -eq 1) 'Restore must deduplicate snapshots and replace saved backend commands with current backend.'
+
+    Reset-Fixture
+    $script:FailBackend = $true
+    Assert-True (-not (Invoke-ToggleWithFeedback)) 'Backend readiness failure must propagate.'
+    Assert-True ((Read-FixtureStatus).message -match 'Synthetic backend readiness failure') 'Backend failure must be shown accurately instead of reporting Startup ready.'
+    Assert-True ($script:ShortcutMessages[-1] -match 'Synthetic backend readiness failure') 'The desktop tooltip must expose startup failure alongside measured runtime state.'
+    Assert-True ($script:StartCalls -eq 0) 'Backend failure must not be hidden by unrelated restored scripts.'
+
+    Reset-Fixture -Running $true
+    $script:FailStop = $true
+    Assert-True (-not (Invoke-ToggleWithFeedback)) 'Incomplete process shutdown must report failure.'
+    Assert-True ((Read-FixtureStatus).state -eq 'on') 'OFF indication requires verified zero processes.'
+    Assert-True (-not (Get-FlowCellAutoHotkeyState).Enabled) 'Failed shutdown must still block further launches.'
+    Assert-True (-not $script:LockHeld) 'Failure must release the state lock.'
+
+    Reset-Fixture
+    Set-FlowCellAutoHotkeyEnabled -Enabled $false
+    Assert-True (-not (Get-FlowCellAutoHotkeyState).Enabled) 'Same sign-in must retain OFF.'
+    $script:FixtureSession = 'second-logon'
+    Assert-True ((Get-FlowCellAutoHotkeyState).Enabled -and (Get-FlowCellAutoHotkeyState).IsNewSession) 'A new Windows sign-in must default ON.'
+    Set-FlowCellAutoHotkeyEnabled -Enabled $true
+    $script:FixtureSession = 'first-logon'
+    Assert-True (-not (Get-FlowCellAutoHotkeyState).Enabled) 'Another simultaneous sign-in must not reset this session OFF latch.'
+    $script:FixtureSession = 'second-logon'
+    Set-FlowCellAutoHotkeyEnabled -Enabled $false
+    Assert-True (-not (Get-FlowCellAutoHotkeyState).Enabled -and -not (Get-FlowCellAutoHotkeyState).IsNewSession) 'Repeated startup/unlock/wake in the same sign-in must respect OFF.'
+
+    $legacyRoot = Join-Path $script:ToggleRoot 'legacy-toggle'
+    $migrationRoot = Join-Path $script:ToggleRoot 'migrated-state'
+    Ensure-Directory -Path $legacyRoot
+    $migrationSession = '0000000000000001-' + [DateTime]::UtcNow.AddMinutes(-10).ToFileTimeUtc().ToString('X16')
+    $legacyStatus = [pscustomobject]@{
+        state = 'off'; message = 'AutoHotkey is OFF. No AutoHotkey process is running.'
+        updatedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString('o')
+    }
+    $legacyStatusPath = Join-Path $legacyRoot 'AutoHotkeyToggleStatus.json'
+    $legacyStatus | ConvertTo-Json | Set-Content -LiteralPath $legacyStatusPath
+    $legacySnapshotPath = Join-Path $legacyRoot 'AutoHotkeyToggleSnapshot.json'
+    ConvertTo-Json -InputObject @(
+        [pscustomobject]@{ ExecutablePath = $script:FixtureExePath; ArgumentString = '"first.ahk"' },
+        [pscustomobject]@{ ExecutablePath = $script:FixtureExePath; ArgumentString = '"second.ahk"' }
+    ) | Set-Content -LiteralPath $legacySnapshotPath
+    Import-FlowCellAutoHotkeyLegacyState -LegacyRoots @($legacyRoot) -StateRoot $migrationRoot -SessionId $migrationSession
+    Assert-True (-not (Get-FlowCellAutoHotkeyState -StateRoot $migrationRoot -SessionId $migrationSession).Enabled) 'Upgrade must preserve provable manual OFF from the current Windows sign-in.'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $migrationRoot 'AutoHotkeyToggleSnapshot.json') -Raw) -eq (Get-Content -LiteralPath $legacySnapshotPath -Raw)) 'Upgrade must preserve all stopped-script snapshot bytes, including multi-script JSON arrays.'
+    Set-FlowCellAutoHotkeyEnabled -Enabled $true -StateRoot $migrationRoot -SessionId $migrationSession
+    Import-FlowCellAutoHotkeyLegacyState -LegacyRoots @($legacyRoot) -StateRoot $migrationRoot -SessionId $migrationSession
+    Assert-True ((Get-FlowCellAutoHotkeyState -StateRoot $migrationRoot -SessionId $migrationSession).Enabled) 'Legacy migration must never overwrite a choice already made in the new system.'
+    $laterSession = '0000000000000002-' + [DateTime]::UtcNow.AddMinutes(-2).ToFileTimeUtc().ToString('X16')
+    Import-FlowCellAutoHotkeyLegacyState -LegacyRoots @($legacyRoot) -StateRoot $migrationRoot -SessionId $laterSession
+    Assert-True ((Get-FlowCellAutoHotkeyState -StateRoot $migrationRoot -SessionId $laterSession).Enabled) 'Legacy OFF from a previous sign-in must not disable a new sign-in.'
+    $legacyStatus.message = 'AutoHotkey is OFF. 0 process(es) active.'
+    $legacyStatus | ConvertTo-Json | Set-Content -LiteralPath $legacyStatusPath
+    $statusOnlySession = '0000000000000003-' + [DateTime]::UtcNow.AddMinutes(-10).ToFileTimeUtc().ToString('X16')
+    Import-FlowCellAutoHotkeyLegacyState -LegacyRoots @($legacyRoot) -StateRoot $migrationRoot -SessionId $statusOnlySession
+    Assert-True ((Get-FlowCellAutoHotkeyState -StateRoot $migrationRoot -SessionId $statusOnlySession).Enabled) 'A legacy status-only OFF observation must not be guessed to be a manual OFF choice.'
 
     Reset-Fixture -Running $true
     $script:StatusOnly = $true

@@ -1,4 +1,5 @@
 import type { PanelButtonEventsRecord } from "../../lib/programRails.js";
+import { buttonRectsOverlap } from "../../button/geometry/buttonGeometry.js";
 
 export type PageRecord = {
   id: string;
@@ -421,9 +422,32 @@ export function buildProgramRailButtons(
 
 export function buildPanelRailButtons(
   names: readonly string[],
-  selectedName: string | null
+  selectedName: string | null,
+  savedPanels: readonly PanelRailOwnerEntry[] = []
 ): ButtonRecord[] {
-  return buildFolderRailButtons(panelRailDefinition, names, selectedName);
+  const buttons = buildFolderRailButtons(panelRailDefinition, names, selectedName);
+  // Folder discovery is read-only. Reserve every saved owner before placing
+  // newly discovered panels, including saved owners later in alphabetic order.
+  const occupied = savedPanels.map((entry) => entry.rect);
+  const candidates = buttons.filter((button) => button.folderName);
+  return buttons.map((button) => {
+    if (!button.folderName) return button;
+    const saved = savedPanels.find((entry) => equalsFolderName(entry.panelName, button.folderName!));
+    if (saved) return { ...button, ...saved.rect };
+    const available = [button, ...candidates].find((candidate) =>
+      !occupied.some((rect) => buttonRectsOverlap(candidate, rect))
+    );
+    const next = available
+      ? { ...button, x: available.x, y: available.y }
+      : {
+          ...button,
+          y: Math.max(button.y, ...occupied
+            .filter((rect) => button.x < rect.x + rect.width && button.x + button.width > rect.x)
+            .map((rect) => rect.y + rect.height + railButtonGeometry.stepY - railButtonGeometry.height))
+        };
+    occupied.push({ x: next.x, y: next.y, width: next.width, height: next.height });
+    return next;
+  });
 }
 
 export function buildPanelRailOwnerEntries(

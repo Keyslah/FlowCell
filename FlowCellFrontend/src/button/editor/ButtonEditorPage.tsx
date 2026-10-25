@@ -2977,19 +2977,6 @@ function ButtonEditorContent({
             </button>
             <button
               type="button"
-              className={activePage === "placement" && reorderMode ? "is-active" : undefined}
-              aria-pressed={reorderMode}
-              disabled={mainPageControlScope || selectedSurfaceButtonCount < 2 || busy}
-              onClick={() => {
-                if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
-                setActivePage("placement");
-                setReorderMode((current) => !current);
-              }}
-            >
-              Re-order
-            </button>
-            <button
-              type="button"
               disabled={mainPageControlScope || selectedSetForSurface.size === 0 || busy}
               onClick={() => {
                 if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
@@ -3127,6 +3114,20 @@ function ButtonEditorContent({
             onOwnerActivate={activateOwnerButton}
             selectedPlacementSizingMode={selectedWorkingSizingMode}
             reorderMode={reorderMode}
+            reorderControl={
+              <button
+                type="button"
+                className={reorderMode ? "is-active" : undefined}
+                aria-pressed={reorderMode}
+                disabled={mainPageControlScope || selectedSurfaceButtonCount < 2 || busy}
+                onClick={() => {
+                  if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
+                  setReorderMode((current) => !current);
+                }}
+              >
+                Re-order
+              </button>
+            }
             onPlacementOrderChange={applyPlacementOrder}
             onCloseControlOffsetChange={updateCloseControlOffset}
           />

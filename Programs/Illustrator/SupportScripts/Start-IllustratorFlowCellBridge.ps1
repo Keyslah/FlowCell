@@ -172,11 +172,11 @@ function Resolve-InstalledScriptPath {
 }
 
 function Get-IllustratorApplication {
-  param([switch]$ExistingOnly)
-
   if ($null -ne $script:IllustratorApp) {
     try {
-      [void]$script:IllustratorApp.Version
+      if ([string]::IsNullOrWhiteSpace([string]$script:IllustratorApp.Version)) {
+        throw 'Illustrator did not report its version.'
+      }
       return $script:IllustratorApp
     } catch {
       Write-BridgeLog "Discarding stale Illustrator COM object: $($_.Exception.Message)" 'WARN'
@@ -185,21 +185,20 @@ function Get-IllustratorApplication {
   }
 
   try {
+    # Connecting must never create an Illustrator process, including startup
+    # prewarm and reconnection after a stale COM reference.
     $script:IllustratorApp = [Runtime.InteropServices.Marshal]::GetActiveObject('Illustrator.Application')
-  } catch {
-    if ($ExistingOnly) {
-      throw
+    if ([string]::IsNullOrWhiteSpace([string]$script:IllustratorApp.Version)) {
+      throw 'Illustrator did not report its version.'
     }
-    $script:IllustratorApp = New-Object -ComObject Illustrator.Application
-  }
-
-  try {
-    $script:IllustratorApp.Visible = $true
   } catch {
-    Write-BridgeLog "Could not set Illustrator visible: $($_.Exception.Message)" 'WARN'
+    $script:IllustratorApp = $null
+    throw [System.InvalidOperationException]::new(
+      'Open Illustrator to use this action. FlowCell could not connect to an existing Illustrator session.',
+      $_.Exception
+    )
   }
 
-  [void]$script:IllustratorApp.Version
   return $script:IllustratorApp
 }
 
@@ -331,7 +330,7 @@ function Handle-Request {
     }
     'prewarm' {
       $timer = [System.Diagnostics.Stopwatch]::StartNew()
-      [void](Get-IllustratorApplication -ExistingOnly)
+      [void](Get-IllustratorApplication)
       $timer.Stop()
       Write-BridgeLog "Illustrator COM prewarm completed in $($timer.ElapsedMilliseconds) ms"
       return [pscustomobject]@{
@@ -361,6 +360,9 @@ function Handle-Request {
         return $result
       }
 
+      # Report a closed application to the caller before acknowledging an
+      # asynchronous action; otherwise its failure would only reach the log.
+      [void](Get-IllustratorApplication)
       return [pscustomobject]@{
         ok = $true
         accepted = $true

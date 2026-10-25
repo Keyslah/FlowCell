@@ -63,6 +63,21 @@ profiles. See [`../../docs/File organizer.md`](../../docs/File%20organizer.md).
 
 ## Utility Notes
 
-The portable AutoHotkey on/off toggle lives in
+The **Startup** panel uses the same script assignment, Button-owned installed
+source, shortcut picker, and delete lifecycle as other Windows panels. Its
+bindings are loaded by the installed background backend at Windows sign-in;
+scripts run when their shortcut is pressed, not at sign-in. FlowCell's interface
+does not need to be open. Saving a binding refreshes the backend while AutoHotkey
+is ON. Saves while OFF are loaded on the next ON.
+
+The installer registers that per-user background launcher and offers the
+**Toggle AutoHotkey** desktop shortcut, selected by default. OFF stops AutoHotkey
+and blocks FlowCell launches for the current Windows sign-in session. ON restores
+the stopped scripts and current bindings; a new Windows sign-in starts ON.
+Closing or reopening FlowCell, unlocking Windows, or resuming sleep does not
+change that choice. Toggle feedback measures running processes separately from
+the saved ON/OFF choice.
+
+The AutoHotkey on/off toggle source lives in
 [`tools/autohotkey v2 on off`](../../tools/autohotkey%20v2%20on%20off/). See
 [Toggle AutoHotkey for anti-cheat games](../../docs/toggle-autohotkey-for-anticheat.md).

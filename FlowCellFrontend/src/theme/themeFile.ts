@@ -9,6 +9,10 @@ import {
 const THEME_FILE_FILTER =
   "FlowCell Theme (*.flowtheme.json)|*.flowtheme.json|JSON Files (*.json)|*.json";
 
+function flowCellThemeDirectory(): Promise<string> {
+  return invoke<string>("get_flowcell_theme_directory");
+}
+
 function suggestedThemeName(name: string): string {
   const stem = name.trim().replace(/[<>:\"/\\|?*]+/g, "-").replace(/\s+/g, " ") || "FlowCell Theme";
   return stem.toLowerCase().endsWith(".flowtheme.json")
@@ -26,7 +30,8 @@ export async function saveFlowCellThemeFile(
   const path = await showSaveFileDialog({
     title: "Save FlowCell Theme",
     filter: THEME_FILE_FILTER,
-    defaultFileName: suggestedThemeName(suggestedName)
+    defaultFileName: suggestedThemeName(suggestedName),
+    initialDirectory: await flowCellThemeDirectory()
   });
   if (!path) return null;
   return invoke<string>("save_flowcell_theme_file", { path, theme });
@@ -39,6 +44,7 @@ export async function loadFlowCellThemeFile(): Promise<{
   const path = (await showOpenFileDialog({
     title: "Open FlowCell Theme",
     filter: THEME_FILE_FILTER,
+    initialDirectory: await flowCellThemeDirectory(),
     multiselect: false
   }))[0]?.trim();
   if (!path) return null;

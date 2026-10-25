@@ -348,6 +348,84 @@ mod bounded_process_output_tests {
             "PowerShell stderr exceeded its 4-byte capture limit."
         );
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn timeout_stops_hidden_powershell_parent_and_child() {
+        use std::{fs, process::Stdio, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+        use windows_sys::Win32::{
+            Foundation::{CloseHandle, HANDLE},
+            System::Threading::{GetExitCodeProcess, OpenProcess, TerminateProcess,
+                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE},
+        };
+
+        // Retain handles so cleanup cannot target a reused PID, including on a
+        // failed assertion. Both processes are disposable, hidden test fixtures.
+        struct FixtureProcess(HANDLE);
+        impl FixtureProcess {
+            fn open(pid: u32) -> Self {
+                let handle = unsafe {
+                    OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, 0, pid)
+                };
+                assert!(!handle.is_null(), "open fixture process {pid}");
+                Self(handle)
+            }
+            fn exit_code(&self) -> u32 {
+                let mut code = 0;
+                assert_ne!(unsafe { GetExitCodeProcess(self.0, &mut code) }, 0);
+                code
+            }
+        }
+        impl Drop for FixtureProcess {
+            fn drop(&mut self) {
+                unsafe {
+                    let mut code = 0;
+                    if GetExitCodeProcess(self.0, &mut code) != 0 && code == 259 {
+                        TerminateProcess(self.0, 1);
+                    }
+                    CloseHandle(self.0);
+                }
+            }
+        }
+
+        let fixture = std::env::temp_dir().join(format!(
+            "flowcell-timeout-tree-{}-{}", std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&fixture).expect("create process fixture");
+        let script = fixture.join("parent.ps1");
+        let marker = fixture.join("child.pid");
+        fs::write(&script, r#"
+$fixtureChild = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 60') -WindowStyle Hidden -PassThru
+[IO.File]::WriteAllText($env:FLOWCELL_TIMEOUT_CHILD_MARKER, [string]$fixtureChild.Id)
+Start-Sleep -Seconds 60
+"#).expect("write hidden parent fixture");
+        let parent = super::build_powershell_output_command(&[
+            "-File".to_string(), script.to_string_lossy().into_owned()
+        ])
+            .env("FLOWCELL_TIMEOUT_CHILD_MARKER", &marker)
+            .stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn().expect("start hidden parent fixture");
+        let parent_handle = FixtureProcess::open(parent.id());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let child_pid = loop {
+            if let Some(pid) = fs::read_to_string(&marker).ok()
+                .and_then(|value| value.trim().parse::<u32>().ok()) {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "parent did not report its child PID");
+            thread::sleep(Duration::from_millis(25));
+        };
+        let child_handle = FixtureProcess::open(child_pid);
+        assert_eq!(child_handle.exit_code(), 259, "fixture child must be running");
+        let error = super::wait_for_child_output_with_timeout(
+            parent, Duration::from_millis(50), "fixture timed out"
+        ).expect_err("live parent must time out");
+        assert_eq!(error, "fixture timed out");
+        assert_ne!(parent_handle.exit_code(), 259, "timeout left its parent running");
+        assert_ne!(child_handle.exit_code(), 259, "timeout orphaned the child process");
+        fs::remove_dir_all(&fixture).expect("remove task-created fixture files");
+    }
 }
 
 pub(crate) fn wait_for_child_output_with_timeout(
@@ -367,6 +445,15 @@ pub(crate) fn wait_for_child_output_with_timeout(
                     .map_err(|error| format!("Failed to read child process output: {error}"));
             }
             None if start.elapsed() >= timeout => {
+                // The controller now runs behind the session-gated PowerShell
+                // launcher. Stop its children too so a timeout cannot orphan AHK.
+                #[cfg(windows)]
+                {
+                    let _ = Command::new("taskkill.exe")
+                        .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .stdout(Stdio::null()).stderr(Stdio::null()).status();
+                }
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(timeout_message.to_string());

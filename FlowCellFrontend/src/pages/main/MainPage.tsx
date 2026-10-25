@@ -20,6 +20,7 @@ import { ExactPageFrame } from "../../components/ExactPageFrame";
 import { RailSurface } from "../../components/RailSurface";
 import {
   beginProgramUnregistration,
+  connectRunningLayoutPrograms,
   finalizePanelDeletion,
   finalizeProgramUnregistration,
   finalizeProgramRename,
@@ -1052,33 +1053,6 @@ export default function MainPage() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const nextProgramNames = await listProgramFolders();
-        if (cancelled) {
-          return;
-        }
-
-        setProgramNames(nextProgramNames);
-        setSelectedProgramName((current) => resolveFolderSelection(nextProgramNames, current));
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-
-        console.error("Failed to load program folders.", error);
-        window.alert(`Program folders failed to load.\n\n${formatErrorMessage(error)}`);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
     if (getCurrentWindow().label !== "main") return;
     const unlistenPromise = listen<ProgramSetupCommittedEvent>(
       PROGRAM_SETUP_COMMITTED_EVENT,
@@ -1451,29 +1425,39 @@ export default function MainPage() {
   }, [selectablePanelScriptFileNames]);
 
   const panelRailButtons = useMemo(
-    () => buildPanelRailButtons(panelNames, selectedPanelName).map((button) => {
-      if (
-        button.actionId !== "select-panel-folder" ||
-        !button.folderName ||
-        !selectedProgramName
-      ) {
-        return button;
-      }
-      const presentation = canonicalPanelOwnerPresentations.byPanel.get(
-        canonicalProgramPanelKey(selectedProgramName, button.folderName)
-      );
-      if (!presentation) return button;
-      return {
-        ...button,
-        id: presentation.button.id,
-        x: presentation.placement.x,
-        y: presentation.placement.y,
-        width: presentation.placement.width,
-        height: presentation.placement.height,
-        label: presentation.button.label,
-        tooltip: presentation.button.tooltip
-      };
-    }),
+    () => {
+      const savedPanels = selectedProgramName
+        ? panelNames.flatMap((panelName) => {
+            const presentation = canonicalPanelOwnerPresentations.byPanel.get(
+              canonicalProgramPanelKey(selectedProgramName, panelName)
+            );
+            return presentation ? [{ panelName, rect: presentation.placement }] : [];
+          })
+        : [];
+      return buildPanelRailButtons(panelNames, selectedPanelName, savedPanels).map((button) => {
+        if (
+          button.actionId !== "select-panel-folder" ||
+          !button.folderName ||
+          !selectedProgramName
+        ) {
+          return button;
+        }
+        const presentation = canonicalPanelOwnerPresentations.byPanel.get(
+          canonicalProgramPanelKey(selectedProgramName, button.folderName)
+        );
+        if (!presentation) return button;
+        return {
+          ...button,
+          id: presentation.button.id,
+          x: presentation.placement.x,
+          y: presentation.placement.y,
+          width: presentation.placement.width,
+          height: presentation.placement.height,
+          label: presentation.button.label,
+          tooltip: presentation.button.tooltip
+        };
+      });
+    },
     [
       canonicalPanelOwnerPresentations,
       panelNames,
@@ -1733,7 +1717,7 @@ export default function MainPage() {
     };
   };
 
-  const restoreLayoutSnapshotState = async (snapshot: LayoutSnapshot) => {
+  const restoreLayoutSnapshotState = async (snapshot: LayoutSnapshot, connectPrograms = true) => {
     const resolvedInstalledPages = new Map<LayoutSnapshotWindow, InstalledPageOpenDescriptor>();
     const resolvedSettingsBackedPopouts = new Map<
       LayoutSnapshotWindow,
@@ -1821,6 +1805,13 @@ export default function MainPage() {
     }
 
     await closeManagedLayoutWindows();
+    if (connectPrograms) {
+      await connectRunningLayoutPrograms(
+        [...new Set(snapshot.Windows.map((entry) => entry.ProgramName?.trim()).filter(
+          (name): name is string => Boolean(name)
+        ))]
+      ).catch((error) => console.warn("Could not connect an open layout program.", error));
+    }
     for (const windowEntry of snapshot.Windows) {
       switch (windowEntry.Kind) {
         case "button-editor":
@@ -1981,6 +1972,24 @@ export default function MainPage() {
 
     void (async () => {
       const settings = readStartupSettings();
+      let startupProgramsPrepared = false;
+
+      try {
+        const nextProgramNames = await listProgramFolders();
+        if (cancelled) return;
+        setProgramNames(nextProgramNames);
+        setSelectedProgramName((current) => resolveFolderSelection(nextProgramNames, current));
+        // Main exposes these program Buttons even without a saved window layout.
+        // Prepare them once before restoring additional windows; never poll.
+        await connectRunningLayoutPrograms(nextProgramNames).catch((error) =>
+          console.warn("Could not connect an open startup program.", error)
+        );
+        startupProgramsPrepared = true;
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Failed to load program folders.", error);
+        window.alert(`Program folders failed to load.\n\n${formatErrorMessage(error)}`);
+      }
 
       if (settings.loadLastLayoutOnStartup) {
         const lastLayoutPath = readLastLayoutPath();
@@ -1988,7 +1997,7 @@ export default function MainPage() {
           try {
             const snapshot = await loadLayoutSnapshot(lastLayoutPath);
             if (!cancelled) {
-              await restoreLayoutSnapshotState(snapshot);
+              await restoreLayoutSnapshotState(snapshot, !startupProgramsPrepared);
               writeLastLayoutPath(lastLayoutPath);
             }
           } catch (error) {

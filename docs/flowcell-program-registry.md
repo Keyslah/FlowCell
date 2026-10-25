@@ -191,6 +191,22 @@ creates no Button and normal startup has nothing to synchronize.
 
 ## Runner Contract
 
+Startup checks Main's registered program catalog once, including custom programs
+and startup without a saved window layout. A manual layout load checks its program
+identities. Both use each program's `processNames` and `runner.kind`, preparing only existing
+hosts, and still restore all Buttons and Pages when a host is closed or a bridge
+is unavailable. There is no background app-open connection poll or implicit host
+launch. A later Button action connects to the application the user has opened.
+Restored Pages keep their normal initial reads when their host is available.
+
+The connection preparation belongs to the runner adapter: persistent COM attaches
+to an existing instance, and Blender/Fusion validate their already-running host's
+transport. Local-script and stateless adapters do not need a synthetic startup
+action. Ordinary host execution rejects a closed target and never falls back to
+launching an executable or shell-opening its script. Explicit local scripts,
+shortcuts, catalog maintenance, and export handoffs retain their declared actions;
+they are not executed merely to initialize a layout or connection.
+
 Supported `runner.kind` values:
 
 | Kind | Execution |

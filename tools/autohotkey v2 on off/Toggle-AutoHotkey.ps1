@@ -1,32 +1,8 @@
 # Description: Toggle all AutoHotkey processes off or back on for anti-cheat game sessions.
-param([switch]$StatusOnly)
+param([switch]$StatusOnly, [switch]$EnsureOn, [switch]$Quiet, [string]$FailureMessage = '')
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
-function Find-FlowCellRoot {
-    param(
-        [string]$StartPath
-    )
-
-    $currentPath = [System.IO.Path]::GetFullPath($StartPath)
-    while (-not [string]::IsNullOrWhiteSpace($currentPath) -and (Test-Path -LiteralPath $currentPath -PathType Container)) {
-        $summaryPath = Join-Path $currentPath 'PROGRAM_SUMMARY.txt'
-        $flowCellPath = Join-Path $currentPath 'FlowCell'
-        if ((Test-Path -LiteralPath $summaryPath -PathType Leaf) -and (Test-Path -LiteralPath $flowCellPath -PathType Container)) {
-            return $currentPath
-        }
-
-        $parentPath = Split-Path -Parent $currentPath
-        if ([string]::IsNullOrWhiteSpace($parentPath) -or $parentPath -eq $currentPath) {
-            break
-        }
-
-        $currentPath = $parentPath
-    }
-
-    throw 'Could not locate the FlowCell repository root.'
-}
 
 function Ensure-Directory {
     param(
@@ -38,24 +14,32 @@ function Ensure-Directory {
     }
 }
 
-$script:FlowCellRoot = try { Find-FlowCellRoot -StartPath $PSScriptRoot } catch { $null }
-$script:ToggleRoot = if ($null -ne $script:FlowCellRoot) {
-    Join-Path $script:FlowCellRoot 'flowcellbackend\local\autohotkey-toggle'
+$script:FlowCellRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+# The installed owner wins even when a previously assigned script refers to the
+# source copy. Everything else resolves relative to the packaged resource root.
+$installedSettings = Get-ItemProperty -LiteralPath 'HKCU:\Software\FlowCell' -ErrorAction SilentlyContinue
+if ($installedSettings -and $installedSettings.PSObject.Properties['InstalledResourceRoot']) {
+    $installedRoot = [string]$installedSettings.InstalledResourceRoot
+    if (Test-Path -LiteralPath (Join-Path $installedRoot 'flowcell-installed.json') -PathType Leaf) { $script:FlowCellRoot = $installedRoot }
 }
-else {
-    $PSScriptRoot
-}
+. (Join-Path $script:FlowCellRoot 'flowcellbackend\helpers\FlowCellPaths.ps1')
+. (Join-Path $script:FlowCellRoot 'flowcellbackend\helpers\AutoHotkeyState.ps1')
+$script:FlowCellRoot = $FlowCellResourceRoot
+$script:ToggleRoot = Get-FlowCellAutoHotkeyStateRoot
+$script:BackendLauncher = Join-Path $script:FlowCellRoot 'flowcellbackend\helpers\Start-FlowCellBackend.ps1'
 
 $script:ToggleStatePath = Join-Path $script:ToggleRoot 'AutoHotkeyToggleState.txt'
 $script:ToggleStatusPath = Join-Path $script:ToggleRoot 'AutoHotkeyToggleStatus.json'
 $script:ToggleSnapshotPath = Join-Path $script:ToggleRoot 'AutoHotkeyToggleSnapshot.json'
 $script:ToggleLogPath = Join-Path $script:ToggleRoot 'AutoHotkeyToggle.log'
 $script:DesktopShortcutPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Toggle AutoHotkey.lnk'
-$script:BackendVbsPath = Join-Path $PSScriptRoot 'Toggle-AutoHotkey.vbs'
-$script:OnIconPath = Join-Path $PSScriptRoot 'Toggle-AutoHotkey-On.ico'
-$script:OffIconPath = Join-Path $PSScriptRoot 'Toggle-AutoHotkey-Off.ico'
+$script:TogglePayloadRoot = Join-Path $script:FlowCellRoot 'tools\autohotkey v2 on off'
+$script:BackendVbsPath = Join-Path $script:TogglePayloadRoot 'Toggle-AutoHotkey.vbs'
+$script:OnIconPath = Join-Path $script:TogglePayloadRoot 'Toggle-AutoHotkey-On.ico'
+$script:OffIconPath = Join-Path $script:TogglePayloadRoot 'Toggle-AutoHotkey-Off.ico'
 $script:ManagedHotkeyLauncherListPaths = @(
     (Join-Path $script:ToggleRoot 'Managed-AutoHotkeyLaunchers.txt'),
+    (Join-Path $FlowCellLocalRoot 'autohotkey-toggle\Managed-AutoHotkeyLaunchers.txt'),
     (Join-Path $PSScriptRoot 'Managed-AutoHotkeyLaunchers.txt')
 )
 
@@ -70,10 +54,9 @@ function Get-AutoHotkeyExePath {
         )
     }
 
-    $paths += @(
-        'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe',
-        'C:\Program Files\AutoHotkey\v2\AutoHotkey.exe'
-    )
+    if ($env:FLOWCELL_BACKEND_ROLE -ne 'installed') {
+        $paths += @('C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe', 'C:\Program Files\AutoHotkey\v2\AutoHotkey.exe')
+    }
 
     foreach ($path in $paths) {
         if (Test-Path -LiteralPath $path -PathType Leaf) {
@@ -231,7 +214,10 @@ function Save-HotkeySnapshot {
 
 function Get-SavedHotkeySnapshot {
     if (-not (Test-Path -LiteralPath $script:ToggleSnapshotPath -PathType Leaf)) {
-        return @()
+        $legacySnapshot = Join-Path $FlowCellLocalRoot 'autohotkey-toggle\AutoHotkeyToggleSnapshot.json'
+        if (-not (Test-Path -LiteralPath $legacySnapshot -PathType Leaf)) { return @() }
+        $legacyEntries = Get-Content -LiteralPath $legacySnapshot -Raw | ConvertFrom-Json
+        return @($legacyEntries)
     }
 
     try {
@@ -266,6 +252,10 @@ function Start-HotkeySnapshot {
     )
 
     $startedCount = 0
+    $known = @{}
+    foreach ($running in Get-RunningHotkeySnapshot) {
+        $known[([string]$running.ExecutablePath).Trim() + '|' + ([string]$running.ArgumentString).Trim()] = $true
+    }
     foreach ($entry in @($Entries)) {
         if ($null -eq $entry) {
             continue
@@ -273,9 +263,13 @@ function Start-HotkeySnapshot {
 
         $exePath = [string]$entry.ExecutablePath
         $argumentString = [string]$entry.ArgumentString
+        # Always use the current installed backend and bindings, never a saved
+        # process command pointing at an old installed or development payload.
+        if ($argumentString -match '(?i)FlowCellBackend\.ahk(?:"|\s|$)') { continue }
+        $key = $exePath.Trim() + '|' + $argumentString.Trim()
+        if ($known.ContainsKey($key)) { continue }
         if ([string]::IsNullOrWhiteSpace($exePath) -or (-not (Test-Path -LiteralPath $exePath -PathType Leaf))) {
-            Write-Warning "Saved AutoHotkey executable was not found: $exePath"
-            continue
+            throw "Saved AutoHotkey executable was not found: $exePath"
         }
 
         if ([string]::IsNullOrWhiteSpace($argumentString)) {
@@ -286,6 +280,7 @@ function Start-HotkeySnapshot {
         }
 
         $startedCount++
+        $known[$key] = $true
     }
 
     return $startedCount
@@ -304,10 +299,10 @@ function Start-ManagedHotkeyLaunchers {
         $entry = if ($launcher -is [string]) { ConvertTo-ManagedLauncherEntry -Text $launcher } else { $launcher }
         $launcherPath = [string]$entry.LauncherPath
         $launcherArguments = [string]$entry.ArgumentString
+        if ([IO.Path]::GetFileName($launcherPath) -ieq 'FlowCellBackend.ahk') { continue }
 
         if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
-            Write-Warning "Managed hotkey launcher not found: $launcherPath"
-            continue
+            throw "Managed hotkey launcher not found: $launcherPath"
         }
 
         switch ([System.IO.Path]::GetExtension($launcherPath).ToLowerInvariant()) {
@@ -321,7 +316,11 @@ function Start-ManagedHotkeyLaunchers {
                     $argumentList += $launcherArguments
                 }
 
-                Start-Process -FilePath $ahkExePath -ArgumentList $argumentList -WindowStyle Hidden | Out-Null
+                $startedCount += Start-HotkeySnapshot -Entries @([pscustomobject]@{
+                    ExecutablePath = $ahkExePath
+                    ArgumentString = $argumentList -join ' '
+                })
+                continue
             }
             '.vbs' {
                 $wscriptPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
@@ -371,6 +370,7 @@ function Save-ToggleStatus {
         updatedAt = (Get-Date).ToString('o')
         activeColor = 'green'
         inactiveColor = 'red'
+        enabled = (Get-FlowCellAutoHotkeyState).Enabled
     }
 
     $status | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $script:ToggleStatusPath -Encoding UTF8
@@ -416,10 +416,12 @@ function Get-ShortcutIconPath {
 
 function Set-DesktopShortcut {
     param(
-        [string]$State
+        [string]$State,
+        [string]$Message = ''
     )
 
-    if (-not (Test-Path -LiteralPath $script:BackendVbsPath -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $script:BackendVbsPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $script:DesktopShortcutPath -PathType Leaf)) {
         return
     }
 
@@ -428,8 +430,11 @@ function Set-DesktopShortcut {
         $shortcut = $shell.CreateShortcut($script:DesktopShortcutPath)
         $shortcut.TargetPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
         $shortcut.Arguments = '"' + $script:BackendVbsPath + '"'
-        $shortcut.WorkingDirectory = $PSScriptRoot
-        $shortcut.Description = if ($State -eq 'on') {
+        $shortcut.WorkingDirectory = $script:TogglePayloadRoot
+        $shortcut.Description = if ($Message) {
+            'Toggle AutoHotkey. ' + ($Message -replace '\s+', ' ')
+        }
+        elseif ($State -eq 'on') {
             'Toggle AutoHotkey. Current state: ON. Green means AutoHotkey is active.'
         }
         else {
@@ -449,6 +454,7 @@ function Show-StatusPopup {
         [string]$Message = ''
     )
 
+    if ($Quiet) { return }
     if ([string]::IsNullOrWhiteSpace($Message)) {
         $Message = if ($State -eq 'on') {
             'AutoHotkey is ON. Active scripts restarted.'
@@ -477,7 +483,7 @@ function Update-TogglePresentation {
     )
 
     Set-ToggleState -State $State -ProcessCount $ProcessCount -Message $Message
-    Set-DesktopShortcut -State $State
+    Set-DesktopShortcut -State $State -Message $Message
 }
 
 function Invoke-AutoHotkeyToggle {
@@ -487,66 +493,51 @@ function Invoke-AutoHotkeyToggle {
     if ($StatusOnly) {
         $state = if ($runningProcesses.Count -gt 0) { 'on' } else { 'off' }
         $message = "AutoHotkey is $($state.ToUpperInvariant()). $($runningProcesses.Count) process(es) active."
+        if ($FailureMessage) { $message += "`n`n$FailureMessage" }
         Update-TogglePresentation -State $state -ProcessCount $runningProcesses.Count -Message $message
         Show-StatusPopup -State $state -Message $message
         return
     }
-
-    if ($runningProcesses.Count -gt 0) {
-        $snapshot = @(Get-RunningHotkeySnapshot)
-        if ($snapshot.Count -gt 0) {
-            Save-HotkeySnapshot -Entries $snapshot
+    $mutex = Enter-FlowCellAutoHotkeyLock
+    try {
+        $runningProcesses = @(Get-AllAutoHotkeyProcesses)
+        if (-not $EnsureOn -and $runningProcesses.Count -gt 0) {
+            $snapshot = @(Get-RunningHotkeySnapshot)
+            if ($snapshot.Count -gt 0) { Save-HotkeySnapshot -Entries $snapshot }
+            # Latch OFF before stopping anything so recovery and reload cannot
+            # race the stop operation. A failed stop keeps this OFF preference.
+            Set-FlowCellAutoHotkeyEnabled -Enabled $false
+            Stop-AllAutoHotkeyProcesses | Out-Null
+            $remainingProcesses = @(Wait-ForAutoHotkeyProcessCount -ExpectedCount 0 -TimeoutMilliseconds 3000)
+            if ($remainingProcesses.Count -gt 0) {
+                throw "AutoHotkey could not stop ($($remainingProcesses.Count) process(es) still active). Further FlowCell launches remain disabled."
+            }
+            $message = 'AutoHotkey is OFF. No AutoHotkey process is running.'
+            Update-TogglePresentation -State 'off' -ProcessCount 0 -Message $message
+            Show-StatusPopup -State 'off' -Message $message
+            return
         }
 
-        Stop-AllAutoHotkeyProcesses | Out-Null
-        $remainingProcesses = @(Wait-ForAutoHotkeyProcessCount -ExpectedCount 0 -TimeoutMilliseconds 3000)
-        if ($remainingProcesses.Count -gt 0) {
-            $message = "AutoHotkey is still running ($($remainingProcesses.Count) process(es))."
-            Update-TogglePresentation -State 'on' -ProcessCount $remainingProcesses.Count -Message $message
-            throw $message
-        }
-
-        $message = 'AutoHotkey is OFF. No AutoHotkey process is running.'
-        Update-TogglePresentation -State 'off' -ProcessCount 0 -Message $message
-        Show-StatusPopup -State 'off' -Message $message
-        return
-    }
-
-    $startedCount = 0
-    $savedSnapshot = @(Get-SavedHotkeySnapshot)
-    if ($savedSnapshot.Count -gt 0) {
-        $startedCount = Start-HotkeySnapshot -Entries $savedSnapshot
-    }
-
-    if ($startedCount -eq 0) {
-        $startedCount = Start-ManagedHotkeyLaunchers
-    }
-
-    if ($startedCount -eq 0) {
-        $message = 'AutoHotkey is OFF. No saved AutoHotkey snapshot or managed launcher list was found.'
-        Update-TogglePresentation -State 'off' -ProcessCount 0 -Message $message
-        throw $message
-    }
-
-    $finalProcesses = @(Wait-ForAutoHotkeyProcessCount -MinimumCount 1 -TimeoutMilliseconds 3000)
-
-    $finalState = if ($finalProcesses.Count -gt 0) { 'on' } else { 'off' }
-    if ($finalState -eq 'on') {
+        Set-FlowCellAutoHotkeyEnabled -Enabled $true
+        # The backend launcher shares this reentrant mutex. It reuses the
+        # installed owner and verifies its receiver before reporting success.
+        Start-CurrentFlowCellBackend
+        $savedSnapshot = @(Get-SavedHotkeySnapshot)
+        if ($savedSnapshot.Count -gt 0) { Start-HotkeySnapshot -Entries $savedSnapshot | Out-Null }
+        else { Start-ManagedHotkeyLaunchers | Out-Null }
+        $finalProcesses = @(Wait-ForAutoHotkeyProcessCount -MinimumCount 1 -TimeoutMilliseconds 3000)
+        if ($finalProcesses.Count -eq 0) { throw 'AutoHotkey did not restart successfully. No AutoHotkey process is running.' }
         Save-HotkeySnapshot -Entries (Get-RunningHotkeySnapshot)
+        $message = "AutoHotkey is ON. $($finalProcesses.Count) process(es) active. Startup bindings are available."
+        Update-TogglePresentation -State 'on' -ProcessCount $finalProcesses.Count -Message $message
+        Show-StatusPopup -State 'on' -Message $message
+    } finally {
+        Exit-FlowCellAutoHotkeyLock -Mutex $mutex
     }
+}
 
-    $message = if ($finalState -eq 'on') {
-        "AutoHotkey is ON. $($finalProcesses.Count) process(es) active."
-    }
-    else {
-        'AutoHotkey is OFF. Restart was requested, but no AutoHotkey process is running.'
-    }
-
-    Update-TogglePresentation -State $finalState -ProcessCount $finalProcesses.Count -Message $message
-    if ($finalState -ne 'on') {
-        throw 'AutoHotkey did not restart successfully.'
-    }
-    Show-StatusPopup -State $finalState -Message $message
+function Start-CurrentFlowCellBackend {
+    & $script:BackendLauncher
 }
 
 function Write-ToggleLog {

@@ -6,7 +6,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type PointerEvent as ReactPointerEvent
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode
 } from "react";
 import type {
   ButtonCoreMeasurement,
@@ -177,6 +178,7 @@ export interface ButtonWorkspaceProps {
   onOwnerActivate?: (placementId: string, button: ButtonRecord, event: PointerEvent | KeyboardEvent) => void | Promise<void>;
   selectedPlacementSizingMode?: ButtonPlacementSizingMode;
   reorderMode?: boolean;
+  reorderControl?: ReactNode;
   onPlacementOrderChange?: (
     surfaceId: string,
     orderedPlacementIds: readonly string[],
@@ -200,6 +202,7 @@ export function ButtonWorkspace({
   onOwnerActivate,
   selectedPlacementSizingMode,
   reorderMode = false,
+  reorderControl,
   onPlacementOrderChange,
   onCloseControlOffsetChange
 }: ButtonWorkspaceProps) {
@@ -972,6 +975,15 @@ export function ButtonWorkspace({
     );
   }, 0);
   const closeFrame = windowFrame?.resting ?? { x: 0, y: 0, width: surface.width, height: surface.height };
+  // Keep the editor control outside both the canvas and any escaping Fan content.
+  const reorderControlAnchor = visiblePlacementIds.reduce((anchor, placementId) => {
+    const placement = renderedDocument.placements[placementId];
+    return placement ? {
+      x: Math.min(anchor.x, placement.x),
+      y: Math.min(anchor.y, placement.y)
+    } : anchor;
+  }, { x: Math.min(0, closeFrame.x), y: Math.min(0, closeFrame.y) });
+  const showReorderControl = mode === "edit" && Boolean(reorderControl);
   const closeOffset = unit?.closeControlOffset ?? fanSetup?.closeControlOffset;
   const closeX = closeFrame.x + (closeOffset ? closeOffset.x / (window.devicePixelRatio || 1) : closeFrame.width + 10);
   const closeY = closeFrame.y + (closeOffset ? closeOffset.y / (window.devicePixelRatio || 1) : 0);
@@ -979,6 +991,7 @@ export function ButtonWorkspace({
     16,
     windowFitPreviewMode ? Math.max(40, surface.visualOverflowAllowance + 16) : 0,
     Math.ceil(outsideOverflow) + 16,
+    showReorderControl ? Math.max(60 - reorderControlAnchor.y, 16 - reorderControlAnchor.x) : 0,
     (unit || fanSetup) ? Math.max(80, -closeX + 16, -closeY + 16, closeX + 72 - surface.width, closeY + 72 - surface.height) : 0
   );
 
@@ -999,6 +1012,15 @@ export function ButtonWorkspace({
           onPointerCancel={(event) => finishCanvasPointer(event, false)}
           onLostPointerCapture={(event) => finishCanvasPointer(event, false)}
         >
+          {showReorderControl ? (
+            <div
+              className="button-workspace-reorder-control"
+              style={{ left: reorderControlAnchor.x, top: reorderControlAnchor.y - 8 }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              {reorderControl}
+            </div>
+          ) : null}
           {mode === "edit" && (unit || fanSetup) && onCloseControlOffsetChange ? (
             <ButtonCloseControlPreview
               key={surfaceId}

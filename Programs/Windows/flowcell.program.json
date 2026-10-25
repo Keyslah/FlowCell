@@ -5,7 +5,8 @@
   "programType": "local-script",
   "defaultPanels": [
     "Files",
-    "Utility"
+    "Utility",
+    "Startup"
   ],
   "panels": [
     {
@@ -16,6 +17,11 @@
     {
       "id": "utility",
       "label": "Utility",
+      "defaultSelected": true
+    },
+    {
+      "id": "startup",
+      "label": "Startup",
       "defaultSelected": true
     }
   ],

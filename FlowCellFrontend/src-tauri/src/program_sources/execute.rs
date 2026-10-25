@@ -488,6 +488,8 @@ pub(crate) fn run_program_capability_action_blocking(
         .map_err(|error| format!("Capability request is invalid JSON: {error}"))?;
     let resolution =
         resolve_capability_source(&program_name, &panel_name, &file_name, &capability)?;
+    let manifest = load_program_manifest(&resolution.record.program_name)?;
+    crate::require_running_program(&manifest)?;
     match resolution.record.runner.as_str() {
         "windows-script" => run_windows_script_capability(
             Path::new(&resolution.record.source_path),
@@ -676,6 +678,9 @@ pub(crate) fn run_active_source(
         return Ok(json!({ "message": format!("Started {}.", record.label) }));
     }
     let manifest = load_program_manifest(&record.program_name)?;
+    if record.runner != "windows-script" {
+        crate::require_running_program(&manifest)?;
+    }
     match record.runner.as_str() {
         "windows-script" => {
             crate::run_windows_panel_script_file(&source_path)?;
@@ -753,6 +758,7 @@ pub(crate) fn run_active_toolset_action(
     }
     let payload = merge_toolset_payload(record, slot, runtime_payload)?;
     let manifest = load_program_manifest(&record.program_name)?;
+    crate::require_running_program(&manifest)?;
     match record.runner.as_str() {
         "blender-bridge" | "fusion-bridge" => {
             if record.bridge_action.trim().is_empty() {
@@ -844,6 +850,10 @@ pub(crate) fn run_active_toolset_state_query(
         return Ok(None);
     };
     let query = validate_toolset_state_query(declared_query, &resolution.record.children)?;
+    let manifest = load_program_manifest(&resolution.record.program_name)?;
+    if crate::require_running_program(&manifest).is_err() {
+        return Ok(None);
+    }
     run_active_toolset_action(resolution, &query.slot, Some(query.payload)).map(Some)
 }
 

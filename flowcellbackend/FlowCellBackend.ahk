@@ -9,6 +9,7 @@ Persistent
 #Include vendor\UIA-v2\Lib\UIA.ahk
 #Include helpers\TempShotsCapture.ahk
 #Include helpers\BackendIdentity.ahk
+#Include helpers\AutoHotkeyState.ahk
 
 ; Syntax-only validation must not initialize UI Automation, hotkeys, or capture.
 if HasCliFlag("--validate-only")
@@ -50,6 +51,21 @@ flowCellDirectScriptBadPayload := 3
 flowCellDirectScriptBadScript := 4
 
 logger := ControllerLogger(flowCellLogsDir)
+
+; A launcher can be delayed across an OFF request. Check again inside the new
+; process before creating receivers or registering any global shortcuts. The
+; parent holds the shared launch lock until our receiver is ready.
+if !HasCliFlag("--self-test") {
+    try {
+        if !FlowCellAutoHotkeyState.Enabled() {
+            logger.Info("AutoHotkey remains OFF for this Windows sign-in session.")
+            ExitApp(0)
+        }
+    } catch as err {
+        logger.Error("AutoHotkey session preference could not be read.", err)
+        ExitApp(1)
+    }
+}
 
 if HasCliFlag("--self-test") {
     try {
@@ -217,10 +233,6 @@ NormalizeFlowCellProgramPath(path) {
     return flowCellBackendRole = "installed" ? FlowCellBackendIdentity.RebaseProgramPath(path, flowCellProgramsRoot) : StrReplace(path, "/", "\")
 }
 
-GetFlowCellIllustratorPrewarmScriptPath() {
-    return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_Prewarm.jsx"
-}
-
 GetFlowCellIllustratorAnchorScriptPath() {
     return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_SetAnchorHotkey.jsx"
 }
@@ -378,12 +390,6 @@ class FlowCellApp {
         this.actionHotkeyManager := ActionHotkeyManager(this, flowCellBindingsPath, this.logger, this.shortcutManager.candidateShortcuts)
         this.recordedActionStore := RecordedMacroStore(flowCellRecordedActionsDir, this.logger)
         this.macroExecutionStack := []
-        this.illustratorAutomationWarmed := false
-        this.illustratorAutomationPrewarmInProgress := false
-        this.illustratorAutomationPrewarmPid := 0
-        this.illustratorAutomationLastPrewarmTick := 0
-        this.illustratorAutomationLastDirectActionTick := 0
-        this.illustratorAutomationPrewarmTimer := ""
         this.actions := []
         if IsFlowCellProgramRegistered("Illustrator") && FileExist(GetFlowCellIllustratorAnchorScriptPath())
             this.actions.Push(SetIllustratorAnchorAction(this))
@@ -985,6 +991,35 @@ class FlowCellApp {
         summary := this.BuildBindingSummary()
         this.SetShortcutStatus(summary)
         this.logger.Info((isReload ? "Bindings reloaded." : "Bindings loaded.") " " summary)
+        this.WriteBindingRuntimeStatus()
+    }
+
+    WriteBindingRuntimeStatus() {
+        global flowCellBackendRole, flowCellLogsDir
+        registeredCount := 0
+        registrationErrors := 0
+        for binding in this.shortcutManager.bindings {
+            if binding.status = "Active"
+                registeredCount += 1
+            else
+                registrationErrors += 1
+        }
+        for binding in this.actionHotkeyManager.GetBindingRecords() {
+            if binding.status != "Active"
+                registrationErrors += 1
+        }
+        ; Receiver presence proves process readiness, not successful registration.
+        ; The launcher verifies this matching-PID snapshot before reporting ON.
+        processId := DllCall("GetCurrentProcessId", "UInt")
+        statusPath := flowCellLogsDir "\backend-bindings-" flowCellBackendRole ".json"
+        temporaryPath := statusPath "." processId ".tmp"
+        statusJson := '{"processId":' processId
+            . ',"loadedScriptBindings":' this.shortcutManager.bindings.Length
+            . ',"registeredScriptBindings":' registeredCount
+            . ',"registrationErrorCount":' registrationErrors
+            . ',"loadErrorCount":' (this.shortcutManager.loadErrorCount + this.actionHotkeyManager.loadErrorCount) '}'
+        WriteTextFile(temporaryPath, statusJson)
+        FileMove temporaryPath, statusPath, 1
     }
 
     RefreshBindingsView() {
@@ -1794,17 +1829,26 @@ class FlowCellApp {
         return 0
     }
 
-    TryActivateProgramWindow(activateExe) {
-        hwnd := this.FindProcessWindowByExecutable(activateExe)
-        if !hwnd
-            return false
-        try {
-            WinActivate "ahk_id " hwnd
-            Sleep 100
-            return true
-        } catch {
-            return false
+    FindConfiguredProgramWindow(programConfig, fallbackExe := "") {
+        configuredExe := this.ResolveConfiguredProgramExePath(programConfig)
+        if configuredExe != "" {
+            hwnd := this.FindProcessWindowByExecutable(configuredExe)
+            if hwnd
+                return hwnd
         }
+        if IsObject(programConfig) && programConfig.HasOwnProp("processNames") {
+            for processName in programConfig.processNames {
+                processName := Trim(processName)
+                if processName = ""
+                    continue
+                if !RegExMatch(processName, "i)\.exe$")
+                    processName .= ".exe"
+                hwnd := this.FindProcessWindowByExecutable(processName)
+                if hwnd
+                    return hwnd
+            }
+        }
+        return fallbackExe != "" ? this.FindProcessWindowByExecutable(fallbackExe) : 0
     }
 
     GetPhotoshopApplication(timeoutMs := 250) {
@@ -1851,118 +1895,6 @@ class FlowCellApp {
         )
     }
 
-    StartIllustratorAutomationPrewarm() {
-        if !IsFlowCellProgramRegistered("Illustrator")
-            return
-        if this.illustratorAutomationPrewarmTimer = ""
-            this.illustratorAutomationPrewarmTimer := ObjBindMethod(this, "RunIllustratorAutomationPrewarm")
-        SetTimer this.illustratorAutomationPrewarmTimer, -250
-    }
-
-    ScheduleIllustratorAutomationPrewarm(delayMs := 5000) {
-        if this.illustratorAutomationPrewarmTimer = ""
-            this.illustratorAutomationPrewarmTimer := ObjBindMethod(this, "RunIllustratorAutomationPrewarm")
-        SetTimer this.illustratorAutomationPrewarmTimer, -Max(delayMs, 250)
-    }
-
-    MarkIllustratorAutomationWarm() {
-        try {
-            hwnd := this.FindStableIllustratorWindow()
-            if hwnd {
-                this.illustratorAutomationPrewarmPid := WinGetPID("ahk_id " hwnd)
-                this.illustratorAutomationWarmed := true
-                this.illustratorAutomationLastPrewarmTick := A_TickCount
-            }
-        } catch {
-            this.illustratorAutomationWarmed := true
-            this.illustratorAutomationLastPrewarmTick := A_TickCount
-        }
-    }
-
-    RunIllustratorAutomationPrewarm(*) {
-        if !IsFlowCellProgramRegistered("Illustrator") {
-            this.illustratorAutomationWarmed := false
-            this.illustratorAutomationPrewarmPid := 0
-            return
-        }
-        if this.illustratorAutomationPrewarmInProgress {
-            this.ScheduleIllustratorAutomationPrewarm(1000)
-            return
-        }
-
-        if this.illustratorAutomationLastDirectActionTick > 0
-            && A_TickCount - this.illustratorAutomationLastDirectActionTick < 2500 {
-            this.ScheduleIllustratorAutomationPrewarm(2500)
-            return
-        }
-
-        stableHwnd := this.FindStableIllustratorWindow()
-        if !stableHwnd {
-            if !ProcessExist("Illustrator.exe") {
-                this.illustratorAutomationWarmed := false
-                this.illustratorAutomationPrewarmPid := 0
-            }
-            this.ScheduleIllustratorAutomationPrewarm(2000)
-            return
-        }
-
-        stablePid := 0
-        try stablePid := WinGetPID("ahk_id " stableHwnd)
-        catch {
-            stablePid := 0
-        }
-        if stablePid && stablePid != this.illustratorAutomationPrewarmPid {
-            this.illustratorAutomationWarmed := false
-            this.illustratorAutomationPrewarmPid := stablePid
-        }
-
-        keepWarmIntervalMs := 300000
-        if this.illustratorAutomationWarmed
-            && this.illustratorAutomationLastPrewarmTick > 0
-            && A_TickCount - this.illustratorAutomationLastPrewarmTick < keepWarmIntervalMs {
-            this.ScheduleIllustratorAutomationPrewarm(5000)
-            return
-        }
-
-        if this.HasProp("directScriptBusy") && this.directScriptBusy {
-            this.ScheduleIllustratorAutomationPrewarm(1000)
-            return
-        }
-
-        scriptPath := GetFlowCellIllustratorPrewarmScriptPath()
-        if !FileExist(scriptPath) {
-            this.logger.Warn("Illustrator automation prewarm script is missing. Path=" scriptPath)
-            this.ScheduleIllustratorAutomationPrewarm(30000)
-            return
-        }
-
-        this.illustratorAutomationPrewarmInProgress := true
-        startedAt := A_TickCount
-        try {
-            wasAlreadyWarm := this.illustratorAutomationWarmed
-            result := this.RunBoundScript(scriptPath, "illustrator automation prewarm", 0, "illustrator_automation")
-            elapsedMs := A_TickCount - startedAt
-            if result.succeeded {
-                this.illustratorAutomationWarmed := true
-                this.illustratorAutomationPrewarmPid := stablePid
-                this.illustratorAutomationLastPrewarmTick := A_TickCount
-                if !wasAlreadyWarm || elapsedMs >= 250
-                    this.logger.Info("Illustrator automation prewarm completed in " elapsedMs " ms.")
-                this.ScheduleIllustratorAutomationPrewarm(5000)
-            } else {
-                this.illustratorAutomationWarmed := false
-                this.logger.Warn("Illustrator automation prewarm did not complete. Method=" result.method " | Details=" result.detail)
-                this.ScheduleIllustratorAutomationPrewarm(3000)
-            }
-        } catch as err {
-            this.illustratorAutomationWarmed := false
-            this.logger.Error("Illustrator automation prewarm failed.", err)
-            this.ScheduleIllustratorAutomationPrewarm(3000)
-        } finally {
-            this.illustratorAutomationPrewarmInProgress := false
-        }
-    }
-
     HandleDirectScriptCopyData(wParam, lParam, msg, hwnd) {
         global flowCellDirectScriptCopyDataId
         global flowCellDirectScriptAccepted, flowCellDirectScriptBusy
@@ -1997,8 +1929,6 @@ class FlowCellApp {
             if requestId = ""
                 requestId := "direct-ipc-" A_TickCount
 
-            if this.illustratorAutomationPrewarmInProgress
-                return flowCellDirectScriptBusy
             if this.directScriptBusy
                 return flowCellDirectScriptBusy
 
@@ -2045,10 +1975,6 @@ class FlowCellApp {
         if !this.HasProp("directScriptBusy")
             this.directScriptBusy := false
 
-        if this.illustratorAutomationPrewarmInProgress {
-            result.detail := "Illustrator automation prewarm is in progress."
-            return result
-        }
         if this.directScriptBusy {
             result.detail := "FlowCell backend is already running an Illustrator script."
             return result
@@ -2144,13 +2070,12 @@ class FlowCellApp {
                 err
             )
         } finally {
-            this.illustratorAutomationLastDirectActionTick := A_TickCount
             this.directScriptBusy := false
             this.directScriptTimer := ""
         }
     }
 
-    RunIllustratorScript(scriptPath, source, programConfig := 0, allowProcessFallback := true, skipWindowActivation := false) {
+    RunIllustratorScript(scriptPath, source, programConfig := 0, skipWindowActivation := false) {
         result := {
             attempted: false,
             succeeded: false,
@@ -2177,58 +2102,14 @@ class FlowCellApp {
 
         stableHwnd := this.FindStableIllustratorWindow(programConfig)
         if !stableHwnd {
-            if !allowProcessFallback {
-                result.detail := "Stable Illustrator 2026 is not running. Open Illustrator before using this FlowCell tool."
-                this.logger.Warn("Automation-only script run blocked because no stable Illustrator 2026 window was found.")
-                return result
-            }
-            configuredExePath := this.ResolveConfiguredProgramExePath(programConfig)
-            if configuredExePath != "" {
-                try {
-                    Run('"' configuredExePath '" "' scriptPath '"')
-                    result.attempted := true
-                    result.succeeded := true
-                    result.method := "illustrator_launch_configured_exe"
-                    result.detail := "Launched the configured Illustrator executable with the script path argument."
-                    return result
-                } catch as err {
-                    result.detail := "Configured Illustrator executable launch failed. " err.Message
-                    this.logger.Warn("Script run blocked because configured Illustrator launch failed. ExePath=" configuredExePath " | Error=" err.Message)
-                    return result
-                }
-            }
-
-            result.detail := "Stable Illustrator 2026 is not running."
+            result.detail := "Open Illustrator to use this action."
             this.logger.Warn("Script run blocked because no stable Illustrator 2026 window was found.")
             return result
         }
 
         result.attempted := true
-        result.method := allowProcessFallback
-            ? "illustrator_com_activeobject"
-            : "illustrator_com_automation_only"
-        skipComProbe := false
-        try {
-            if this.HasProp("IllustratorComRetryAfterTick") && Integer(this.IllustratorComRetryAfterTick) > A_TickCount
-                skipComProbe := true
-        } catch {
-        }
-        if skipComProbe && allowProcessFallback {
-            fallback := this.TryRunIllustratorScriptViaProcess(scriptPath, stableHwnd, programConfig)
-            if fallback.succeeded {
-                this.logger.Info(
-                    "Script run used cached fallback. Source="
-                    . source
-                    . " | Script="
-                    . scriptPath
-                    . " | Method="
-                    . fallback.method
-                )
-                return fallback
-            }
-        }
-        foregroundAutomationOnly := !allowProcessFallback && StrLower(Trim(source)) != "illustrator automation prewarm"
-        shouldActivateWindow := (allowProcessFallback || foregroundAutomationOnly) && !skipWindowActivation
+        result.method := "illustrator_com_activeobject"
+        shouldActivateWindow := !skipWindowActivation
         try {
             if shouldActivateWindow {
                 try {
@@ -2246,9 +2127,7 @@ class FlowCellApp {
 
             app := this.GetIllustratorApplication(250, shouldActivateWindow)
             returnValue := app.DoJavaScriptFile(scriptPath)
-            this.IllustratorComRetryAfterTick := 0
             result.succeeded := true
-            this.MarkIllustratorAutomationWarm()
             result.detail := "DoJavaScriptFile returned without raising an error."
             illustratorStatus := this.ReadFlowCellIllustratorScriptStatus()
             if illustratorStatus != ""
@@ -2265,28 +2144,8 @@ class FlowCellApp {
             )
             return result
         } catch as err {
-            this.IllustratorComRetryAfterTick := A_TickCount + 12000
-            fallback := { method: "", detail: "" }
-            if allowProcessFallback {
-                fallback := this.TryRunIllustratorScriptViaProcess(scriptPath, stableHwnd, programConfig)
-                if fallback.succeeded {
-                    this.logger.Info(
-                        "Script run succeeded via fallback. Source="
-                        . source
-                        . " | Script="
-                        . scriptPath
-                        . " | Method="
-                        . fallback.method
-                    )
-                    return fallback
-                }
-            }
-
             result.succeeded := false
-            result.method := fallback.method != "" ? fallback.method : result.method
             result.detail := "COM failed: " err.Message
-            if fallback.detail != ""
-                result.detail .= " Process fallback failed: " fallback.detail
             this.logger.Error(
                 "Script run failed. Source="
                 . source
@@ -2296,50 +2155,6 @@ class FlowCellApp {
                 . result.method,
                 err
             )
-            return result
-        }
-    }
-
-    TryRunIllustratorScriptViaProcess(scriptPath, hwnd := 0, programConfig := 0) {
-        result := {
-            attempted: true,
-            succeeded: false,
-            method: "illustrator_launch_with_script_path",
-            detail: ""
-        }
-
-        if !hwnd
-            hwnd := this.FindStableIllustratorWindow(programConfig)
-
-        processPath := ""
-        if hwnd {
-            try {
-                WinActivate "ahk_id " hwnd
-                WinWaitActive "ahk_id " hwnd, , 2
-                Sleep 80
-            } catch as activationErr {
-                this.logger.Warn("Could not activate Illustrator before process script launch. Continuing with launch. " activationErr.Message)
-            }
-            try processPath := WinGetProcessPath("ahk_id " hwnd)
-            catch as err {
-                result.detail := "Could not resolve the stable Illustrator executable path. " err.Message
-                return result
-            }
-        } else {
-            processPath := this.ResolveConfiguredProgramExePath(programConfig)
-            if processPath = "" {
-                result.detail := "No Illustrator executable was available for process fallback."
-                return result
-            }
-        }
-
-        try {
-            Run('"' processPath '" "' scriptPath '"')
-            result.succeeded := true
-            result.detail := "Launched Illustrator with the script path argument."
-            return result
-        } catch as err {
-            result.detail := "Launching Illustrator with the script path argument failed. " err.Message
             return result
         }
     }
@@ -2364,11 +2179,14 @@ class FlowCellApp {
             return result
         }
 
-        configuredExePath := this.ResolveConfiguredProgramExePath(programConfig)
-        if configuredExePath != ""
-            this.TryActivateProgramWindow(configuredExePath)
-        else
-            this.TryActivateProgramWindow("Photoshop.exe")
+        hwnd := this.FindConfiguredProgramWindow(programConfig, "Photoshop.exe")
+        if !hwnd {
+            result.detail := "Open Photoshop to use this action."
+            return result
+        }
+        try WinActivate "ahk_id " hwnd
+        catch {
+        }
 
         result.attempted := true
         result.method := "photoshop_com_activeobject"
@@ -2379,16 +2197,8 @@ class FlowCellApp {
             result.detail := "DoJavaScriptFile returned without raising an error."
             return result
         } catch as err {
-            fallbackExe := configuredExePath != "" ? configuredExePath : "Photoshop.exe"
-            fallback := this.RunGenericScript(scriptPath, source, fallbackExe, "photoshop_launch_with_script_path")
-            if fallback.succeeded
-                return fallback
-
             result.succeeded := false
-            result.method := fallback.method != "" ? fallback.method : result.method
             result.detail := "COM failed: " err.Message
-            if fallback.detail != ""
-                result.detail .= " Process fallback failed: " fallback.detail
             this.logger.Error("Photoshop script run failed. Source=" source " | Script=" scriptPath, err)
             return result
         }
@@ -2572,27 +2382,23 @@ class FlowCellApp {
             resolvedProgramKey := StrLower(Trim(resolvedProgramName))
 
         switch resolvedProgramKey {
-            case "illustrator_automation":
-                return this.RunIllustratorScript(scriptPath, source, programConfig, false)
-            case "illustrator_direct":
+            case "illustrator", "illustrator_automation", "illustrator_direct", "illustrator_process":
                 return this.RunIllustratorScript(scriptPath, source, programConfig)
-            case "illustrator_process":
-                return this.TryRunIllustratorScriptViaProcess(scriptPath, 0, programConfig)
-            case "photoshop_direct":
+            case "photoshop", "photoshop_direct":
                 return this.RunPhotoshopScript(scriptPath, source, programConfig)
-            case "blender_bridge":
+            case "blender", "blender_bridge":
                 activateExe := this.ResolveConfiguredProgramExePath(programConfig)
                 if activateExe = ""
                     activateExe := "Blender.exe"
-                return this.RunGenericScript(scriptPath, source, activateExe, "blender_bridge")
-            case "fusion_bridge":
+                return this.RunGenericScript(scriptPath, source, activateExe, "blender_bridge", programConfig)
+            case "fusion", "fusion 360", "fusion_bridge":
                 activateExe := this.ResolveConfiguredProgramExePath(programConfig)
                 if activateExe = ""
                     activateExe := "Fusion360.exe"
-                return this.RunGenericScript(scriptPath, source, activateExe, "fusion_bridge")
+                return this.RunGenericScript(scriptPath, source, activateExe, "fusion_bridge", programConfig)
             case "generic":
                 activateExe := this.ResolveConfiguredProgramExePath(programConfig)
-                return this.RunGenericScript(scriptPath, source, activateExe, "generic")
+                return this.RunGenericScript(scriptPath, source, activateExe, "generic", programConfig)
             case "windows_generic":
                 return this.RunGenericScript(scriptPath, source, "", "windows_generic")
         }
@@ -2601,7 +2407,8 @@ class FlowCellApp {
             scriptPath,
             source,
             this.ResolveConfiguredProgramExePath(programConfig),
-            "generic"
+            "generic",
+            programConfig
         )
     }
 
@@ -2621,7 +2428,7 @@ class FlowCellApp {
         return ""
     }
 
-    RunGenericScript(scriptPath, source, activateExe := "", methodPrefix := "generic") {
+    RunGenericScript(scriptPath, source, activateExe := "", methodPrefix := "generic", programConfig := 0) {
         global flowCellLastActionStatusPath
         result := {
             attempted: false,
@@ -2642,8 +2449,18 @@ class FlowCellApp {
             return result
         }
 
-        if activateExe != "" {
-            this.TryActivateProgramWindow(activateExe)
+        requiresProgram := activateExe != ""
+            || (IsObject(programConfig) && programConfig.HasOwnProp("processNames") && programConfig.processNames.Length > 0)
+        if requiresProgram {
+            hwnd := this.FindConfiguredProgramWindow(programConfig, activateExe)
+            if !hwnd {
+                label := IsObject(programConfig) && programConfig.HasOwnProp("label") ? Trim(programConfig.label) : ""
+                result.detail := "Open " (label != "" ? label : "the program") " to use this action."
+                return result
+            }
+            try WinActivate "ahk_id " hwnd
+            catch {
+            }
         }
 
         result.attempted := true
@@ -2663,6 +2480,19 @@ class FlowCellApp {
                 exitCode := RunWait('powershell.exe ' powershellArgs '-File "' scriptPath '"', , "Hide")
             } else if extension = ".cmd" || extension = ".bat" {
                 exitCode := RunWait(A_ComSpec ' /c "' scriptPath '"', , "Hide")
+            } else if extension = ".ahk" {
+                ; Use the bundled interpreter, never the machine's file association.
+                ; The shared lock is released before waiting for a resident script.
+                exitCode := FlowCellAutoHotkeyState.RunScriptAndWait(scriptPath)
+            } else if extension = ".lnk" {
+                FileGetShortcut scriptPath, &shortcutTarget
+                SplitPath shortcutTarget, &shortcutTargetName, , &shortcutTargetExtension
+                if StrLower(shortcutTargetExtension) = "ahk" || RegExMatch(shortcutTargetName, "i)^AutoHotkey.*\.exe$") {
+                    launcher := A_ScriptDir "\helpers\Start-FlowCellShortcut.ps1"
+                    exitCode := RunWait('powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' launcher '" -ShortcutPath "' scriptPath '"', , "Hide")
+                } else {
+                    exitCode := RunWait('"' scriptPath '"')
+                }
             } else {
                 exitCode := RunWait('"' scriptPath '"')
             }
@@ -3958,6 +3788,7 @@ class ScriptShortcutManager {
         this.bindings := []
         this.buttonBindings := []
         this.nextId := 1
+        this.loadErrorCount := 0
         this.registered := Map()
         this.candidateShortcuts := this.BuildCandidateShortcuts()
     }
@@ -3997,6 +3828,7 @@ class ScriptShortcutManager {
         this.bindings := []
         this.buttonBindings := []
         this.nextId := 1
+        this.loadErrorCount := 0
 
         if !FileExist(this.bindingFilePath) {
             return
@@ -4008,6 +3840,7 @@ class ScriptShortcutManager {
             nextIdText := GetIniTextValue(iniText, "Meta", "NextId", "1")
             this.nextId := Max(Integer(nextIdText), 1)
         } catch as err {
+            this.loadErrorCount += 1
             this.logger.Error("Failed to read the FlowCell bindings file.", err)
             this.bindings := []
             this.buttonBindings := []
@@ -4016,6 +3849,10 @@ class ScriptShortcutManager {
         }
 
         if idText = "" {
+            if RegExMatch(iniText, "im)^\s*\[Binding_[^\]]+\]") {
+                this.loadErrorCount += 1
+                this.logger.Warn("Binding sections exist but Meta.Ids is missing or empty.")
+            }
             return
         }
 
@@ -4033,6 +3870,7 @@ class ScriptShortcutManager {
                     buttonId := Trim(GetIniTextValue(iniText, section, "ButtonId"))
                     ownerButtonId := Trim(GetIniTextValue(iniText, section, "OwnerButtonId"))
                     if shortcut = "" || buttonId = "" || ownerButtonId = "" {
+                        this.loadErrorCount += 1
                         this.logger.Warn("Ignored malformed " targetKind " binding section " section ".")
                         continue
                     }
@@ -4048,6 +3886,7 @@ class ScriptShortcutManager {
                     continue
                 }
                 if targetKind != "" && targetKind != "script" {
+                    this.loadErrorCount += 1
                     this.logger.Warn("Ignored unsupported binding target kind in section " section ": " targetKind)
                     continue
                 }
@@ -4060,6 +3899,7 @@ class ScriptShortcutManager {
                     status: "Loaded"
                 })
             } catch as err {
+                this.loadErrorCount += 1
                 this.logger.Error("Failed to read binding section " section ".", err)
             }
         }
@@ -4380,7 +4220,6 @@ class SetIllustratorAnchorAction {
             helperPath,
             "set anchor hotkey",
             0,
-            false,
             true
         )
         anchorSet := helperResult.succeeded && InStr(helperResult.detail, "Status: anchor set")
@@ -4406,16 +4245,20 @@ class ActionHotkeyManager {
         this.shortcuts := Map()
         this.registered := Map()
         this.statuses := Map()
+        this.loadErrorCount := 0
     }
 
     LoadFromDisk() {
         this.shortcuts := Map()
         this.statuses := Map()
+        this.loadErrorCount := 0
         for action in this.app.actions {
             shortcut := ""
             try shortcut := IniRead(this.bindingFilePath, "ActionHotkeys", action.Id, "")
-            catch
+            catch {
+                this.loadErrorCount += 1
                 shortcut := ""
+            }
             if shortcut != ""
                 this.shortcuts[action.Id] := shortcut
         }
@@ -5443,9 +5286,8 @@ if runScriptPath != "" {
     }
 }
 
+app.WriteBindingRuntimeStatus()
 app.StartDirectScriptReceiver()
-if flowCellBackendRole = "installed" && IsFlowCellProgramRegistered("Illustrator")
-    app.StartIllustratorAutomationPrewarm()
 
 if HasCliFlag("--headless") {
     logger.Info("Macro backend started in headless mode.")

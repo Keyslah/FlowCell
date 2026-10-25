@@ -84,7 +84,7 @@
     },
     {
       "id": "illustrator.send-svg-to-blender",
-      "version": "1.2.15",
+      "version": "1.3.0",
       "panelName": "Files",
       "sourcePath": "Illustrator Git Scripts/Files/Send SVG to Blender/18_Prepare_Selected_OBJ_Export.jsx",
       "importKind": "script",
@@ -93,7 +93,7 @@
       "required": false,
       "dependencies": [],
       "installEffects": [
-        "Installs the selected-artwork SVG export and Blender handoff Button into Files."
+        "Installs the selected-artwork SVG export and Blender handoff Button into Files; its package also carries the Fusion 360 handoff used by Send SVG to Fusion."
       ],
       "installIfMissing": true,
       "installOnAdd": true,
@@ -118,6 +118,26 @@
       "installIfMissing": true,
       "installOnAdd": true,
       "legacyMatchLabel": "Ill Orca",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.send-svg-to-fusion",
+      "version": "1.0.0",
+      "panelName": "Files",
+      "sourcePath": "Illustrator Git Scripts/Files/Send SVG to Fusion/Send SVG to Fusion.jsx",
+      "importKind": "script",
+      "displayLabel": "Send SVG to Fusion",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [
+        "illustrator.send-svg-to-blender"
+      ],
+      "installEffects": [
+        "Installs the selected-artwork SVG, Fusion 360 import, and extrude handoff Button into Files."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true,
+      "legacyMatchLabel": "Send SVG to Fusion",
       "legacyMatchKind": "script"
     },
     {

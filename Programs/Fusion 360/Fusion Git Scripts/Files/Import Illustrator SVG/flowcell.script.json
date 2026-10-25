@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "fusion-360.import-illustrator-svg",
+  "label": "Import Illustrator SVG",
+  "tooltip": "Import Illustrator SVG layers at their physical X/Y size as millimeter-thick Fusion components with the holes kept open.",
+  "program": "Fusion 360",
+  "source": "import_illustrator_svg.py"
+}

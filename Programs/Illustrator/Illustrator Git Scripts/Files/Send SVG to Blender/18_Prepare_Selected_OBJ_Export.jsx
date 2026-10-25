@@ -1,9 +1,23 @@
 #target illustrator
 
 (function () {
-    var REQUEST_FILE_NAME = "send-svg-to-blender.request.json";
-    var STATUS_FILE_NAME = "send-svg-to-blender.status.txt";
-    var HANDOFF_FILE_NAME = "Send-SVG-To-Blender.vbs";
+    // Wrapper Buttons such as Send SVG to Fusion set FLOWCELL_SEND_SVG_TARGET
+    // around their delegated evaluation; this Button itself targets Blender.
+    var SEND_TARGETS = {
+        blender: {
+            label: "Blender",
+            requestFileName: "send-svg-to-blender.request.json",
+            statusFileName: "send-svg-to-blender.status.txt",
+            handoffFileName: "Send-SVG-To-Blender.vbs"
+        },
+        fusion: {
+            label: "Fusion 360",
+            requestFileName: "send-svg-to-fusion.request.json",
+            statusFileName: "send-svg-to-fusion.status.txt",
+            handoffFileName: "Send-SVG-To-Fusion.vbs"
+        }
+    };
+    var SEND_TARGET = SEND_TARGETS[requestedTarget()];
     var STATUS_TIMEOUT_MS = 300000;
     var STATUS_POLL_MS = 250;
     var SVG_COORDINATE_PRECISION = 5;
@@ -64,9 +78,27 @@
         return Number(points) * POINTS_TO_MILLIMETERS;
     }
 
+    function requestedTarget() {
+        var value = "";
+
+        try {
+            if (typeof FLOWCELL_SEND_SVG_TARGET !== "undefined") {
+                value = trim(FLOWCELL_SEND_SVG_TARGET).toLowerCase();
+            }
+        } catch (ignoreTarget) {
+            value = "";
+        }
+
+        return value === "fusion" ? "fusion" : "blender";
+    }
+
     function requestedPostAction() {
         var value = "";
 
+        // Ill Orca's post action continues from the Blender import only.
+        if (SEND_TARGET !== SEND_TARGETS.blender) {
+            return "none";
+        }
         try {
             if (typeof FLOWCELL_SEND_SVG_POST_ACTION !== "undefined") {
                 value = trim(FLOWCELL_SEND_SVG_POST_ACTION).toLowerCase();
@@ -522,6 +554,7 @@
         testHost.__FLOWCELL_SEND_SVG_TO_BLENDER_TEST_API__ = {
             parseExtrudeMillimeters: parseExtrudeMillimeters,
             pointsToMillimeters: pointsToMillimeters,
+            sendTarget: SEND_TARGET,
             requestedPostAction: requestedPostAction,
             sanitizeFileName: sanitizeFileName,
             cleanSvg10Markup: cleanSvg10Markup,
@@ -612,9 +645,9 @@
             packageFolder: packageFolder,
             runtimeFolder: runtimeFolder,
             exportFolder: new Folder(runtimeFolder.fsName + "/svg-exports"),
-            requestFile: new File(runtimeFolder.fsName + "/" + REQUEST_FILE_NAME),
-            statusFile: new File(runtimeFolder.fsName + "/" + STATUS_FILE_NAME),
-            handoffFile: new File(sourceFolder.fsName + "/" + HANDOFF_FILE_NAME)
+            requestFile: new File(runtimeFolder.fsName + "/" + SEND_TARGET.requestFileName),
+            statusFile: new File(runtimeFolder.fsName + "/" + SEND_TARGET.statusFileName),
+            handoffFile: new File(sourceFolder.fsName + "/" + SEND_TARGET.handoffFileName)
         };
     }
 
@@ -1260,7 +1293,8 @@
             if (hasVisibleStroke) {
                 throw new Error(
                     "Layer " + layerName +
-                    " still contains a visible stroke after cleanup. Expand or outline that stroke before sending it to Blender."
+                    " still contains a visible stroke after cleanup. Expand or outline that stroke before sending it to " +
+                    SEND_TARGET.label + "."
                 );
             }
         }
@@ -1271,7 +1305,7 @@
     }
 
     function throwNormalizationError(layerName, message) {
-        throw new Error("Layer " + layerName + " could not be normalized for Blender: " + message);
+        throw new Error("Layer " + layerName + " could not be normalized for " + SEND_TARGET.label + ": " + message);
     }
 
     function closeOpenFilledVectorItem(item, layerName, summary) {
@@ -1805,14 +1839,14 @@
 
             if (status.Status === "Error") {
                 message = trim(status.Message);
-                throw new Error(message || "Blender could not import the exported SVG files.");
+                throw new Error(message || SEND_TARGET.label + " could not import the exported SVG files.");
             }
 
             if (status.Status === "Ok") {
                 importedCount = Number(status.ImportedCount);
                 if (importedCount !== expectedCount) {
                     throw new Error(
-                        "Blender reported success for " + importedCount +
+                        SEND_TARGET.label + " reported success for " + importedCount +
                         " of " + expectedCount + " SVG files."
                     );
                 }
@@ -1824,7 +1858,7 @@
             }
         }
 
-        throw new Error("Timed out waiting for Blender to import the exported SVG files.");
+        throw new Error("Timed out waiting for " + SEND_TARGET.label + " to import the exported SVG files.");
     }
 
     if (app.documents.length === 0) {
@@ -1855,7 +1889,10 @@
         groups = resolveExportGroups(originalSelection);
         ownerPaths = resolveOwnerPaths();
         if (!ownerPaths.handoffFile.exists) {
-            throw new Error("Missing same-source Blender handoff: " + ownerPaths.handoffFile.fsName);
+            throw new Error(
+                "Missing same-source " + SEND_TARGET.label + " handoff: " + ownerPaths.handoffFile.fsName +
+                ". Update the Send SVG to Blender Button from its script package."
+            );
         }
 
         ensureFolder(ownerPaths.runtimeFolder);
@@ -1871,7 +1908,7 @@
         resetStatusFile(ownerPaths.statusFile, requestId);
 
         if (!ownerPaths.handoffFile.execute()) {
-            throw new Error("Windows could not start the Blender handoff: " + ownerPaths.handoffFile.fsName);
+            throw new Error("Windows could not start the " + SEND_TARGET.label + " handoff: " + ownerPaths.handoffFile.fsName);
         }
 
         result = waitForHandoff(ownerPaths.statusFile, requestId, requestItems.length);

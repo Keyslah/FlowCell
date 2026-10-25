@@ -9,8 +9,14 @@ No new portable ZIP is produced by this release route.
 
 Tauri resources and the bundled AutoHotkey runtime live inside the application
 installation. Setup starts the installed headless backend and registers the
-per-user `FlowCell Background.lnk` Windows startup shortcut. Shortcuts and Temp
-Shots continue running when the frontend is closed. Start Menu launch runs the
+per-user `FlowCell Background.lnk` Windows startup shortcut. Setup includes a
+checked-by-default **Create a Toggle AutoHotkey desktop shortcut** option on its
+welcome page. Silent installation uses the same default (`/NS` suppresses desktop
+shortcuts). The toggle's Windows Script Host launcher, PowerShell script, green
+ON/red OFF icons, and AutoHotkey runtime are bundled in the application; neither
+the toggle nor background startup needs a checkout, development tools, or the UI.
+Startup panel shortcuts and Temp Shots continue running when the frontend is closed
+while AutoHotkey is ON. Start Menu launch runs the
 existing preflight and connects to that same installed background backend.
 Writable data is `%APPDATA%\FlowCell\local`, including the existing canonical
 `button-system/button-state.json`, bindings, layouts, logs and program data.
@@ -25,6 +31,16 @@ extracted into that local root. Folder roles come from each program manifest.
 Fresh launch creates only the empty `Programs/Windows` placeholder; without a
 manifest it is not a valid registered program. Extraction and Add Program remain
 separate. Neither upgrade nor normal uninstall removes this user data.
+
+The Windows Startup panel uses the usual Button ownership, scripts and bindings.
+Setup creates its missing panel folder without replacing existing panels or their
+settings. Sign-in registration passes `--logon` to the installed background launcher,
+which explicitly enables AutoHotkey for a new Windows sign-in and reuses an existing
+backend. Manual OFF remains in force throughout that session, including UI launch,
+upgrade, binding saves, sleep and unlock. Turning ON restores stopped scripts and
+current Startup bindings. Setup's immediate background start is an ordinary launch,
+so upgrading does not override a current-session OFF choice. The desktop icon is
+based on observed AutoHotkey processes; setup failures are reported by the installer.
 
 Source and existing portable runs retain their own backend-local state and
 sibling Programs folder. Their development backend does not register global
@@ -138,7 +154,8 @@ environment. The resolver follows the physical canonical Button-state file when
 AppData is redirected, keeping Explorer and packaged launches on the same data.
 `HKCU\Software\FlowCell\InstalledResourceRoot` lets standalone installed script
 launchers find this backend while the frontend is closed. Uninstall removes only
-its own registry pointer and recycles its owned startup shortcut. The data folder
+its own registry pointer and recycles its owned startup and AutoHotkey desktop
+shortcuts. The data folder
 and existing runtime configuration are preserved.
 Registration also recognizes the old `FlowCell Hotkeys Startup.vbs` only when
 its literal target resolves to an existing FlowCell backend launcher. It moves

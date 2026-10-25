@@ -64,6 +64,22 @@ finished Blender thickness in millimeters, with parentheses optional:
 `14Main stencil` produces 14 mm, `2connect` produces 2 mm, and `(9) Name`
 produces 9 mm. Names such as `V9 Name` or `Name (9)` use the 1 mm default.
 
+## Send SVG to Fusion
+
+`Send SVG to Fusion` (Files) runs the same installed Send SVG export with a
+Fusion 360 target, so selection grouping, cleanup, Pathfinder Unite, the
+leading-number thickness, physical X/Y size, and relative placement are
+identical. Like `Ill Orca` it depends on the `Send SVG to Blender` package,
+which carries the Fusion handoff from version 1.3.0; an older installed owner
+is refused with a request to update it rather than sending to Blender.
+
+The handoff registers the internal Fusion action from
+`Programs/Fusion 360/Fusion Git Scripts/Files/Import Illustrator SVG` (no
+visible Fusion Button), uses the running Fusion whose FlowCell bridge add-in is
+ready, and starts Fusion first when it is closed. Each layer becomes a sketch
+and an extruded body in Fusion's active component; see the Fusion 360 README.
+It needs the Fusion 360 program package and its `FlowCellFusionBridge` add-in.
+
 ## Lithophane
 
 The Illustrator Utility `Lithophane` Button starts from exactly one selected

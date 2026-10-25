@@ -235,6 +235,12 @@ test("Theme Editor is a bulk override and saved-skin assignment workflow", () =>
     /const committed = await commitTheme\(theme\);[\s\S]*acceptCommittedTheme\(committed\.saved, committed\.page\);/
   );
   assert.match(file, /isFlowCellThemeFile\(theme\)/);
+  assert.equal(
+    file.match(/initialDirectory: await flowCellThemeDirectory\(\)/g)?.length,
+    2,
+    "Open Theme and Save Theme must start in the saved-theme folder"
+  );
+  assert.match(nativeLayouts, /fn get_flowcell_theme_directory\(\)[\s\S]{0,160}resolve_main_page_layouts_root\(\)/);
   assert.match(nativeLayouts, /save_flowcell_theme_file/);
   assert.match(nativeLayouts, /load_flowcell_theme_file/);
   assert.match(nativeLayouts, /\.flowtheme\.json/);

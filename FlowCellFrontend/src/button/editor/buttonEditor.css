@@ -187,7 +187,8 @@
   text-align: left;
 }
 
-.button-editor-sidebar__actions > button.is-active {
+.button-editor-sidebar__actions > button.is-active,
+.button-workspace-reorder-control > button.is-active {
   border-color: #5c8db5;
   color: #f6fbff;
   background: #315b7b;
@@ -304,6 +305,13 @@
   background-size: 8px 8px;
   touch-action: none;
   user-select: none;
+}
+
+.button-workspace-reorder-control {
+  position: absolute;
+  z-index: 100001;
+  transform: translateY(-100%);
+  white-space: nowrap;
 }
 
 .button-workspace-selection-indicator {

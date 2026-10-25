@@ -546,3 +546,8 @@ export async function queryToolsetState(args: {
 
   return invokeProgramRailCommand<ToolsetActionResponse | null>("query_toolset_state", args);
 }
+
+export async function connectRunningLayoutPrograms(programNames: string[]): Promise<void> {
+  if (!isTauriWindowHost()) return;
+  return invokeProgramRailCommand<void>("connect_running_layout_programs", { programNames });
+}

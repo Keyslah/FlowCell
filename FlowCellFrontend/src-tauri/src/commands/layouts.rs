@@ -596,6 +596,12 @@ pub(crate) fn authorize_flowcell_theme_asset(
 }
 
 #[tauri::command]
+pub(crate) fn get_flowcell_theme_directory() -> Result<String, String> {
+    // Saved FlowCell Themes live beside the Main Page layouts.
+    Ok(resolve_main_page_layouts_root()?.display().to_string())
+}
+
+#[tauri::command]
 pub(crate) fn save_flowcell_theme_file(path: String, theme: Value) -> Result<String, String> {
     let trimmed_path = path.trim();
     if trimmed_path.is_empty() {

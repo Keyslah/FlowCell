@@ -45,8 +45,6 @@ static ILLUSTRATOR_BRIDGE_START_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 #[cfg(windows)]
 static ILLUSTRATOR_BRIDGE_PREWARM_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 #[cfg(windows)]
-const ILLUSTRATOR_PROCESS_POLL_MS: u64 = 1_000;
-#[cfg(windows)]
 const WINDOWS_ERROR_PIPE_BUSY: i32 = 231;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -665,15 +663,14 @@ pub(crate) fn build_flowcell_controller_script_command(
         .parent()
         .ok_or_else(|| "FlowCell backend root could not be resolved.".to_string())?;
 
-    let mut command = Command::new(ahk_exe);
-    command
-        .arg("/ErrorStdOut")
-        .arg(&backend_script_path)
-        .arg(format!("--backend-role={}", flowcell_backend_role()))
-        .arg(format!("--run-script-path={}", script_path.display()))
-        .arg(format!("--run-script-program={program_key}"))
-        .arg("--run-script-program-tab-id=0")
-        .current_dir(flowcell_root);
+    let mut command = build_gated_autohotkey_command(&ahk_exe, flowcell_root, &[
+        "/ErrorStdOut".into(),
+        backend_script_path.to_string_lossy().into_owned(),
+        format!("--backend-role={}", flowcell_backend_role()),
+        format!("--run-script-path={}", script_path.display()),
+        format!("--run-script-program={program_key}"),
+        "--run-script-program-tab-id=0".into(),
+    ])?;
 
     if pipe_output {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -684,6 +681,32 @@ pub(crate) fn build_flowcell_controller_script_command(
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 
+    Ok(command)
+}
+
+fn autohotkey_arguments_hex(arguments: &[String]) -> Result<String, String> {
+    let json = serde_json::to_vec(arguments).map_err(|error| error.to_string())?;
+    Ok(json.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn build_gated_autohotkey_command(
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+) -> Result<Command, String> {
+    let root = resolve_repo_root().ok_or("FlowCell resource root could not be resolved.")?;
+    let helper = root.join("flowcellbackend/helpers/Start-FlowCellAutoHotkey.ps1");
+    if !helper.is_file() {
+        return Err(format!("AutoHotkey launch helper was not found at {}.", helper.display()));
+    }
+    let mut command = Command::new(resolve_powershell_path());
+    command.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+        .arg(windows_child_process_path(&helper))
+        .arg("-ExecutablePath").arg(windows_child_process_path(executable))
+        .arg("-ArgumentsHex").arg(autohotkey_arguments_hex(arguments)?)
+        .arg("-WorkingDirectory").arg(windows_child_process_path(working_directory));
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
     Ok(command)
 }
 
@@ -870,14 +893,6 @@ fn illustrator_bridge_io_error(
             format!("Illustrator bridge failed while {operation} for request '{request_id}': {error}"),
         ),
     }
-}
-
-#[cfg(windows)]
-fn illustrator_bridge_stable_failure_key(error: &str) -> String {
-    error
-        .split_once(" for request '")
-        .map(|(prefix, _)| prefix.to_string())
-        .unwrap_or_else(|| error.to_string())
 }
 
 #[cfg(windows)]
@@ -1079,60 +1094,14 @@ fn try_send_illustrator_bridge_request(
         .map_err(IllustratorBridgeSendFailure::Failed)
 }
 
-#[cfg(windows)]
-fn process_id_is_alive(process_id: u32) -> bool {
-    if process_id == 0 {
-        return false;
+pub(crate) fn require_running_program(
+    manifest: &program_sources::manifest::ProgramManifest,
+) -> Result<(), String> {
+    if crate::commands::windows::find_running_process_executable(&manifest.process_names).is_some() {
+        Ok(())
+    } else {
+        Err(format!("Open {}, then run the button again.", manifest.label))
     }
-    let process_handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
-    if process_handle.is_null() {
-        return false;
-    }
-    unsafe {
-        let _ = CloseHandle(process_handle);
-    }
-    true
-}
-
-#[cfg(windows)]
-struct IllustratorProcessWindowSearch {
-    process_id: u32,
-}
-
-#[cfg(windows)]
-unsafe extern "system" fn enum_illustrator_process_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    if hwnd.is_null() || (IsWindowVisible(hwnd) == 0 && IsIconic(hwnd) == 0) {
-        return 1;
-    }
-
-    let mut process_id = 0u32;
-    GetWindowThreadProcessId(hwnd, &mut process_id);
-    let Some(process_path) = query_process_path_by_id(process_id) else {
-        return 1;
-    };
-    let process_name = Path::new(&process_path)
-        .file_name()
-        .map(|value| value.to_string_lossy().to_ascii_lowercase())
-        .unwrap_or_default();
-    if process_name != "illustrator.exe" && process_name != "illustrator" {
-        return 1;
-    }
-
-    let search = &mut *(lparam as *mut IllustratorProcessWindowSearch);
-    search.process_id = process_id;
-    0
-}
-
-#[cfg(windows)]
-fn find_running_illustrator_process_id() -> Option<u32> {
-    let mut search = IllustratorProcessWindowSearch { process_id: 0 };
-    unsafe {
-        EnumWindows(
-            Some(enum_illustrator_process_window),
-            &mut search as *mut IllustratorProcessWindowSearch as LPARAM,
-        );
-    }
-    (search.process_id != 0).then_some(search.process_id)
 }
 
 #[cfg(windows)]
@@ -1246,15 +1215,14 @@ impl Drop for IllustratorBridgePrewarmGuard {
 }
 
 #[cfg(windows)]
-fn prewarm_illustrator_bridge(illustrator_process_id: u32) -> Result<u32, String> {
+fn prewarm_illustrator_bridge() -> Result<u32, String> {
     ILLUSTRATOR_BRIDGE_PREWARM_IN_PROGRESS.store(true, Ordering::Release);
     let _prewarm_guard = IllustratorBridgePrewarmGuard;
     ensure_illustrator_bridge_started()?;
 
     let request = json!({
         "command": "prewarm",
-        "requestId": format!("illustrator-bridge-prewarm-{}", current_precise_timestamp_token()),
-        "illustratorProcessId": illustrator_process_id
+        "requestId": format!("illustrator-bridge-prewarm-{}", current_precise_timestamp_token())
     });
     let response = match try_send_illustrator_bridge_request(&request) {
         Ok(response) => response,
@@ -1273,63 +1241,69 @@ fn prewarm_illustrator_bridge(illustrator_process_id: u32) -> Result<u32, String
     append_flowcell_local_log(
         "command_host.log",
         &format!(
-            "Illustrator COM prewarmed in the persistent bridge. IllustratorPid={illustrator_process_id}; BridgePid={bridge_process_id}"
+            "Attached to existing Illustrator through the persistent bridge. BridgePid={bridge_process_id}"
         ),
     );
     Ok(bridge_process_id)
 }
 
-#[cfg(windows)]
-pub(crate) fn start_illustrator_bridge_prewarm_worker() {
-    thread::spawn(|| {
-        let mut warmed_process_pair: Option<(u32, u32)> = None;
-        let mut last_error = String::new();
-        loop {
-            if require_registered_program_name("Illustrator").is_err() {
-                warmed_process_pair = None;
-                thread::sleep(Duration::from_millis(ILLUSTRATOR_PROCESS_POLL_MS));
-                continue;
-            }
-
-            let Some(illustrator_process_id) = find_running_illustrator_process_id() else {
-                warmed_process_pair = None;
-                last_error.clear();
-                thread::sleep(Duration::from_millis(ILLUSTRATOR_PROCESS_POLL_MS));
-                continue;
-            };
-            if let Some((warmed_illustrator_process_id, warmed_bridge_process_id)) =
-                warmed_process_pair
-            {
-                if warmed_illustrator_process_id == illustrator_process_id
-                    && process_id_is_alive(warmed_bridge_process_id)
-                {
-                    thread::sleep(Duration::from_millis(ILLUSTRATOR_PROCESS_POLL_MS));
-                    continue;
-                }
-            }
-
-            match prewarm_illustrator_bridge(illustrator_process_id) {
-                Ok(warmed_bridge_process_id) => {
-                    warmed_process_pair = Some((illustrator_process_id, warmed_bridge_process_id));
-                    last_error.clear();
-                }
-                Err(error) => {
-                    warmed_process_pair = None;
-                    let error_key = illustrator_bridge_stable_failure_key(&error);
-                    if error_key != last_error {
-                        append_flowcell_local_log(
-                            "command_host.log",
-                            &format!(
-                                "Illustrator COM could not be prewarmed in the background: {error}"
-                            ),
-                        );
-                        last_error = error_key;
-                    }
-                }
-            }
-            thread::sleep(Duration::from_millis(ILLUSTRATOR_PROCESS_POLL_MS));
+fn prepare_running_program_connection(program_name: &str) -> Result<(), String> {
+    let manifest = program_sources::manifest::load_program_manifest(program_name)?;
+    if require_running_program(&manifest).is_err() {
+        return Ok(());
+    }
+    // These transports belong to the already-running host. Never run an action
+    // or install/start a host merely to prepare its layout's connection.
+    match manifest.runner.kind.as_str() {
+        "illustrator-direct" => {
+            #[cfg(windows)]
+            prewarm_illustrator_bridge()?;
         }
-    });
+        "blender-bridge" => {
+            let config = read_blender_bridge_config()?;
+            let root = resolve_blender_bridge_root(&config)
+                .ok_or_else(|| BLENDER_BRIDGE_NOT_RUNNING_MESSAGE.to_string())?;
+            resolve_target_blender_process_id(&root)?;
+        }
+        "fusion-bridge" => {
+            let root = resolve_fusion_bridge_root()
+                .ok_or_else(|| FUSION_BRIDGE_NOT_RUNNING_MESSAGE.to_string())?;
+            resolve_target_fusion_process_id(&root)?;
+        }
+        // Stateless COM/local-script runners attach during the action or the
+        // restored panel's initial read; there is no separate session to start.
+        "photoshop-direct" | "windows-script" => {}
+        kind => return Err(format!("Unsupported program runner '{kind}'.")),
+    }
+    Ok(())
+}
+
+fn connect_layout_programs_once(
+    program_names: &[String],
+    mut connect: impl FnMut(&str) -> Result<(), String>,
+) -> Vec<String> {
+    let mut visited = std::collections::BTreeSet::new();
+    let mut errors = Vec::new();
+    for name in program_names.iter().map(|name| name.trim()).filter(|name| !name.is_empty()) {
+        if visited.insert(name.to_ascii_lowercase()) {
+            if let Err(error) = connect(name) {
+                errors.push(format!("{name}: {error}"));
+            }
+        }
+    }
+    errors
+}
+
+#[tauri::command]
+pub(crate) async fn connect_running_layout_programs(program_names: Vec<String>) -> Result<(), String> {
+    // One attempt for every program in the layout. Failures cannot prevent
+    // another program from connecting or cause an automatic retry loop.
+    let errors = tauri::async_runtime::spawn_blocking(move || {
+        connect_layout_programs_once(&program_names, prepare_running_program_connection)
+    })
+    .await
+    .map_err(|error| format!("Layout program connection failed: {error}"))?;
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
 }
 
 pub(crate) fn run_illustrator_bridge_action_direct(
@@ -1448,7 +1422,7 @@ fn illustrator_bridge_test_response(request_id: &str) -> String {
 mod illustrator_bridge_tests {
     use super::{
         illustrator_bridge_io_error, illustrator_bridge_response_timeout,
-        illustrator_bridge_stable_failure_key, illustrator_bridge_test_response,
+        illustrator_bridge_test_response,
         open_illustrator_bridge_pipe, parse_illustrator_bridge_response,
         read_illustrator_bridge_response, write_illustrator_bridge_request,
         IllustratorBridgeHandle, IllustratorBridgeIoFailure, IllustratorBridgeSendFailure,
@@ -1554,13 +1528,33 @@ mod illustrator_bridge_tests {
     }
 
     #[test]
-    fn prewarm_error_deduplication_ignores_request_ids() {
-        assert_eq!(
-            illustrator_bridge_stable_failure_key(
-                "Illustrator bridge closed the pipe while writing the request for request 'ping-a'."
-            ),
-            "Illustrator bridge closed the pipe while writing the request"
-        );
+    fn layout_prepares_every_program_once_and_continues_after_an_unavailable_bridge() {
+        let names = ["Blender", "Illustrator", "Fusion 360", "Krita", "Fresco", "Photoshop", "My Custom App", "Windows", " illustrator ", ""]
+            .map(str::to_string);
+        let mut attempted = Vec::new();
+        let failures = super::connect_layout_programs_once(&names, |name| {
+            attempted.push(name.to_string());
+            if name == "Blender" { Err("bridge unavailable".to_string()) } else { Ok(()) }
+        });
+        assert_eq!(attempted, &names[..8]);
+        assert_eq!(failures, ["Blender: bridge unavailable"]);
+    }
+
+    #[test]
+    fn empty_layout_does_not_initialize_any_program() {
+        assert!(super::connect_layout_programs_once(&[], |_| panic!("no connection expected")).is_empty());
+    }
+
+    #[test]
+    fn closed_host_error_uses_manifest_identity_for_any_program() {
+        let mut manifest: crate::program_sources::manifest::ProgramManifest =
+            serde_json::from_str(include_str!("../../../../Programs/Fresco/flowcell.program.json"))
+                .expect("program manifest");
+        manifest.process_names = vec![format!("flowcell-absent-host-{}", std::process::id())];
+        for name in ["Blender", "Illustrator", "Fusion 360", "Krita", "Fresco", "Photoshop", "Custom Host"] {
+            manifest.label = name.to_string();
+            assert_eq!(super::require_running_program(&manifest), Err(format!("Open {name}, then run the button again.")));
+        }
     }
 
     #[test]
@@ -1850,17 +1844,14 @@ pub(crate) fn record_frontend_macro_to_path(
         .and_then(Path::parent)
         .ok_or_else(|| "FlowCell root could not be resolved for macro recording.".to_string())?;
 
-    let mut command = Command::new(ahk_exe);
-    command
-        .arg("/ErrorStdOut")
-        .arg(&recorder_path)
-        .arg(format!("--out={}", macro_path.display()))
-        .arg(format!("--name={}", label.trim()))
-        .arg(format!("--id={}", action_id.trim()))
-        .arg("--process=")
-        .arg("--activate=")
-        .arg("--display=All windows")
-        .current_dir(flowcell_root);
+    let mut command = build_gated_autohotkey_command(&ahk_exe, flowcell_root, &[
+        "/ErrorStdOut".into(),
+        recorder_path.to_string_lossy().into_owned(),
+        format!("--out={}", macro_path.display()),
+        format!("--name={}", label.trim()),
+        format!("--id={}", action_id.trim()),
+        "--process=".into(), "--activate=".into(), "--display=All windows".into(),
+    ])?;
 
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
@@ -2103,7 +2094,28 @@ pub(crate) fn run_windows_panel_script_file_with_window_mode(
             command.arg(script_path);
             command
         }
-        "lnk" | "ahk" => return spawn_via_cmd_start(script_path),
+        "ahk" => {
+            let executable = resolve_flowcell_autohotkey_exe_path()?;
+            let mut command = build_gated_autohotkey_command(&executable, script_directory, &[
+                script_path.to_string_lossy().into_owned(),
+            ])?;
+            let output = command.arg("-Detach").output()
+                .map_err(|error| format!("Failed to start AutoHotkey script: {error}"))?;
+            return if output.status.success() { Ok(()) } else {
+                Err(format_process_failure(&output, "AutoHotkey script launch failed."))
+            };
+        }
+        "lnk" => {
+            let root = resolve_repo_root().ok_or("FlowCell resource root could not be resolved.")?;
+            let helper = root.join("flowcellbackend/helpers/Start-FlowCellShortcut.ps1");
+            let output = spawn_powershell_output(&[
+                "-File".into(), windows_child_process_path(&helper).to_string_lossy().into_owned(),
+                "-ShortcutPath".into(), script_path.to_string_lossy().into_owned(),
+            ])?;
+            return if output.status.success() { Ok(()) } else {
+                Err(format_process_failure(&output, "Windows shortcut launch failed."))
+            };
+        }
         _ => return spawn_via_cmd_start(script_path),
     };
 
@@ -2399,7 +2411,7 @@ mod tests {
         fusion_addin_root_candidates, fusion_bridge_response_matches_request,
         read_fusion_bridge_runtime_process_ids, resolve_macro_recorder_script_path,
         wait_for_blender_bridge_response, wait_for_fusion_bridge_response, windows_child_process_path,
-        flowcell_backend_helper_arguments,
+        flowcell_backend_helper_arguments, autohotkey_arguments_hex,
     };
     use serde_json::json;
     use std::fs;
@@ -2471,6 +2483,18 @@ mod tests {
             assert_eq!(&restart[2..], ["-Role", role, "-Restart"]);
             assert_eq!(restart[1], helper.to_string_lossy());
         }
+    }
+
+    #[test]
+    fn gated_autohotkey_arguments_preserve_native_quoting_and_unicode() {
+        let arguments: Vec<String> = [r#"C:\User Files\quoted "name"\action.ahk"#,
+            r"--out=C:\User Files\", "", "--label=日本語", "$(must stay literal)"]
+            .into_iter().map(str::to_string).collect();
+        let encoded = autohotkey_arguments_hex(&arguments).unwrap();
+        let bytes: Vec<u8> = (0..encoded.len()).step_by(2)
+            .map(|index| u8::from_str_radix(&encoded[index..index + 2], 16).unwrap()).collect();
+        assert_eq!(serde_json::from_slice::<Vec<String>>(&bytes).unwrap(), arguments);
+        assert!(encoded.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

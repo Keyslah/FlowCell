@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.send-svg-to-fusion",
+  "label": "Send SVG to Fusion",
+  "tooltip": "Send selected Illustrator artwork through the installed SVG export workflow, then import and extrude it in Fusion 360.",
+  "program": "Illustrator",
+  "source": "Send SVG to Fusion.jsx",
+  "execution": {
+    "waitForCompletion": true
+  }
+}
