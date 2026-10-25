@@ -60,12 +60,15 @@ import {
 } from "../../theme/themeModel.js";
 import {
   FLOWCELL_THEME_PAGE_REGISTRY,
+  MAIN_THEME_PRESETS,
   defaultThemePageAppearance,
   getFlowCellThemePageDefinition,
   isFlowCellThemePageId,
+  mainThemePresetAppearance,
   type FlowCellThemePageId,
   type ThemePageAppearance,
   type ThemePageAssetDefinition,
+  type ThemePageAssetValue,
   type ThemePageTokenDefinition
 } from "../../theme/themePageRegistry.js";
 import {
@@ -943,6 +946,17 @@ export default function ThemeEditorPage({
     }
   };
 
+  const handleMainThemePreset = (presetId: string) => {
+    const preset = MAIN_THEME_PRESETS.find((entry) => entry.id === presetId);
+    const presetAppearance = mainThemePresetAppearance(presetId);
+    if (!preset || !presetAppearance) return;
+    updatePageAppearance((appearance) => {
+      appearance.tokens = presetAppearance.tokens;
+      appearance.assets = presetAppearance.assets;
+    });
+    setStatus(`Loaded the ${preset.label} preset. Apply to use it, or Save Theme to keep it as a file. Buttons are unchanged.`);
+  };
+
   const handleBrowsePageAsset = async (asset: ThemePageAssetDefinition) => {
     const path = (await showOpenFileDialog({
       title: `Choose ${selectedPageDefinition.label} ${asset.label}`,
@@ -1061,6 +1075,19 @@ export default function ThemeEditorPage({
               <h2>{selectedPageDefinition.label} Page</h2>
               <p>Pick colors visually; opacity is shown as a percentage.</p>
             </div>
+            {pageValue === "main" ? (
+              <div className="theme-editor__section-actions">
+                <label>
+                  <span>Preset</span>
+                  <select value="" disabled={pending} onChange={(event) => handleMainThemePreset(event.currentTarget.value)}>
+                    <option value="">Choose a preset</option>
+                    {MAIN_THEME_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>{preset.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : null}
           </div>
           <div className="theme-editor__token-groups">
             {selectedPageGroups.map((group) => (
@@ -1086,7 +1113,7 @@ export default function ThemeEditorPage({
                         <label>
                           <span>{asset.label}</span>
                           <select value={current.mode} onChange={(event) => {
-                            const mode = event.currentTarget.value as "default" | "none" | "custom";
+                            const mode = event.currentTarget.value as ThemePageAssetValue["mode"];
                             updatePageAppearance((appearance) => {
                               appearance.assets[asset.id] = {
                                 mode,
@@ -1095,6 +1122,7 @@ export default function ThemeEditorPage({
                             });
                           }}>
                             <option value="default">Default</option>
+                            <option value="concrete">Concrete</option>
                             <option value="none">None</option>
                             <option value="custom">Custom image</option>
                           </select>

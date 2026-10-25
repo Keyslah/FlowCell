@@ -41,7 +41,8 @@ import {
   isThemePageAppearance,
   themePageSupportsButtonSurface,
   type FlowCellThemePageId,
-  type ThemePageAppearance
+  type ThemePageAppearance,
+  type ThemePageAssetValue
 } from "./themePageRegistry.js";
 
 export const FLOWCELL_THEME_KIND = "FlowCellTheme" as const;
@@ -66,7 +67,7 @@ export interface MainRailThemeAppearance {
 
 export interface MainThemeAppearance {
   backgroundColor: string;
-  backgroundImageMode: "default" | "none" | "custom";
+  backgroundImageMode: ThemePageAssetValue["mode"];
   backgroundImagePath: string | null;
   rails: Record<string, MainRailThemeAppearance>;
 }

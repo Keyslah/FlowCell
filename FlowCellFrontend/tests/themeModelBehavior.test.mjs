@@ -21,6 +21,7 @@ import {
 } from "./.compiled-button-system/button/state/buttonDefaults.js";
 import { BUTTON_SKIN_SECTION_ORDER } from "./.compiled-button-system/button/skins/buttonSkinFormat.js";
 import {
+  normalizeButtonSkinColor,
   readButtonSkinHighlightOnActive,
   readButtonSkinHighlightOnHover,
   setButtonSkinHighlightOnActive,
@@ -29,8 +30,10 @@ import {
 import {
   FLOWCELL_THEME_PAGE_IDS,
   FLOWCELL_THEME_PAGE_REGISTRY,
+  MAIN_THEME_PRESETS,
   defaultThemePageAppearance,
   isThemePageAppearance,
+  mainThemePresetAppearance,
   themePageSupportsButtonSurface,
   themePageTokenCssEntries
 } from "./.compiled-button-system/theme/themePageRegistry.js";
@@ -44,7 +47,7 @@ import {
   readProgramPopoutSkinSurfaceColor,
   scanProgramPopoutPaletteTargets
 } from "./.compiled-button-system/theme/programPopoutPalette.js";
-import { buttonsSurfaceContentOrigin } from "./.compiled-button-system/pages/main/mainLayout.js";
+import { buttonsSurfaceContentOrigin, rails } from "./.compiled-button-system/pages/main/mainLayout.js";
 import {
   THEME_EDITOR_SCOPE_STATE_STORAGE_KEY,
   isThemeEditorScopeState,
@@ -1768,6 +1771,44 @@ test("FlowCell page registry round-trips Main background and individual rail tok
   const wrongPage = structuredClone(theme);
   wrongPage.target.page = "binds";
   assert.equal(isFlowCellThemeFile(wrongPage), false);
+});
+
+test("the new Concrete Main theme draws every rail box and leaves Buttons and Default unchanged", () => {
+  assert.deepEqual(MAIN_THEME_PRESETS.map((preset) => preset.label), ["Concrete"]);
+  assert.equal(mainThemePresetAppearance("missing"), null);
+  for (const preset of MAIN_THEME_PRESETS) {
+    const page = mainThemePresetAppearance(preset.id);
+    assert.equal(isThemePageAppearance(page), true);
+    assert.equal(page.pageId, "main");
+    assert.equal(rails.length, 4);
+    for (const rail of rails) {
+      for (const part of ["background", "border"]) {
+        const color = normalizeButtonSkinColor(page.tokens[`rail-${rail.id}-${part}`]);
+        const alpha = color.length === 9 ? Number.parseInt(color.slice(7), 16) : 255;
+        assert.ok(alpha > 0, `${preset.label} ${rail.name} rail ${part} must be visible`);
+      }
+    }
+
+    const document = fixture();
+    const theme = captureThemeFile({
+      document,
+      target: { kind: "flowcell", page: "main" },
+      page,
+      savedAt: SAVED_AT
+    });
+    assert.equal(isFlowCellThemeFile(theme), true);
+    assert.deepEqual(applyThemeFile(document, theme).document, document);
+  }
+
+  const stock = defaultThemePageAppearance("main");
+  assert.equal(stock.tokens["background-color"], "#9db678");
+  assert.deepEqual(stock.assets["background-image"], { mode: "default", path: null });
+  assert.equal(stock.tokens["rail-program-rail-background"], "transparent");
+  const concrete = mainThemePresetAppearance("concrete");
+  assert.deepEqual(concrete.assets["background-image"], { mode: "concrete", path: null });
+  const concreteWithPath = structuredClone(concrete);
+  concreteWithPath.assets["background-image"].path = "C:\\Themes\\concrete.jpg";
+  assert.equal(isThemePageAppearance(concreteWithPath), false);
 });
 
 test("Main Theme application never changes Button geometry or sibling layout", () => {

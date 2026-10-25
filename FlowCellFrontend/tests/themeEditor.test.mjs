@@ -347,3 +347,15 @@ test("Theme and managed-window Layout schemas remain independent in both load or
   }
   assert.match(packageJson.scripts["test:button"], /tests\/themeModelBehavior\.test\.mjs/);
 });
+
+test("Main page offers the Concrete theme and a bundled Concrete background", () => {
+  const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
+  const runtime = read("src", "theme", "themeRuntime.ts");
+  assert.match(editor, /<option value="concrete">Concrete<\/option>/);
+  assert.match(editor, /pageValue === "main" \? \([\s\S]{0,400}MAIN_THEME_PRESETS\.map/);
+  assert.match(editor, /mainThemePresetAppearance\(presetId\)/);
+  assert.match(runtime, /import concreteBackground from "\.\.\/assets\/backgrounds\/concrete\.jpg";/);
+  assert.match(runtime, /asset\.mode === "concrete"\s*\?\s*`url\("\$\{concreteBackground\}"\)`/);
+  const concrete = readFileSync(path.join(root, "src", "assets", "backgrounds", "concrete.jpg"));
+  assert.deepEqual([...concrete.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+});

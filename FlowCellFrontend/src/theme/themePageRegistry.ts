@@ -22,7 +22,8 @@ export interface ThemePageAssetDefinition {
 }
 
 export interface ThemePageAssetValue {
-  mode: "default" | "none" | "custom";
+  /** "concrete" selects the bundled concrete texture; only "custom" carries a path. */
+  mode: "default" | "none" | "custom" | "concrete";
   path: string | null;
 }
 
@@ -402,6 +403,42 @@ export function defaultThemePageAppearance(pageId: FlowCellThemePageId): ThemePa
   };
 }
 
+/** Built-in Main page looks. They set page tokens/assets only, so Buttons keep their skins and colors. */
+export interface MainThemePreset {
+  id: string;
+  label: string;
+  backgroundColor: string;
+  backgroundImageMode: Exclude<ThemePageAssetValue["mode"], "custom">;
+  railBackground: string;
+  railBorder: string;
+}
+
+// Rails are otherwise transparent and only show as boxes by blurring a busy background
+// image, so presets give every rail its own frosted fill and edge.
+export const MAIN_THEME_PRESETS: readonly MainThemePreset[] = [
+  {
+    id: "concrete",
+    label: "Concrete",
+    backgroundColor: "#94918C",
+    backgroundImageMode: "concrete",
+    railBackground: "rgba(255, 255, 255, 0.16)",
+    railBorder: "rgba(255, 255, 255, 0.42)"
+  }
+];
+
+export function mainThemePresetAppearance(presetId: string): ThemePageAppearance | null {
+  const preset = MAIN_THEME_PRESETS.find((entry) => entry.id === presetId);
+  if (!preset) return null;
+  const appearance = defaultThemePageAppearance("main");
+  appearance.tokens["background-color"] = preset.backgroundColor;
+  appearance.assets["background-image"] = { mode: preset.backgroundImageMode, path: null };
+  for (const rail of rails) {
+    appearance.tokens[`rail-${rail.id}-background`] = preset.railBackground;
+    appearance.tokens[`rail-${rail.id}-border`] = preset.railBorder;
+  }
+  return appearance;
+}
+
 export function isThemePageAppearance(value: unknown): value is ThemePageAppearance {
   if (!isRecord(value) || !hasExactKeys(value, ["pageId", "tokens", "assets"])) return false;
   if (!isFlowCellThemePageId(value.pageId) || !isRecord(value.tokens) || !isRecord(value.assets)) {
@@ -419,7 +456,12 @@ export function isThemePageAppearance(value: unknown): value is ThemePageAppeara
   if (!hasExactKeys(value.assets, assetIds)) return false;
   return Object.values(value.assets).every((asset) => {
     if (!isRecord(asset) || !hasExactKeys(asset, ["mode", "path"])) return false;
-    if (asset.mode !== "default" && asset.mode !== "none" && asset.mode !== "custom") return false;
+    if (
+      asset.mode !== "default" &&
+      asset.mode !== "none" &&
+      asset.mode !== "custom" &&
+      asset.mode !== "concrete"
+    ) return false;
     if (asset.mode === "custom") return typeof asset.path === "string" && Boolean(asset.path.trim());
     return asset.path === null;
   });
