@@ -17,6 +17,8 @@ pub(crate) struct ProgramManifest {
     pub process_names: Vec<String>,
     #[serde(default)]
     pub exe_path: String,
+    #[serde(default, skip_serializing_if = "ProgramExecutableDiscovery::is_empty")]
+    pub executable_discovery: ProgramExecutableDiscovery,
     #[serde(default)]
     pub bind_scoped_native_owner: bool,
     #[serde(default)]
@@ -40,6 +42,46 @@ pub(crate) struct ProgramManifest {
     pub app_restart_notes: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme_library: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind_actions_file: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ProgramExecutableDiscovery {
+    #[serde(default)]
+    pub app_paths: Vec<String>,
+    #[serde(default)]
+    pub store_packages: Vec<StoreExecutableLocation>,
+    #[serde(default)]
+    pub common_locations: Vec<CommonExecutableLocation>,
+}
+
+impl ProgramExecutableDiscovery {
+    pub fn is_empty(&self) -> bool {
+        self.app_paths.is_empty() && self.store_packages.is_empty() && self.common_locations.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoreExecutableLocation {
+    pub identity: String,
+    pub executable: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub(crate) enum ExecutableLocationRoot {
+    ProgramFiles,
+    ProgramFilesX86,
+    LocalAppData,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CommonExecutableLocation {
+    pub root: ExecutableLocationRoot,
+    pub path: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -287,6 +329,7 @@ pub(crate) fn validate_manifest(
         return Err("Program manifest requires programId and label.".to_string());
     }
     manifest.program_id = normalize_bundled_token(&manifest.program_id, "programId", false)?;
+    crate::commands::program_executables::validate_discovery(&manifest.executable_discovery)?;
     if manifest.process_names.is_empty()
         || manifest
             .process_names
@@ -353,6 +396,10 @@ pub(crate) fn validate_manifest(
     }
     if let Some(library) = manifest.theme_library.as_mut() {
         *library = normalize_relative_manifest_path(library, "themeLibrary", false)?;
+    }
+    if let Some(file) = &manifest.bind_actions_file {
+        super::bind_actions::validate_relative_file(file)?;
+        super::bind_actions::load_actions(program_root, manifest)?;
     }
     manifest.git_scripts_folder =
         normalize_relative_manifest_path(&manifest.git_scripts_folder, "gitScriptsFolder", false)?;

@@ -23,6 +23,10 @@
     "Fusion360",
     "FusionLauncher"
   ],
+  "executableDiscovery": {
+    "appPaths": ["Fusion360.exe"],
+    "commonLocations": [{"root": "LocalAppData", "path": "Autodesk/webdeploy/production/*/Fusion360.exe"}]
+  },
   "bindScopedNativeOwner": false,
   "shortcutProfileId": "",
   "gitScriptsFolder": "Fusion Git Scripts",

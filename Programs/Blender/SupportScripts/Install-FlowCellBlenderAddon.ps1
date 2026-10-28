@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$BlenderExePath = ''
+    [string]$BlenderExePath = '',
+    [switch]$CheckOnly
 )
 
 Set-StrictMode -Version Latest
@@ -22,6 +23,17 @@ function Write-Status {
     Write-Host $Text
 }
 
+function Write-SetupResult {
+    param(
+        [ValidateSet('ready', 'needsHostInitialization')][string]$Status,
+        [string]$Message,
+        [string]$RestartNotes = ''
+    )
+    if (-not $CheckOnly) { Write-Status -Text $Message }
+    $result = @{ status = $Status; message = $Message; restartNotes = $RestartNotes }
+    Write-Output ('FLOWCELL_PROGRAM_SETUP_RESULT=' + ($result | ConvertTo-Json -Compress))
+}
+
 function Get-RepoRoot {
     Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 }
@@ -31,6 +43,13 @@ function Get-BlenderVersionFromExecutablePath {
 
     if ([string]::IsNullOrWhiteSpace($Path)) {
         return ''
+    }
+
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
+        foreach ($value in @($versionInfo.ProductVersion, $versionInfo.FileVersion)) {
+            if ($value -match '(?<!\d)(\d+\.\d+)(?!\d)') { return $Matches[1] }
+        }
     }
 
     $directory = Split-Path -Parent $Path.Trim()
@@ -58,7 +77,12 @@ function Get-BlenderTargetVersionFolder {
 
     $detectedVersion = Get-BlenderVersionFromExecutablePath -Path $ExecutablePath
     if (-not [string]::IsNullOrWhiteSpace($detectedVersion)) {
-        return (Join-Path $SettingsRoot $detectedVersion)
+        # Blender settings use major.minor even when its installation directory
+        # includes a patch version. Do not create an uninitialized host profile.
+        $version = [version]$detectedVersion
+        $target = Join-Path $SettingsRoot ('{0}.{1}' -f $version.Major, $version.Minor)
+        if (Test-Path -LiteralPath $target -PathType Container) { return $target }
+        return ''
     }
 
     $newestVersionFolder = Get-ChildItem -LiteralPath $SettingsRoot -Directory -ErrorAction SilentlyContinue |
@@ -148,7 +172,7 @@ except Exception:
 
 $repoRoot = Get-RepoRoot
 $logRoot = Join-Path $(if ($env:FLOWCELL_LOCAL_ROOT) { $env:FLOWCELL_LOCAL_ROOT } elseif (Test-Path -LiteralPath (Join-Path $repoRoot 'flowcellbackend')) { Join-Path $repoRoot 'flowcellbackend\local' } else { $repoRoot }) 'logs'
-New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+if (-not $CheckOnly) { New-Item -ItemType Directory -Path $logRoot -Force | Out-Null }
 $script:LogPath = Join-Path $logRoot 'blender-addon-install.log'
 $script:LastActionStatusPath = Join-Path $logRoot 'last_action_status.txt'
 
@@ -162,13 +186,18 @@ try {
 
     $settingsRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Blender Foundation\Blender'
     if (-not (Test-Path -LiteralPath $settingsRoot -PathType Container)) {
-        Write-Status -Text 'Blender was added, but no Blender settings folder exists yet. Open Blender once, close it, then restart FlowCell.'
+        Write-SetupResult -Status needsHostInitialization -Message 'Blender was added, but its settings folder does not exist yet. Open the selected Blender version once, close it, then choose Recheck setup in FlowCell.'
         exit 0
     }
 
     $versionFolderPath = Get-BlenderTargetVersionFolder -SettingsRoot $settingsRoot -ExecutablePath $BlenderExePath
     if ([string]::IsNullOrWhiteSpace($versionFolderPath)) {
-        Write-Status -Text 'Blender was added, but no Blender settings version folder could be determined. Open Blender once, close it, then restart FlowCell.'
+        Write-SetupResult -Status needsHostInitialization -Message 'The selected Blender version has no identifiable initialized settings folder. Open that Blender version once, close it, then choose Recheck setup in FlowCell.'
+        exit 0
+    }
+
+    if ($CheckOnly) {
+        Write-SetupResult -Status ready -Message 'The selected Blender settings folder is available for FlowCell setup.'
         exit 0
     }
 
@@ -187,10 +216,11 @@ try {
         $bootstrapPath,
         'Restart Blender once after adding Blender in FlowCell. The bridge will auto-enable and start its request timer.'
     ) -join "`r`n"
-    Write-Status -Text $message
+    Write-SetupResult -Status ready -Message $message -RestartNotes 'Restart Blender once to load the installed FlowCell add-on. Setup has not verified a live Blender connection.'
     exit 0
 }
 catch {
-    Write-Status -Text ("FlowCell Blender add-on install failed.`r`n" + $_.Exception.Message)
+    $failure = "FlowCell Blender add-on install failed.`r`n" + $_.Exception.Message
+    if ($CheckOnly) { Write-Output $failure } else { Write-Status -Text $failure }
     exit 1
 }

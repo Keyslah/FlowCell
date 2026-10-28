@@ -1,18 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import {
   applyAddProgramPlan,
   emitProgramSetupCommitted,
   finalizeAddProgramPlan,
+  importProgramPackage,
   listAvailableProgramPackages,
+  listProgramSetupStatuses,
   preflightAddProgramPlan,
   prepareAddProgramCanonicalCommit,
+  recheckProgramSetup,
   rollbackAddProgramPlan,
   type AddProgramPlanRequest,
   type AddProgramPreflight,
   type AvailableProgramPackage,
-  type AvailableProgramPackagesResponse
+  type AvailableProgramPackagesResponse,
+  type ProgramSetupResult
 } from "../../lib/programRails";
 import { showOpenFileDialog } from "../../lib/tauri";
 import {
@@ -93,6 +97,10 @@ export default function AddProgramWindowPage() {
   const [reviewed, setReviewed] = useState<AddProgramPreflight | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("Loading Program packages…");
+  const [setupStatuses, setSetupStatuses] = useState<ProgramSetupResult[]>([]);
+  const [setupStatusError, setSetupStatusError] = useState("");
+  const [completedSetup, setCompletedSetup] = useState<ProgramSetupResult | null>(null);
+  const packageActionPending = useRef(false);
 
   const selectedProgram = useMemo(
     () => inventory?.packages.find((program) => program.programName === selectedProgramName) ?? null,
@@ -113,6 +121,11 @@ export default function AddProgramWindowPage() {
 
   useEffect(() => {
     let cancelled = false;
+    void listProgramSetupStatuses().then((next) => {
+      if (!cancelled) setSetupStatuses(next);
+    }).catch((error) => {
+      if (!cancelled) setSetupStatusError(`Saved setup status could not be read: ${errorMessage(error)}`);
+    });
     void listAvailableProgramPackages()
       .then((next) => {
         if (cancelled) return;
@@ -120,7 +133,7 @@ export default function AddProgramWindowPage() {
         const first = next.packages[0];
         if (!first) {
           setSetupSource("plain");
-          setStatus("Choose any application executable to add a Program context.");
+          setStatus("Import a program ZIP, or choose an application executable to add your own Program.");
           return;
         }
         setSetupSource("package");
@@ -134,6 +147,85 @@ export default function AddProgramWindowPage() {
       cancelled = true;
     };
   }, []);
+
+  const importPackage = async () => {
+    if (busy || packageActionPending.current) return;
+    packageActionPending.current = true;
+    setBusy(true);
+    try {
+      const paths = await showOpenFileDialog({
+        title: "Import a FlowCell program package",
+        filter: "FlowCell program packages (*.zip)|*.zip",
+        multiselect: false
+      });
+      if (!paths[0]) return;
+      setStatus("Checking and importing the program package…");
+      const imported = await importProgramPackage(paths[0]);
+      const next = await listAvailableProgramPackages();
+      setInventory(next);
+      const program = next.packages.find((entry) => entry.programName === imported.programName);
+      if (!program) {
+        const rejected = next.rejectedPackages.find((entry) => entry.folderName === imported.programName);
+        throw new Error(`The package was imported to ${imported.packagePath}, but is not available for registration.${rejected ? ` ${rejected.error}` : ""}`);
+      }
+      setSetupSource("package");
+      setSelectedProgramName(program.programName);
+      resetForProgram(program);
+      setStatus(`${program.programName} was imported. Choose its application and contributions, then review the plan.${imported.cleanupWarning ? ` ${imported.cleanupWarning}` : ""}`);
+    } catch (error) {
+      setStatus(`Package import failed: ${errorMessage(error)}`);
+    } finally {
+      packageActionPending.current = false;
+      setBusy(false);
+    }
+  };
+
+  const refreshDetection = async () => {
+    if (busy || packageActionPending.current) return;
+    packageActionPending.current = true;
+    setBusy(true);
+    setStatus("Looking for installed applications…");
+    try {
+      const next = await listAvailableProgramPackages();
+      setInventory(next);
+      const program = next.packages.find((entry) => entry.programName === selectedProgramName);
+      if (program && !executablePath.trim()) setExecutablePath(program.suggestedExecutable);
+      setHostConfirmed(false);
+      setReviewed(null);
+      setStatus("Detection refreshed. Choose the application you want to use, or Browse for it.");
+    } catch (error) {
+      setStatus(`Application detection failed: ${errorMessage(error)}`);
+    } finally {
+      packageActionPending.current = false;
+      setBusy(false);
+    }
+  };
+
+  const presentSetupResult = async (result: ProgramSetupResult) => {
+    setSetupStatuses((current) => [...current.filter((entry) => entry.programName !== result.programName), result]);
+    setReviewed(null);
+    setStatus(result.message);
+    if (result.status === "needsHostInitialization" || result.restartNotes.trim()) {
+      setCompletedSetup(result);
+    } else {
+      await getCurrentWindow().close();
+    }
+  };
+
+  const recheckSetup = async (programName: string) => {
+    if (busy || packageActionPending.current) return;
+    packageActionPending.current = true;
+    setBusy(true);
+    setStatus(`Rechecking ${programName} setup…`);
+    try {
+      await presentSetupResult(await recheckProgramSetup(programName));
+    } catch (error) {
+      setStatus(`Setup recheck failed: ${errorMessage(error)}`);
+    } finally {
+      packageActionPending.current = false;
+      setBusy(false);
+    }
+  };
 
   const invalidateReview = () => {
     setReviewed(null);
@@ -288,11 +380,17 @@ export default function AddProgramWindowPage() {
   };
 
   const finishSuccess = async (programName: string) => {
-    const latest = await loadButtonStateDocument();
-    await publishButtonCommit(latest).catch(() => {});
-    await emitProgramSetupCommitted({ kind: "program", programName });
-    setStatus(`Program '${programName}' is installed through the managed lifecycle.`);
-    await getCurrentWindow().close();
+    const result = (await listProgramSetupStatuses()).find((entry) => entry.programName === programName);
+    if (!result) throw new Error(`Program '${programName}' is registered, but its setup status could not be recovered.`);
+    setCompletedSetup(result);
+    setStatus(result.message);
+    try {
+      const latest = await loadButtonStateDocument();
+      await publishButtonCommit(latest);
+      await emitProgramSetupCommitted({ kind: "program", programName });
+    } catch (error) {
+      setStatus(`Program '${programName}' was added. Updating the open windows did not finish: ${errorMessage(error)}`);
+    }
   };
 
   const installValidatedPlan = async (
@@ -301,6 +399,7 @@ export default function AddProgramWindowPage() {
   ) => {
     setStatus("Applying the durable Program setup transaction…");
     let transactionToken = "";
+    let finalizedResult: ProgramSetupResult | null = null;
     try {
       const applied = await applyAddProgramPlan(planRequest);
       transactionToken = applied.transactionToken;
@@ -322,13 +421,16 @@ export default function AddProgramWindowPage() {
       if (!buttonStateDocumentsEqual(next, base)) {
         saved = await commitButtonStateDocument(next, base.revision);
       }
-      await finalizeAddProgramPlan(transactionToken);
+      const result = await finalizeAddProgramPlan(transactionToken);
+      finalizedResult = result;
       await publishButtonCommit(saved).catch(() => {});
       await emitProgramSetupCommitted({ kind: "program", programName: applied.programName });
-      setStatus(`Program '${applied.programName}' is installed through the managed lifecycle.`);
-      await getCurrentWindow().close();
+      await presentSetupResult(result);
     } catch (error) {
-      if (!transactionToken) {
+      if (finalizedResult) {
+        setCompletedSetup(finalizedResult);
+        setStatus(`Program '${finalizedResult.programName}' was added. Updating this window did not finish: ${errorMessage(error)}`);
+      } else if (!transactionToken) {
         setStatus(`Program setup failed: ${errorMessage(error)}`);
       } else {
         try {
@@ -377,6 +479,19 @@ export default function AddProgramWindowPage() {
     }
   };
 
+  if (completedSetup) {
+    return <main className="program-setup">
+      <header className="program-setup__header"><h1>{completedSetup.programName} setup</h1><button type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</button></header>
+      <section className="program-setup__card" aria-live="polite">
+        <h2>{completedSetup.status === "needsHostInitialization" ? "Finish application setup" : "Setup ready"}</h2>
+        <p>{completedSetup.message}</p>
+        {completedSetup.restartNotes ? <p>{completedSetup.restartNotes}</p> : null}
+        {completedSetup.status === "needsHostInitialization" ? <button type="button" onClick={() => void recheckSetup(completedSetup.programName)} disabled={busy}>Recheck setup</button> : null}
+        <p className="program-setup__status">{status}</p>
+      </section>
+    </main>;
+  }
+
   if (!inventory) {
     return <main className="program-setup"><p className="program-setup__status">{status}</p></main>;
   }
@@ -387,6 +502,22 @@ export default function AddProgramWindowPage() {
         <div><p className="program-setup__eyebrow">Managed lifecycle</p><h1>Add Program</h1></div>
         <button type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</button>
       </header>
+
+      {setupStatusError ? <p className="program-setup__status" role="alert">{setupStatusError}</p> : null}
+
+      {setupStatuses.filter((entry) => entry.status === "needsHostInitialization").map((entry) => (
+        <section className="program-setup__card" key={entry.programName}>
+          <h2>{entry.programName}: setup incomplete</h2>
+          <p>{entry.message}</p>
+          {entry.restartNotes ? <p>{entry.restartNotes}</p> : null}
+          <button type="button" onClick={() => void recheckSetup(entry.programName)} disabled={busy}>Recheck setup</button>
+        </section>
+      ))}
+
+      <section className="program-setup__card program-setup__import">
+        <div><strong>Have a FlowCell program ZIP?</strong><p>Import it here, then choose what to add.</p></div>
+        <button type="button" onClick={() => void importPackage()} disabled={busy}>Import program ZIP</button>
+      </section>
 
       <section className="program-setup__modes" aria-label="Program source">
         <button className={setupSource === "plain" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("plain")} disabled={busy}>Any program</button>
@@ -423,12 +554,17 @@ export default function AddProgramWindowPage() {
               </select>
             </label>
             <label>Host executable
+              {selectedProgram.executableCandidates.length > 0 ? <select aria-label="Detected applications" value={selectedProgram.executableCandidates.some((candidate) => candidate.path === executablePath) ? executablePath : ""} onChange={(event) => { setExecutablePath(event.target.value); setHostConfirmed(false); invalidateReview(); }} disabled={busy}>
+                <option value="">Choose an installed application</option>
+                {selectedProgram.executableCandidates.map((candidate) => <option key={candidate.path} value={candidate.path}>{candidate.path}</option>)}
+              </select> : null}
               <div className="program-setup__inline">
                 <input value={executablePath} onChange={(event) => { setExecutablePath(event.target.value); setHostConfirmed(false); invalidateReview(); }} disabled={busy} />
                 <button type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: `Choose ${selectedProgram.programName} host executable`, filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
                   if (!paths[0]) return;
                   setExecutablePath(paths[0]); setHostConfirmed(false); invalidateReview();
                 })}>Browse</button>
+                <button type="button" disabled={busy} onClick={() => void refreshDetection()}>Find installed</button>
               </div>
             </label>
             <label className="program-setup__confirm"><input type="checkbox" checked={hostConfirmed} onChange={(event) => { setHostConfirmed(event.target.checked); invalidateReview(); }} disabled={busy} /> I confirm this EXE is the host application for this Program package.</label>
@@ -482,7 +618,7 @@ export default function AddProgramWindowPage() {
           <footer className="program-setup__footer"><p className="program-setup__status">{status}</p><div>{reviewed ? <button className="program-setup__primary" type="button" onClick={() => void installReviewedPlan()} disabled={busy}>Install validated plan</button> : <button className="program-setup__primary" type="button" onClick={() => void reviewPlan()} disabled={busy || !hostConfirmed || !executablePath.trim()}>Review plan</button>}</div></footer>
         </>
       ) : (
-        <section className="program-setup__card"><p>No validated, unregistered managed Program packages are available. Choose Any program to add an executable directly.</p></section>
+        <section className="program-setup__card"><p>No validated, unregistered managed Program packages are available. Import a FlowCell program ZIP above. Choose Any program to add an executable directly.</p></section>
       )}
 
       {inventory.rejectedPackages.length > 0 ? <details className="program-setup__rejected"><summary>Rejected packages ({inventory.rejectedPackages.length})</summary>{inventory.rejectedPackages.map((entry) => <p key={entry.folderName}><strong>{entry.folderName}:</strong> {entry.error}</p>)}</details> : null}

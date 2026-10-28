@@ -1312,6 +1312,19 @@ fn detect_import_kind(source_path: &Path) -> Result<&'static str, String> {
     }
 }
 
+/// Apply ordinary Add Button schema/capability checks to an inert staged program package.
+/// Unlike preflight_button_source, this accepts its manifest without resolving live registration.
+pub(crate) fn validate_source_in_program_package(
+    manifest: &ProgramManifest,
+    source_path: &Path,
+    import_kind: &str,
+) -> Result<(), String> {
+    reject_selected_source_reparse_point(source_path)?;
+    let import_kind = normalize_import_kind(import_kind)?;
+    let import_kind = if import_kind == "auto" { detect_import_kind(source_path)? } else { import_kind };
+    prepare_source(manifest, source_path, import_kind).map(|_| ())
+}
+
 fn prepare_source(
     manifest: &ProgramManifest,
     source_path: &Path,
@@ -4140,6 +4153,7 @@ mod tests {
             panels: Vec::new(),
             process_names: vec!["explorer".into()],
             exe_path: "explorer.exe".into(),
+            executable_discovery: Default::default(),
             bind_scoped_native_owner: false,
             shortcut_profile_id: "windows".into(),
             git_scripts_folder: "Windows Git Scripts".into(),
@@ -4158,6 +4172,7 @@ mod tests {
             },
             addon_reload_notes: String::new(),
             theme_library: None,
+            bind_actions_file: None,
             app_restart_notes: String::new(),
         }
     }

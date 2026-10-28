@@ -10,6 +10,7 @@ Persistent
 #Include helpers\TempShotsCapture.ahk
 #Include helpers\BackendIdentity.ahk
 #Include helpers\AutoHotkeyState.ahk
+#Include helpers\ProgramBindActions.ahk
 
 ; Syntax-only validation must not initialize UI Automation, hotkeys, or capture.
 if HasCliFlag("--validate-only")
@@ -233,10 +234,6 @@ NormalizeFlowCellProgramPath(path) {
     return flowCellBackendRole = "installed" ? FlowCellBackendIdentity.RebaseProgramPath(path, flowCellProgramsRoot) : StrReplace(path, "/", "\")
 }
 
-GetFlowCellIllustratorAnchorScriptPath() {
-    return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_SetAnchorHotkey.jsx"
-}
-
 ReadUtf8TextFileWithoutBom(path) {
     text := FileRead(path, "UTF-8")
     if SubStr(text, 1, 1) = Chr(0xFEFF)
@@ -391,8 +388,8 @@ class FlowCellApp {
         this.recordedActionStore := RecordedMacroStore(flowCellRecordedActionsDir, this.logger)
         this.macroExecutionStack := []
         this.actions := []
-        if IsFlowCellProgramRegistered("Illustrator") && FileExist(GetFlowCellIllustratorAnchorScriptPath())
-            this.actions.Push(SetIllustratorAnchorAction(this))
+        for packageAction in ProgramBindActions.Load(this)
+            this.actions.Push(packageAction)
         for recordedAction in this.recordedActionStore.LoadActions(this)
             this.actions.Push(recordedAction)
         this.scanResult := ""
@@ -1867,17 +1864,6 @@ class FlowCellApp {
         throw Error("Photoshop is running, but no active COM automation handle was available.")
     }
 
-    ReadFlowCellIllustratorScriptStatus() {
-        global flowCellLogsDir
-        statusPath := flowCellLogsDir "\illustrator-anchor-status.txt"
-        if !FileExist(statusPath)
-            return ""
-        try return Trim(FileRead(statusPath, "UTF-8"))
-        catch {
-            return ""
-        }
-    }
-
     StartDirectScriptReceiver() {
         global flowCellDirectScriptReceiverTitle
         if this.HasProp("directScriptReceiverGui") && IsObject(this.directScriptReceiverGui)
@@ -2080,7 +2066,8 @@ class FlowCellApp {
             attempted: false,
             succeeded: false,
             method: "not_started",
-            detail: ""
+            detail: "",
+            returnValue: ""
         }
 
         stableHwnd := 0
@@ -2127,11 +2114,9 @@ class FlowCellApp {
 
             app := this.GetIllustratorApplication(250, shouldActivateWindow)
             returnValue := app.DoJavaScriptFile(scriptPath)
+            result.returnValue := returnValue ""
             result.succeeded := true
             result.detail := "DoJavaScriptFile returned without raising an error."
-            illustratorStatus := this.ReadFlowCellIllustratorScriptStatus()
-            if illustratorStatus != ""
-                result.detail .= " Status: " illustratorStatus
             if returnValue != ""
                 result.detail .= " Return value: " ValueToText(returnValue)
             this.logger.Info(
@@ -2159,12 +2144,13 @@ class FlowCellApp {
         }
     }
 
-    RunPhotoshopScript(scriptPath, source, programConfig := 0) {
+    RunPhotoshopScript(scriptPath, source, programConfig := 0, preserveForeground := false) {
         result := {
             attempted: false,
             succeeded: false,
             method: "not_started",
-            detail: ""
+            detail: "",
+            returnValue: ""
         }
 
         scriptPath := NormalizeFlowCellProgramPath(scriptPath)
@@ -2184,15 +2170,17 @@ class FlowCellApp {
             result.detail := "Open Photoshop to use this action."
             return result
         }
-        try WinActivate "ahk_id " hwnd
-        catch {
+        if !preserveForeground {
+            try WinActivate "ahk_id " hwnd
+            catch {
+            }
         }
 
         result.attempted := true
         result.method := "photoshop_com_activeobject"
         try {
             app := this.GetPhotoshopApplication()
-            app.DoJavaScriptFile(scriptPath)
+            result.returnValue := app.DoJavaScriptFile(scriptPath) ""
             result.succeeded := true
             result.detail := "DoJavaScriptFile returned without raising an error."
             return result
@@ -2365,7 +2353,7 @@ class FlowCellApp {
         return ""
     }
 
-    RunBoundScript(scriptPath, source, programTabId := 0, programName := "") {
+    RunBoundScript(scriptPath, source, programTabId := 0, programName := "", preserveForeground := false) {
         if this.IsTempShotsScript(scriptPath)
             return this.RunTempShotsScript(scriptPath)
         if this.IsSnapshotsScript(scriptPath)
@@ -2383,9 +2371,9 @@ class FlowCellApp {
 
         switch resolvedProgramKey {
             case "illustrator", "illustrator_automation", "illustrator_direct", "illustrator_process":
-                return this.RunIllustratorScript(scriptPath, source, programConfig)
+                return this.RunIllustratorScript(scriptPath, source, programConfig, preserveForeground)
             case "photoshop", "photoshop_direct":
-                return this.RunPhotoshopScript(scriptPath, source, programConfig)
+                return this.RunPhotoshopScript(scriptPath, source, programConfig, preserveForeground)
             case "blender", "blender_bridge":
                 activateExe := this.ResolveConfiguredProgramExePath(programConfig)
                 if activateExe = ""
@@ -4203,39 +4191,6 @@ class ScriptShortcutManager {
     }
 }
 
-class SetIllustratorAnchorAction {
-    __New(app) {
-        this.app := app
-        this.Id := "illustrator_set_anchor"
-        this.Label := "Set Anchor"
-        this.RequiresExactLayersScan := false
-        this.RunFromHotkeyDirect := true
-        this.HotIfWinTitle := "ahk_exe Illustrator.exe"
-        this.PassThroughHotkey := true
-    }
-
-    Run(scanResult) {
-        helperPath := GetFlowCellIllustratorAnchorScriptPath()
-        helperResult := this.app.RunIllustratorScript(
-            helperPath,
-            "set anchor hotkey",
-            0,
-            true
-        )
-        anchorSet := helperResult.succeeded && InStr(helperResult.detail, "Status: anchor set")
-        return {
-            attempted: helperResult.attempted,
-            deliverySucceeded: helperResult.succeeded,
-            effectConfirmed: anchorSet,
-            method: helperResult.method,
-            detail: helperResult.detail,
-            note: anchorSet
-                ? "Anchor bounds were captured from the keypress selection."
-                : "Select one or more unlocked Illustrator objects, then run Set Anchor again."
-        }
-    }
-}
-
 class ActionHotkeyManager {
     __New(app, bindingFilePath, logger, candidateShortcuts) {
         this.app := app
@@ -4276,26 +4231,32 @@ class ActionHotkeyManager {
     TryRegisterHotkey(actionId, shortcut) {
         callback := ObjBindMethod(this, "OnHotkeyPressed", actionId)
         action := this.app.GetActionById(actionId)
+        if !IsObject(action)
+            return "Action is not available from a registered package or saved macro."
         registrationShortcut := ResolveActionHotkeyRegistrationShortcut(action, shortcut)
+        hotIfCallback := action.HasOwnProp("HotIfCallback") ? action.HotIfCallback : ""
         hotIfWinTitle := IsObject(action) && action.HasOwnProp("HotIfWinTitle")
             ? Trim(action.HotIfWinTitle)
             : ""
         try {
-            if hotIfWinTitle != ""
+            if IsObject(hotIfCallback)
+                HotIf hotIfCallback
+            else if hotIfWinTitle != ""
                 HotIfWinActive hotIfWinTitle
             Hotkey registrationShortcut, callback, "On"
-            if hotIfWinTitle != ""
-                HotIfWinActive
+            if IsObject(hotIfCallback) || hotIfWinTitle != ""
+                HotIf
             this.registered[actionId] := {
                 shortcut: registrationShortcut,
                 callback: callback,
-                hotIfWinTitle: hotIfWinTitle
+                hotIfWinTitle: hotIfWinTitle,
+                hotIfCallback: hotIfCallback
             }
             this.logger.Info("Registered action hotkey. Action=" actionId " | Shortcut=" shortcut " | RegisteredShortcut=" registrationShortcut " | Scope=" hotIfWinTitle)
             return "Active"
         } catch as err {
-            if hotIfWinTitle != "" {
-                try HotIfWinActive
+            if IsObject(hotIfCallback) || hotIfWinTitle != "" {
+                try HotIf
                 catch {
                 }
             }
@@ -4314,13 +4275,14 @@ class ActionHotkeyManager {
     UnregisterHotkeys() {
         for _, entry in this.registered {
             try {
-                if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
+                if entry.HasOwnProp("hotIfCallback") && IsObject(entry.hotIfCallback)
+                    HotIf entry.hotIfCallback
+                else if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
                     HotIfWinActive entry.hotIfWinTitle
                 Hotkey entry.shortcut, entry.callback, "Off"
-                if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
-                    HotIfWinActive
+                HotIf
             } catch {
-                try HotIfWinActive
+                try HotIf
                 catch {
                 }
             }

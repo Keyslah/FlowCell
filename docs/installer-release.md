@@ -26,11 +26,15 @@ consistently instead of mixing redirected contents with empty directory shadows.
 Installed executable updates must use the payload embedded in the NSIS bundle:
 Tauri restores the loose release executable's bundle marker after packaging, so
 copying that loose executable into an installation loses installed-mode detection.
-Program ZIPs retain `Programs/<ActualFolder>/...` archive roots and must be
-extracted into that local root. Folder roles come from each program manifest.
+Program ZIPs retain `Programs/<ActualFolder>/...` archive roots. Add Program's
+**Import program ZIP** validates and stages one package into the resolved program
+root, then selects it for the existing registration plan. It does not execute the
+package. Existing files are never overwritten; directory-only placeholders are
+preserved. Manual extraction into that local root remains available for older
+releases. Folder roles come from each program manifest.
 Fresh launch creates only the empty `Programs/Windows` placeholder; without a
-manifest it is not a valid registered program. Extraction and Add Program remain
-separate. Neither upgrade nor normal uninstall removes this user data.
+manifest it is not a valid registered program. Import and registration remain
+separate steps in Add Program. Neither upgrade nor normal uninstall removes this user data.
 
 The Windows Startup panel uses the usual Button ownership, scripts and bindings.
 Setup creates its missing panel folder without replacing existing panels or their

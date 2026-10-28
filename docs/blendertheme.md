@@ -12,8 +12,11 @@ directly with its existing controls and layout. There is no separate Theme
 Button in Blender's toolset, Pop, or Fan. The program header contains only
 `Target`; there is no Theme name row or Buttons and arrangements view.
 Every registered program has the same Popped Button Colors controls. Programs
-without their own Theme page use the original card through the built-in Core
-host, with edits scoped to that program and no Blender installation required.
+without their own Theme page use program-neutral appearance assets through the
+built-in Core host, with edits scoped to that program and no Blender installation
+required. Core does not import the Blender package's page or manifest. Blender's
+complete Theme page, including its own Popped Button Colors card, stays in the
+Blender package and loads through the ordinary installed Theme contribution.
 
 Adding the Blender program installs its declared Theme contribution with an
 unplaced canonical owner. Existing installations retain that same owner and

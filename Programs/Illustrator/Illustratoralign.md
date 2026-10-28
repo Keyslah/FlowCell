@@ -6,6 +6,15 @@ This note describes FlowCell's Illustrator `Ill Align` toolset. The tool moves s
 
 Install the Illustrator payload, then assign `Illustrator > Actions > Set Anchor` any available shortcut in Binds. While Illustrator is foreground, select one or more Illustrator page items and use that shortcut to store the current selection as the anchor. Set Anchor uses a pass-through hotkey, so assigning an existing Illustrator key such as `V` does not suppress that key's native Illustrator command. Its foreground automation call completes the bounds capture before the hotkey action returns, preventing a later selection from replacing the intended anchor during a delayed process launch. The helper stores only the selection's current visible-bounds box and center point in `flowcellbackend/local/illustrator_anchor_bounds.json`.
 
+The Illustrator package owns this action through `bindActionsFile` and
+`HelperScripts/flowcell.bind-actions.ini`, which selects the existing
+`FlowCell_Illustrator_SetAnchorHotkey.jsx` helper. Core only loads and dispatches
+generic package declarations. The stable `illustrator_set_anchor` ID preserves
+existing saved shortcuts; no synthetic `V` is sent.
+When deploying this Core change, update the Illustrator package alongside it.
+An older package without this declaration cannot expose Set Anchor through the
+new generic loader; existing saved shortcut values remain intact.
+
 After the anchor is set, select the object or objects you want to move and press an align button. Anchor-based moves use the stored bounds and center as a fixed target and include every selected page item, including the object that originally captured the anchor. The `Art` button targets the active artboard directly.
 
 The X and Y rows each keep an independent `Origin` mode for Min and Max. With Origin released, Min and Max align matching visible edges; with Origin pressed, they align the selected artwork's center-point origin to the requested anchor edge. Clicking the already-selected Origin button releases it. Center always aligns centers and does not change Origin mode.

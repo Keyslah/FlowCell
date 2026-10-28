@@ -34,7 +34,10 @@
   "defaultPanels": [
     "Files"
   ],
-  "exePath": "C:\\Program Files\\WindowsApps\\Adobe.Fresco_5.7.0.1447_x64__pc75e8sa7ep4e\\Fresco.exe",
+  "executableDiscovery": {
+    "appPaths": ["Fresco.exe"],
+    "storePackages": [{"identity": "Adobe.Fresco", "executable": "Fresco.exe"}]
+  },
   "gitScriptsFolder": "Adobe Fresco Git Scripts",
   "label": "Fresco",
   "localScriptsFolder": "Adobe Fresco Local Scripts",

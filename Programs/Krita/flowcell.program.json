@@ -42,6 +42,10 @@
     "KritaStencilPreview"
   ],
   "exePath": "C:\\Program Files\\Krita (x64)\\bin\\krita.exe",
+  "executableDiscovery": {
+    "appPaths": ["krita.exe"],
+    "commonLocations": [{"root": "ProgramFiles", "path": "Krita (x64)/bin/krita.exe"}]
+  },
   "bindScopedNativeOwner": false,
   "shortcutProfileId": "",
   "gitScriptsFolder": "Krita Git Scripts",

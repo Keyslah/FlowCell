@@ -1827,6 +1827,7 @@ mod tests {
             panels: Vec::new(),
             process_names: vec!["blender".to_string()],
             exe_path: String::new(),
+            executable_discovery: Default::default(),
             bind_scoped_native_owner: false,
             shortcut_profile_id: "blender.windows".to_string(),
             git_scripts_folder: "Blender Git Scripts".to_string(),
@@ -1845,6 +1846,7 @@ mod tests {
             },
             addon_reload_notes: String::new(),
             theme_library: None,
+            bind_actions_file: None,
             app_restart_notes: String::new(),
         };
         let panel_record = root.join("cycle_versions_back.flowcell-panel-item.json");
@@ -1885,6 +1887,7 @@ mod tests {
             panels: Vec::new(),
             process_names: vec!["illustrator".to_string()],
             exe_path: String::new(),
+            executable_discovery: Default::default(),
             bind_scoped_native_owner: true,
             shortcut_profile_id: "adobe.illustrator.windows".to_string(),
             git_scripts_folder: "Illustrator Git Scripts".to_string(),
@@ -1903,6 +1906,7 @@ mod tests {
             },
             addon_reload_notes: String::new(),
             theme_library: None,
+            bind_actions_file: None,
             app_restart_notes: String::new(),
         };
 

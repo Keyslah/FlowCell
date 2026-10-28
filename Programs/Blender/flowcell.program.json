@@ -40,6 +40,13 @@
     "blender",
     "blender-launcher"
   ],
+  "executableDiscovery": {
+    "appPaths": ["blender.exe"],
+    "commonLocations": [
+      {"root": "ProgramFiles", "path": "Blender Foundation/Blender */blender.exe"},
+      {"root": "LocalAppData", "path": "Programs/Blender Foundation/Blender */blender.exe"}
+    ]
+  },
   "bindScopedNativeOwner": false,
   "shortcutProfileId": "blender.windows",
   "gitScriptsFolder": "Blender Git Scripts",

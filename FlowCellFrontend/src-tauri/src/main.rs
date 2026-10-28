@@ -14,6 +14,7 @@ use commands::filesystem::*;
 use commands::image_palette::*;
 use commands::layouts::*;
 use commands::macros::*;
+use commands::program_packages::*;
 use commands::programs::*;
 use commands::screen_color::*;
 use commands::theme_archive::*;
@@ -207,9 +208,12 @@ fn main() {
             list_panel_folders,
             list_available_program_packages,
             preflight_add_program_plan,
+            import_program_package,
             apply_add_program_plan,
             prepare_add_program_canonical_commit,
             finalize_add_program_plan,
+            list_program_setup_statuses,
+            recheck_program_setup,
             rollback_add_program_plan,
             preflight_add_panel_plan,
             apply_add_panel_plan,
@@ -231,6 +235,7 @@ fn main() {
             load_binds_workspace,
             save_bind_shortcut,
             save_core_action_shortcut,
+            save_program_action_shortcut,
             get_cursor_position,
             is_space_key_down,
             is_primary_mouse_button_down,

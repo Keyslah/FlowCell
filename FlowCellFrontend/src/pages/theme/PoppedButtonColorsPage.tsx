@@ -3,10 +3,10 @@ import type { JsonObject, JsonValue } from "../../button/types";
 import { BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION } from "../../lib/windowContext";
 import InstalledPageWindowPage, { type InstalledPageDescriptor, type InstalledPageThemeBridge } from "../installed-page/InstalledPageWindowPage";
 import { runInstalledPageCoreAction, type InstalledPageCoreActionPlan, type InstalledPageCoreIdentity } from "../installed-page/installedPageCoreBroker";
-import pageScript from "../../../../Programs/Blender/Blender Git Scripts/Toolsets/theme/page/page.js?raw";
-import pageStyle from "../../../../Programs/Blender/Blender Git Scripts/Toolsets/theme/page/page.css?raw";
-import pageHtml from "../../../../Programs/Blender/Blender Git Scripts/Toolsets/theme/page/index.html?raw";
-import pageManifest from "../../../../Programs/Blender/Blender Git Scripts/Toolsets/theme/flowcell.script.json";
+import pageScript from "./poppedButtonColors/page.js?raw";
+import pageStyle from "./poppedButtonColors/page.css?raw";
+import pageHtml from "./poppedButtonColors/index.html?raw";
+import pageConfig from "./poppedButtonColors/page.config.json";
 
 export interface PoppedButtonColorsController {
   preservePoppedAppearance(): Promise<boolean>;
@@ -48,13 +48,6 @@ export function poppedButtonCorePlan(actionId: string, payload: unknown): Instal
   throw new Error(`The common Popped Button Colors page does not allow '${actionId}'.`);
 }
 
-function programCopy(value: unknown, programName: string): unknown {
-  if (typeof value === "string") return value.replaceAll("Blender", programName);
-  if (Array.isArray(value)) return value.map((item) => programCopy(item, programName));
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, programCopy(item, programName)]));
-  return value;
-}
-
 export default function PoppedButtonColorsPage({ programName, active = true, onReady }: {
   programName: string;
   active?: boolean;
@@ -66,10 +59,8 @@ export default function PoppedButtonColorsPage({ programName, active = true, onR
   const context = useMemo(() => ({ ...identity, kind: "installed-page" as const,
     schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION, alwaysOnTop: false }), [identity]);
   const builtinPage = useMemo(() => {
-    const config = structuredClone(pageManifest.page.config) as unknown as Record<string, unknown>;
-    config.buttonsOnly = true;
-    for (const key of ["copy", "actionLabels", "actionTooltips", "buttonTheme"]) config[key] = programCopy(config[key], programName);
-    config.copy = { ...config.copy as object, loading: "Loading Popped Button Colors…", ready: `${programName} Popped Button Colors are ready.` };
+    const config = structuredClone(pageConfig);
+    config.copy.ready = `${programName} Popped Button Colors are ready.`;
     const descriptor: InstalledPageDescriptor = {
       ...identity, programId: "", sourceRecordId: "", installedOwnerRoot: "",
       label: "Popped Button Colors", tooltip: "Edit this program's popped Button appearance.",

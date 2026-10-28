@@ -1904,19 +1904,88 @@ pub(crate) fn restart_flowcell_headless_backend() -> Result<(), String> {
     run_flowcell_backend_helper(true)
 }
 
+const PROGRAM_SETUP_OUTPUT_PREFIX: &str = "FLOWCELL_PROGRAM_SETUP_RESULT=";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BlenderSetupOutput {
+    status: ProgramSetupState,
+    message: String,
+    restart_notes: String,
+}
+
+fn parse_blender_setup_output(program_name: &str, stdout: &str) -> Result<ProgramSetupResult, String> {
+    if let Some(json) = stdout.lines().rev().find_map(|line| line.trim().strip_prefix(PROGRAM_SETUP_OUTPUT_PREFIX)) {
+        let output: BlenderSetupOutput = serde_json::from_str(json)
+            .map_err(|error| format!("Blender setup returned an invalid result: {error}"))?;
+        if output.message.trim().is_empty() {
+            return Err("Blender setup returned an empty result message.".to_string());
+        }
+        return Ok(ProgramSetupResult {
+            program_name: program_name.to_string(),
+            status: output.status,
+            message: output.message,
+            restart_notes: output.restart_notes,
+        });
+    }
+    // Older independently downloaded Blender packages reported only text.
+    // Preserve their known incomplete result instead of treating exit 0 as ready.
+    if stdout.contains("no Blender settings folder exists yet")
+        || stdout.contains("no Blender settings version folder could be determined")
+    {
+        return Ok(ProgramSetupResult {
+            program_name: program_name.to_string(),
+            status: ProgramSetupState::NeedsHostInitialization,
+            message: "Blender was added, but its settings folder is not initialized. Open the selected Blender version once, close it, then choose Recheck setup in FlowCell.".to_string(),
+            restart_notes: String::new(),
+        });
+    }
+    if stdout.contains("FlowCell Blender add-on files installed/repaired.") {
+        return Ok(ProgramSetupResult {
+            program_name: program_name.to_string(),
+            status: ProgramSetupState::Ready,
+            message: stdout.trim().to_string(),
+            restart_notes: "Restart Blender once to load the installed FlowCell add-on. Setup has not verified a live Blender connection.".to_string(),
+        });
+    }
+    Err("Blender setup did not report whether its add-on was installed. Repair the Blender Program package, then choose Recheck setup.".to_string())
+}
+
 pub(crate) fn bootstrap_blender_program(
     program_name: &str,
     exe_path: Option<&str>,
-) -> Result<String, String> {
+) -> Result<ProgramSetupResult, String> {
+    run_blender_program_setup(program_name, exe_path, false)
+}
+
+pub(crate) fn check_blender_program_setup(
+    program_name: &str,
+    exe_path: Option<&str>,
+) -> Result<ProgramSetupResult, String> {
+    run_blender_program_setup(program_name, exe_path, true)
+}
+
+fn run_blender_program_setup(
+    program_name: &str,
+    exe_path: Option<&str>,
+    check_only: bool,
+) -> Result<ProgramSetupResult, String> {
     let blender_program_directory = resolve_program_directory("Blender")?;
     let installer_path = blender_program_directory
         .join("SupportScripts")
         .join("Install-FlowCellBlenderAddon.ps1");
     if !installer_path.is_file() {
-        return Ok(format!(
-            "{} was added, but the Blender payload installer is missing. Extract FlowCell-Blender.zip into the FlowCell Core root, then add Blender again.",
+        return Err(format!(
+            "{} setup cannot continue because the Blender payload installer is missing. Repair the Blender Program package.",
             program_name
         ));
+    }
+    if check_only {
+        let source = fs::read_to_string(&installer_path)
+            .map_err(|error| format!("Failed to inspect Blender setup support: {error}"))?;
+        if !source.contains("[switch]$CheckOnly") {
+            return Err("This Blender Program package does not support a read-only setup check. Update the Blender package before adding its Buttons, or choose Register program only.".to_string());
+        }
     }
 
     let mut command = Command::new(resolve_powershell_path());
@@ -1926,10 +1995,12 @@ pub(crate) fn bootstrap_blender_program(
         .arg("-ExecutionPolicy")
         .arg("Bypass")
         .arg("-File")
-        .arg(&installer_path);
+        .arg(&installer_path)
+        .env("FLOWCELL_LOCAL_ROOT", resolve_flowcell_local_root()?);
     if let Some(exe_path) = exe_path.map(str::trim).filter(|value| !value.is_empty()) {
         command.arg("-BlenderExePath").arg(exe_path);
     }
+    if check_only { command.arg("-CheckOnly"); }
 
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
@@ -1942,18 +2013,11 @@ pub(crate) fn bootstrap_blender_program(
     })?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let message = if !stdout.is_empty() { stdout } else { stderr };
-
     if output.status.success() {
-        if message.is_empty() {
-            Ok(
-                "Blender bridge installed. Restart Blender once after adding Blender in FlowCell."
-                    .to_string(),
-            )
-        } else {
-            Ok(message)
-        }
-    } else if message.is_empty() {
+        return parse_blender_setup_output(program_name, &stdout);
+    }
+    let message = if !stdout.is_empty() { stdout } else { stderr };
+    if message.is_empty() {
         Err(format!(
             "Blender bridge installation failed with exit code {:?}.",
             output.status.code()
@@ -2411,12 +2475,42 @@ mod tests {
         fusion_addin_root_candidates, fusion_bridge_response_matches_request,
         read_fusion_bridge_runtime_process_ids, resolve_macro_recorder_script_path,
         wait_for_blender_bridge_response, wait_for_fusion_bridge_response, windows_child_process_path,
-        flowcell_backend_helper_arguments, autohotkey_arguments_hex,
+        flowcell_backend_helper_arguments, autohotkey_arguments_hex, parse_blender_setup_output,
     };
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn blender_setup_preserves_pending_and_restart_results() {
+        let pending = parse_blender_setup_output("Blender", concat!(
+            "Human-readable setup output\n",
+            "FLOWCELL_PROGRAM_SETUP_RESULT={\"status\":\"needsHostInitialization\",\"message\":\"Open Blender once, then recheck.\",\"restartNotes\":\"\"}\n"
+        )).expect("pending is a successful setup result");
+        assert_eq!(pending.status, crate::ProgramSetupState::NeedsHostInitialization);
+        assert_eq!(pending.program_name, "Blender");
+        let ready = parse_blender_setup_output("Blender", "FLOWCELL_PROGRAM_SETUP_RESULT={\"status\":\"ready\",\"message\":\"Files installed.\",\"restartNotes\":\"Restart Blender once.\"}")
+            .expect("ready setup");
+        assert_eq!(ready.status, crate::ProgramSetupState::Ready);
+        assert_eq!(ready.restart_notes, "Restart Blender once.");
+    }
+
+    #[test]
+    fn blender_setup_does_not_turn_unknown_success_or_legacy_warning_into_ready() {
+        for message in [
+            "Blender was added, but no Blender settings folder exists yet.",
+            "Blender was added, but no Blender settings version folder could be determined.",
+        ] {
+            assert_eq!(parse_blender_setup_output("Blender", message).unwrap().status,
+                crate::ProgramSetupState::NeedsHostInitialization);
+        }
+        assert_eq!(parse_blender_setup_output("Blender", "FlowCell Blender add-on files installed/repaired.").unwrap().status,
+            crate::ProgramSetupState::Ready);
+        assert!(parse_blender_setup_output("Blender", "").is_err());
+        assert!(parse_blender_setup_output("Blender", "Something completed.").is_err());
+        assert!(parse_blender_setup_output("Blender", "FLOWCELL_PROGRAM_SETUP_RESULT={\"status\":\"maybe\"}").is_err());
+    }
 
     fn temporary_fusion_bridge_root(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

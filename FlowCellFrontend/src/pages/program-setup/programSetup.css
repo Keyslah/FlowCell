@@ -66,6 +66,18 @@
   gap: 20px;
 }
 
+.program-setup__import {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.program-setup__import p {
+  margin: 4px 0 0;
+}
+
 .program-setup__header h1,
 .program-setup__card h2 {
   margin: 0;

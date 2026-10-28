@@ -125,6 +125,17 @@ function Assert-ProgramManifestReferencesTracked(
   [string[]]$TrackedFiles
 ) {
   $supportScriptsFolder = Convert-ToSafeRelativeFolder ([string]$Manifest.supportScriptsFolder) 'supportScriptsFolder' $ProgramDirectory.Name
+  if ($Manifest.PSObject.Properties['bindActionsFile'] -and $null -ne $Manifest.bindActionsFile) {
+    $actionsPath = Assert-TrackedProgramReference $ProgramDirectory $TrackedFiles ([string]$Manifest.bindActionsFile) 'bindActionsFile' -RequireFile
+    if ((Get-Item -LiteralPath $actionsPath).Length -gt 65536) {
+      Stop-Package "Program '$($ProgramDirectory.Name)' bindActionsFile exceeds 65536 bytes."
+    }
+    foreach ($line in Get-Content -LiteralPath $actionsPath) {
+      if ($line -match '^\s*Source\s*=\s*(.*)$') {
+        [void](Assert-TrackedProgramReference $ProgramDirectory $TrackedFiles $Matches[1].Trim() 'bind action Source' -RequireFile)
+      }
+    }
+  }
   if ($Manifest.PSObject.Properties['runner'] -and $null -ne $Manifest.runner) {
     foreach ($runnerField in @('installScript', 'deleteScript')) {
       if (-not $Manifest.runner.PSObject.Properties[$runnerField]) {

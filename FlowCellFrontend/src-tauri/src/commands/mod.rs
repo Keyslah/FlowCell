@@ -5,6 +5,8 @@ pub(crate) mod filesystem;
 pub(crate) mod image_palette;
 pub(crate) mod layouts;
 pub(crate) mod macros;
+pub(crate) mod program_executables;
+pub(crate) mod program_packages;
 pub(crate) mod program_rename;
 pub(crate) mod programs;
 pub(crate) mod screen_color;

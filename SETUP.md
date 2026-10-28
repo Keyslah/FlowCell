@@ -19,14 +19,23 @@ Do not use GitHub's automatic `Source code (zip)` download as the app download. 
 3. Launch **FlowCell** from the Start Menu.
 4. Download the desired `FlowCell-<Program>.zip` packages. This release includes
    Blender, Fresco, Fusion 360, Illustrator, Krita and Windows.
-5. Paste `%APPDATA%\FlowCell\local` into Explorer's address bar. Extract each
-   program ZIP **into this folder**, merging its `Programs` folder. The result is
-   `%APPDATA%\FlowCell\local\Programs\Blender\flowcell.program.json`, for example.
-   Do not extract into another `Programs` folder or into the application folder.
-6. Use the existing **Add Program → Managed package** workflow to register and
-   configure the package and its host executable. Choose Register program only,
-   Add everything, or Custom as appropriate.
+5. Open **Add Program → Import program ZIP** and select the downloaded ZIP.
+   FlowCell validates it and places the package in its active program data folder.
+   Existing packages are not overwritten; importing a ZIP does not run its scripts.
+6. Choose the detected host application, or use **Find installed** / **Browse**.
+   When multiple installations are found, choose the one you want to use. Continue
+   through **Managed package** with Register program only, Add everything, or Custom.
 7. Use the program normally, following the package's host restart/reload notes.
+
+If Blender has not created its settings profile yet, setup remains visibly
+incomplete. Open Blender once, close it, then choose **Recheck setup**. The pending
+setup also appears when you reopen Add Program. FlowCell does not launch Blender
+for this check. Restart Blender after the bridge has been installed.
+
+Older releases without Import program ZIP require manual extraction into
+`%APPDATA%\FlowCell\local`, preserving the archive's `Programs/<Program>` folder,
+followed by Add Program. Do not extract into another `Programs` folder or into
+the application folder.
 
 Setup includes the backend and AutoHotkey runtime. Normal app/updater use needs
 no Node, npm, Rust, Cargo, Git, GitHub CLI, separate AutoHotkey, or GitHub login.

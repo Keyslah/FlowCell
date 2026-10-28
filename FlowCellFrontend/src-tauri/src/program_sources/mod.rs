@@ -1,3 +1,4 @@
+pub(crate) mod bind_actions;
 pub(crate) mod delete;
 pub(crate) mod execute;
 pub(crate) mod install;

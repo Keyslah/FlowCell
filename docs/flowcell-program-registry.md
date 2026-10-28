@@ -7,8 +7,12 @@ Button contributions; they are not compiled into FlowCell Core.
 
 ## Registration Flow
 
-1. Extracting a program payload creates an available package under `Programs/`;
-   it does not register runtime behavior.
+1. `Add Program` offers `Import program ZIP` even with no available packages.
+   It validates the archive and its complete program/source manifests in staging,
+   then creates an available package under `Programs/`; it does not register
+   runtime behavior or execute its contents. Existing files block replacement.
+   Empty directory-only placeholders retain their folder structure. Manual
+   extraction remains supported.
 2. `Add Program` always offers `Any program`, which accepts an editable Program
    name and an exact host EXE. One `Add program` action silently preflights the
    path and applies a minimal registration-only package with no Panels or bundled
@@ -44,6 +48,24 @@ Button contributions; they are not compiled into FlowCell Core.
    missing contribution startup repairs. Version changes update an existing
    exact managed owner through the normal source transaction.
 8. The frontend lists registered programs whose package folders still exist.
+
+Host discovery reads each package's optional `executableDiscovery` hints alongside
+the existing explicit-path, PATH, and running-process fallbacks. It does not launch
+applications. A valid explicit path wins; otherwise a single match is suggested
+and multiple matches require selection. Browse remains available. Discovery visits
+only declared directory levels, with at most 16 hints, 6 path segments, 2 single-level
+wildcards, 512 directory entries per location, and 64 returned candidates. Store
+lookup has a 5-second timeout; unavailable sources leave the remaining choices usable.
+
+Blender setup returns `ready` or `needsHostInitialization` with its instructions.
+Register-only may finish with a pending host profile; Add Program shows the pending
+result on later opens and provides Recheck setup. Plans containing Blender Buttons
+first check the selected profile without mutation, then deploy the base bridge
+before installing selected sources. Older packages without the read-only check
+must be updated for that path; register-only still understands their known status
+messages. Successful deployment requires restarting Blender and does not prove a
+live host connection. Setup status is stored under the local root's
+`program-setup-status` folder.
 
 Registered-package preflight requires the declared Git Scripts and support
 directories to exist and every nonempty runner install or delete script to
@@ -151,6 +173,8 @@ release-only requirement does not affect Any program. See
 | `bindScopedNativeOwner` | Whether program-owned Pop/Fan windows may bind to the foreground host HWND. |
 | `shortcutProfileId` | Optional registered shortcut-profile identity; core does not infer it from the program label. |
 | `exePath` | Optional configured executable path. |
+| `executableDiscovery` | Optional package-owned detection hints: `appPaths` lists Windows App Paths EXE names; `storePackages` lists exact `identity` and relative `executable`; `commonLocations` lists `root` (`ProgramFiles`, `ProgramFilesX86`, or `LocalAppData`) and relative `path`. No host is launched. |
+| `bindActionsFile` | Optional package-relative INI for bind-only direct-host actions. The package declares each stable action ID, label, panel, source, pass-through policy, expected return value, and result messages. Core validates and dispatches these declarations; it does not contain the product action. |
 | `gitScriptsFolder` | Required relative catalog folder. |
 | `panelsFolder` | Required relative active-record root. |
 | `localScriptsFolder` | Required relative owned-install root. |
@@ -165,6 +189,18 @@ release-only requirement does not affect Any program. See
 
 All four folder fields must be non-empty relative paths with no parent traversal.
 They are resolved under the containing program folder.
+
+### Bind-only Actions
+
+Bind-only declarations use `[Meta]` with `SchemaVersion=1`, followed by
+`[Action_<stable-id>]` sections containing `Label`, `Panel`, `Source`,
+`PassThrough` (`0` or `1`), `SuccessReturnValue`, `SuccessNote`, and `FailureNote`.
+Declared sources stay inside the same program package and require a direct script
+runner. Only registered programs contribute actions. Existing `[ActionHotkeys]`
+keys remain stable; pass-through affects the actual registered hotkey without
+changing its saved or displayed shortcut. Package release validation requires the
+declaration and every source to be tracked, so they cannot silently disappear
+from a download.
 
 ### Managed Setup Inventory
 

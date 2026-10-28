@@ -141,6 +141,7 @@ export interface AvailableProgramPackage {
   programName: string;
   programType: string;
   suggestedExecutable: string;
+  executableCandidates: Array<{ path: string; source: string }>;
   panels: ProgramSetupPanel[];
   sources: ProgramSetupSource[];
   supportContent: string[];
@@ -153,6 +154,13 @@ export interface AvailableProgramPackage {
 export interface AvailableProgramPackagesResponse {
   packages: AvailableProgramPackage[];
   rejectedPackages: Array<{ folderName: string; error: string }>;
+}
+
+export interface ProgramSetupResult {
+  programName: string;
+  status: "ready" | "needsHostInitialization";
+  message: string;
+  restartNotes: string;
 }
 
 export interface AddProgramPlanRequest {
@@ -265,6 +273,19 @@ export async function listAvailableProgramPackages(): Promise<AvailableProgramPa
   );
 }
 
+export async function importProgramPackage(zipPath: string): Promise<{ programName: string; packagePath: string; cleanupWarning?: string }> {
+  return invokeProgramRailCommand("import_program_package", { zipPath });
+}
+
+export async function listProgramSetupStatuses(): Promise<ProgramSetupResult[]> {
+  if (!isTauriWindowHost()) return [];
+  return invokeProgramRailCommand("list_program_setup_statuses");
+}
+
+export async function recheckProgramSetup(programName: string): Promise<ProgramSetupResult> {
+  return invokeProgramRailCommand("recheck_program_setup", { programName });
+}
+
 export async function preflightAddProgramPlan(
   request: AddProgramPlanRequest
 ): Promise<AddProgramPreflight> {
@@ -287,8 +308,8 @@ export async function prepareAddProgramCanonicalCommit(
   });
 }
 
-export async function finalizeAddProgramPlan(transactionToken: string): Promise<void> {
-  await invokeProgramRailCommand<void>("finalize_add_program_plan", { transactionToken });
+export async function finalizeAddProgramPlan(transactionToken: string): Promise<ProgramSetupResult> {
+  return invokeProgramRailCommand<ProgramSetupResult>("finalize_add_program_plan", { transactionToken });
 }
 
 export async function rollbackAddProgramPlan(

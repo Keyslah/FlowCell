@@ -30,18 +30,21 @@ export async function saveBindShortcut(args: {
   });
 }
 
-export async function saveCoreActionShortcut(args: {
+export async function saveProgramActionShortcut(args: {
   actionId: string;
   shortcut: string;
 }): Promise<{
   message: string;
   bindings: FlowCellBindingsState;
 }> {
-  return invoke("save_core_action_shortcut", {
+  return invoke("save_program_action_shortcut", {
     request: {
       actionId: args.actionId,
       shortcut: args.shortcut
     }
   });
 }
+
+// Compatibility for consumers using the former generic action command name.
+export const saveCoreActionShortcut = saveProgramActionShortcut;
 

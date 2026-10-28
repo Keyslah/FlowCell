@@ -3,6 +3,7 @@
   "programId": "illustrator",
   "label": "Illustrator",
   "programType": "direct-script",
+  "bindActionsFile": "HelperScripts/flowcell.bind-actions.ini",
   "defaultPanels": [
     "Layers",
     "Layers Builder",
@@ -40,6 +41,10 @@
   "processNames": [
     "illustrator"
   ],
+  "executableDiscovery": {
+    "appPaths": ["Illustrator.exe"],
+    "commonLocations": [{"root": "ProgramFiles", "path": "Adobe/Adobe Illustrator */Support Files/Contents/Windows/Illustrator.exe"}]
+  },
   "bindScopedNativeOwner": true,
   "shortcutProfileId": "adobe.illustrator.windows",
   "gitScriptsFolder": "Illustrator Git Scripts",

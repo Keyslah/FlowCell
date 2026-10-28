@@ -22,6 +22,7 @@ pub(crate) struct AvailableProgramPackage {
     pub(crate) program_name: String,
     pub(crate) program_type: String,
     pub(crate) suggested_executable: String,
+    pub(crate) executable_candidates: Vec<super::program_executables::ProgramExecutableCandidate>,
     pub(crate) panels: Vec<ProgramSetupPanel>,
     pub(crate) sources: Vec<ProgramSetupSource>,
     pub(crate) support_content: Vec<String>,
@@ -1913,33 +1914,6 @@ pub(crate) fn list_program_folders() -> Result<Vec<String>, String> {
     ))
 }
 
-fn suggested_program_executable(manifest: &program_sources::manifest::ProgramManifest) -> String {
-    let declared = manifest.exe_path.trim().trim_matches('"');
-    if !declared.is_empty() {
-        let declared_path = PathBuf::from(declared);
-        if declared_path.is_file() {
-            return declared_path.to_string_lossy().to_string();
-        }
-        let output = Command::new("where.exe").arg(declared).output();
-        if let Some(resolved) = output
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| {
-                String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .map(str::trim)
-                    .find(|line| !line.is_empty() && Path::new(line).is_file())
-                    .map(str::to_string)
-            })
-        {
-            return resolved;
-        }
-    }
-
-    crate::commands::windows::find_running_process_executable(&manifest.process_names)
-        .unwrap_or_default()
-}
-
 fn inventory_panels(
     manifest: &program_sources::manifest::ProgramManifest,
 ) -> Vec<ProgramSetupPanel> {
@@ -2117,11 +2091,13 @@ fn validate_available_program_package_at(
     if !manifest.app_restart_notes.trim().is_empty() {
         install_effects.push(manifest.app_restart_notes.clone());
     }
+    let executables = super::program_executables::discover_program_executables(manifest);
     Ok(AvailableProgramPackage {
         program_id: manifest.program_id.clone(),
         program_name: manifest.label.clone(),
         program_type: manifest.program_type.clone(),
-        suggested_executable: suggested_program_executable(&manifest),
+        suggested_executable: executables.suggested,
+        executable_candidates: executables.candidates,
         panels: inventory_panels(&manifest),
         sources,
         support_content,
@@ -2293,6 +2269,13 @@ fn preflight_add_program_plan_inner(
                 })
         })
         .collect::<Vec<_>>();
+    if !selected_sources.is_empty() {
+        let manifest = program_sources::manifest::load_program_manifest(&package.program_name)?;
+        if manifest.runner.kind == "blender-bridge" {
+            let setup = check_blender_program_setup(&package.program_name, executable.to_str())?;
+            require_initialized_setup_for_sources(&setup)?;
+        }
+    }
     let mut install_effects = package.install_effects.clone();
     for source in &selected_sources {
         install_effects.extend(source.install_effects.clone());
@@ -3077,10 +3060,291 @@ fn verify_add_program_native_state(
     Ok(())
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ProgramSetupState {
+    Ready,
+    NeedsHostInitialization,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ProgramSetupResult {
+    pub(crate) program_name: String,
+    pub(crate) status: ProgramSetupState,
+    pub(crate) message: String,
+    pub(crate) restart_notes: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProgramSetupCommitReceipt {
+    transaction_token: String,
+    executable_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SavedProgramSetupStatus {
+    result: ProgramSetupResult,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    committed_transaction: Option<ProgramSetupCommitReceipt>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ProgramSetupStatusFile {
+    Saved(SavedProgramSetupStatus),
+    Legacy(ProgramSetupResult),
+}
+
+fn require_initialized_setup_for_sources(result: &ProgramSetupResult) -> Result<(), String> {
+    if result.status == ProgramSetupState::NeedsHostInitialization {
+        return Err("Blender's selected version must be initialized before its Buttons can be installed. Open that Blender version once, close it, then retry this plan. You can instead choose Register program only now, then use Recheck setup after initializing Blender.".to_string());
+    }
+    Ok(())
+}
+
+fn program_setup_status_root() -> Result<PathBuf, String> {
+    Ok(crate::resolve_flowcell_local_root()?.join("program-setup-status"))
+}
+
+fn program_setup_status_path(root: &Path, program_name: &str) -> Result<PathBuf, String> {
+    let name = validate_folder_name(program_name, "Program")?.to_ascii_lowercase();
+    let key = name.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    Ok(root.join(format!("{key}.json")))
+}
+
+fn save_program_setup_result_at(root: &Path, result: &ProgramSetupResult) -> Result<(), String> {
+    save_program_setup_status_at(root, result, None)
+}
+
+fn save_program_setup_status_at(
+    root: &Path,
+    result: &ProgramSetupResult,
+    committed_transaction: Option<ProgramSetupCommitReceipt>,
+) -> Result<(), String> {
+    let path = program_setup_status_path(root, &result.program_name)?;
+    if let Some(existing) = root.ancestors().find(|path| path.exists()) {
+        program_sources::installed_page::reject_selected_source_reparse_point(existing)?;
+    }
+    if path.exists() { program_sources::installed_page::reject_package_source_reparse_point(&path)?; }
+    let bytes = serde_json::to_vec_pretty(&SavedProgramSetupStatus { result: result.clone(), committed_transaction })
+        .map_err(|error| format!("Failed to serialize Program setup status: {error}"))?;
+    if bytes.len() > 65_536 { return Err("Program setup status exceeds 65536 bytes.".to_string()); }
+    program_sources::transaction::write_json_file(
+        &path, &bytes, program_sources::transaction::AtomicWriteMode::Replace,
+    )
+}
+
+fn program_setup_statuses_in(root: &Path, bindings: &IniDocument) -> Result<Vec<SavedProgramSetupStatus>, String> {
+    if !root.is_dir() { return Ok(Vec::new()); }
+    program_sources::installed_page::reject_selected_source_reparse_point(root)?;
+    let mut results = Vec::new();
+    for entry in fs::read_dir(root).map_err(|error| format!("Failed to read Program setup statuses: {error}"))? {
+        let path = entry.map_err(|error| format!("Failed to read Program setup status entry: {error}"))?.path();
+        if !path.is_file() || path.extension().and_then(|extension| extension.to_str()) != Some("json") { continue; }
+        program_sources::installed_page::reject_package_source_reparse_point(&path)?;
+        if fs::metadata(&path).map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?.len() > 65_536 {
+            return Err(format!("Program setup status exceeds 65536 bytes at {}.", path.display()));
+        }
+        let file: ProgramSetupStatusFile = serde_json::from_slice(&fs::read(&path)
+            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?)
+            .map_err(|error| format!("Invalid Program setup status at {}: {error}", path.display()))?;
+        let saved = match file {
+            ProgramSetupStatusFile::Saved(saved) => saved,
+            ProgramSetupStatusFile::Legacy(result) => SavedProgramSetupStatus { result, committed_transaction: None },
+        };
+        if program_setup_status_path(root, &saved.result.program_name)? != path {
+            return Err(format!("Program setup status identity does not match {}.", path.display()));
+        }
+        if find_registered_program(bindings, &saved.result.program_name).is_some() { results.push(saved); }
+    }
+    results.sort_by(|left, right| left.result.program_name.to_ascii_lowercase().cmp(&right.result.program_name.to_ascii_lowercase()));
+    Ok(results)
+}
+
+fn program_setup_results_in(root: &Path, bindings: &IniDocument) -> Result<Vec<ProgramSetupResult>, String> {
+    Ok(program_setup_statuses_in(root, bindings)?.into_iter().map(|saved| saved.result).collect())
+}
+
+fn committed_program_setup_matches(
+    statuses_root: &Path,
+    bindings: &IniDocument,
+    transaction_token: &str,
+) -> Result<bool, String> {
+    let token = validate_folder_name(transaction_token, "Add Program transaction token")?;
+    if !token.starts_with("add-program-") { return Ok(false); }
+    for saved in program_setup_statuses_in(statuses_root, bindings)? {
+        let Some(receipt) = saved.committed_transaction else { continue; };
+        if receipt.transaction_token != token { continue; }
+        let Ok((_, executable)) = registered_program_setup_executable(bindings, &saved.result.program_name) else {
+            return Ok(false);
+        };
+        return Ok(executable == receipt.executable_path);
+    }
+    Ok(false)
+}
+
+fn completed_add_program_without_journal(
+    transactions_root: &Path,
+    statuses_root: &Path,
+    bindings: &IniDocument,
+    transaction_token: &str,
+) -> Result<bool, String> {
+    let token = validate_folder_name(transaction_token, "Add Program transaction token")?;
+    if !token.starts_with("add-program-") || transactions_root.join(&token).exists() { return Ok(false); }
+    committed_program_setup_matches(statuses_root, bindings, &token)
+}
+
+#[tauri::command]
+pub(crate) fn list_program_setup_statuses() -> Result<Vec<ProgramSetupResult>, String> {
+    let _guard = super::bindings::bindings_state_guard()?;
+    let (_, bindings, _) = read_bindings_file_state()?;
+    program_setup_results_in(&program_setup_status_root()?, &bindings)
+}
+
+fn registered_program_setup_executable(bindings: &IniDocument, program_name: &str) -> Result<(String, String), String> {
+    let program = find_registered_program(bindings, program_name)
+        .ok_or_else(|| format!("Program '{program_name}' is not registered. Add it before checking setup."))?;
+    let executable = bindings.get(&format!("ProgramTab_{}", program.id))
+        .and_then(|section| section.get("ExePath"))
+        .map(|value| value.trim().trim_matches('"'))
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("Program '{}' has no configured executable.", program.label))?;
+    if !Path::new(executable).is_file() {
+        return Err(format!("The configured executable for '{}' does not exist at {executable}.", program.label));
+    }
+    Ok((program.label, executable.to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn recheck_program_setup(program_name: String) -> Result<ProgramSetupResult, String> {
+    let lock = ADD_PROGRAM_TRANSACTION_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock.lock().map_err(|_| "Add Program transaction lock was poisoned.".to_string())?;
+    let (name, executable) = {
+        let _bindings_guard = super::bindings::bindings_state_guard()?;
+        let (_, bindings, _) = read_bindings_file_state()?;
+        registered_program_setup_executable(&bindings, &program_name)?
+    };
+    let manifest = program_sources::manifest::load_program_manifest(&name)?;
+    if manifest.runner.kind != "blender-bridge" {
+        return Err(format!("Program '{name}' has no supported setup recheck."));
+    }
+    let result = bootstrap_blender_program(&name, Some(&executable))?;
+    let _bindings_guard = super::bindings::bindings_state_guard()?;
+    let (_, bindings, _) = read_bindings_file_state()?;
+    if registered_program_setup_executable(&bindings, &name)? != (name, executable) {
+        return Err("Program registration changed while setup was checked. Check setup again.".to_string());
+    }
+    save_program_setup_result_at(&program_setup_status_root()?, &result)?;
+    Ok(result)
+}
+
+#[cfg(test)]
+mod program_setup_status_tests {
+    use super::*;
+
+    #[test]
+    fn program_setup_missing_journal_recovers_only_matching_commit_and_current_executable() {
+        let root = std::env::temp_dir().join(next_setup_transaction_token("flowcell-setup-receipt-test"));
+        fs::create_dir_all(&root).unwrap();
+        let executable = root.join("blender.exe");
+        let other_executable = root.join("other.exe");
+        fs::write(&executable, []).unwrap();
+        fs::write(&other_executable, []).unwrap();
+        let bindings = parse_ini_document(&format!("[ProgramTab_1]\nLabel=Blender\nExePath={}\n", executable.display()));
+        let statuses = root.join("statuses");
+        let transactions = root.join("transactions");
+        let token = "add-program-committed-123";
+        let result = ProgramSetupResult {
+            program_name: "Blender".to_string(), status: ProgramSetupState::NeedsHostInitialization,
+            message: "Initialize Blender.".to_string(), restart_notes: String::new(),
+        };
+        save_program_setup_status_at(&statuses, &result, Some(ProgramSetupCommitReceipt {
+            transaction_token: token.to_string(), executable_path: executable.to_string_lossy().to_string(),
+        })).unwrap();
+        assert!(completed_add_program_without_journal(&transactions, &statuses, &bindings, token).unwrap());
+        assert!(!completed_add_program_without_journal(&transactions, &statuses, &bindings, "add-program-other-456").unwrap());
+        assert!(!completed_add_program_without_journal(&transactions, &statuses, &IniDocument::new(), token).unwrap());
+        let changed = parse_ini_document(&format!("[ProgramTab_1]\nLabel=Blender\nExePath={}\n", other_executable.display()));
+        assert!(!completed_add_program_without_journal(&transactions, &statuses, &changed, token).unwrap());
+        fs::create_dir_all(transactions.join(token)).unwrap();
+        assert!(!completed_add_program_without_journal(&transactions, &statuses, &bindings, token).unwrap());
+        fs::remove_dir_all(&transactions).unwrap();
+        fs::remove_file(&executable).unwrap();
+        assert!(!completed_add_program_without_journal(&transactions, &statuses, &bindings, token).unwrap());
+        fs::remove_dir_all(root).expect("remove task-created test directory");
+    }
+
+    #[test]
+    fn program_setup_legacy_status_and_recheck_cannot_prove_a_committed_transaction() {
+        let root = std::env::temp_dir().join(next_setup_transaction_token("flowcell-setup-legacy-receipt-test"));
+        fs::create_dir_all(&root).unwrap();
+        let executable = root.join("blender.exe");
+        fs::write(&executable, []).unwrap();
+        let bindings = parse_ini_document(&format!("[ProgramTab_1]\nLabel=Blender\nExePath={}\n", executable.display()));
+        let result = ProgramSetupResult {
+            program_name: "Blender".to_string(), status: ProgramSetupState::Ready,
+            message: "Installed.".to_string(), restart_notes: "Restart Blender.".to_string(),
+        };
+        let token = "add-program-committed-123";
+        let statuses = root.join("statuses");
+        fs::create_dir_all(&statuses).unwrap();
+        fs::write(program_setup_status_path(&statuses, "Blender").unwrap(), serde_json::to_vec(&result).unwrap()).unwrap();
+        assert_eq!(program_setup_results_in(&statuses, &bindings).unwrap(), vec![result.clone()]);
+        assert!(!committed_program_setup_matches(&statuses, &bindings, token).unwrap());
+        save_program_setup_status_at(&statuses, &result, Some(ProgramSetupCommitReceipt {
+            transaction_token: token.to_string(), executable_path: executable.to_string_lossy().to_string(),
+        })).unwrap();
+        assert!(committed_program_setup_matches(&statuses, &bindings, token).unwrap());
+        save_program_setup_result_at(&statuses, &result).expect("recheck replaces status without retaining an old commit receipt");
+        assert!(!committed_program_setup_matches(&statuses, &bindings, token).unwrap());
+        fs::remove_dir_all(root).expect("remove task-created test directory");
+    }
+
+    #[test]
+    fn program_setup_pending_survives_reload_and_ready_replaces_it() {
+        let root = std::env::temp_dir().join(next_setup_transaction_token("flowcell-setup-status-test"));
+        let bindings = parse_ini_document("[ProgramTab_1]\nLabel=Blender\n");
+        let mut result = ProgramSetupResult {
+            program_name: "Blender".to_string(),
+            status: ProgramSetupState::NeedsHostInitialization,
+            message: "Open Blender once, then recheck.".to_string(),
+            restart_notes: String::new(),
+        };
+        save_program_setup_result_at(&root, &result).expect("save pending");
+        assert_eq!(program_setup_results_in(&root, &bindings).unwrap(), vec![result.clone()]);
+        assert!(require_initialized_setup_for_sources(&result).unwrap_err().contains("Register program only"));
+        result.status = ProgramSetupState::Ready;
+        result.restart_notes = "Restart Blender once.".to_string();
+        save_program_setup_result_at(&root, &result).expect("replace pending");
+        assert_eq!(program_setup_results_in(&root, &bindings).unwrap(), vec![result]);
+        assert!(program_setup_results_in(&root, &IniDocument::new()).unwrap().is_empty());
+        assert!(program_setup_status_path(&root, "../Blender").is_err());
+        fs::remove_dir_all(root).expect("remove task-created test directory");
+    }
+
+    #[test]
+    fn program_setup_recheck_requires_registered_configured_executable() {
+        let root = std::env::temp_dir().join(next_setup_transaction_token("flowcell-setup-executable-test"));
+        fs::create_dir_all(&root).unwrap();
+        let executable = root.join("blender.exe");
+        fs::write(&executable, []).unwrap();
+        let bindings = parse_ini_document(&format!("[ProgramTab_1]\nLabel=Blender\nExePath={}\n", executable.display()));
+        assert_eq!(registered_program_setup_executable(&bindings, "blender").unwrap(),
+            ("Blender".to_string(), executable.to_string_lossy().to_string()));
+        assert!(registered_program_setup_executable(&bindings, "Other").is_err());
+        assert!(registered_program_setup_executable(&parse_ini_document("[ProgramTab_1]\nLabel=Blender\n"), "Blender").is_err());
+        fs::remove_dir_all(&root).expect("remove task-created test directory");
+        assert!(registered_program_setup_executable(&bindings, "Blender").is_err());
+    }
+}
+
 fn finalize_add_program_transaction(
     root: &Path,
     journal: &mut AddProgramTransactionJournal,
-) -> Result<(), String> {
+) -> Result<ProgramSetupResult, String> {
     {
         let _source_guard = program_sources::source_quarantine_guard()?;
         let _bindings_guard = super::bindings::bindings_state_guard()?;
@@ -3088,26 +3352,43 @@ fn finalize_add_program_transaction(
     }
     let manifest =
         program_sources::manifest::load_program_manifest(&journal.preflight.program_name)?;
-    match manifest.runner.kind.as_str() {
-        "blender-bridge" => {
-            bootstrap_blender_program(
+    let restart_notes = [&manifest.addon_reload_notes, &manifest.app_restart_notes]
+        .into_iter().map(|note| note.trim()).filter(|note| !note.is_empty()).collect::<Vec<_>>().join("\n");
+    let setup_result = match manifest.runner.kind.as_str() {
+        "blender-bridge" => bootstrap_blender_program(
                 &journal.preflight.program_name,
                 Some(&journal.preflight.executable_path),
-            )?;
-        }
+            )?,
         "fusion-bridge" => {
-            bootstrap_fusion_program(
+            let message = bootstrap_fusion_program(
                 &journal.preflight.program_name,
                 Some(&journal.preflight.executable_path),
             )?;
+            ProgramSetupResult {
+                program_name: journal.preflight.program_name.clone(),
+                status: ProgramSetupState::Ready,
+                message,
+                restart_notes: restart_notes.clone(),
+            }
         }
-        _ => {}
-    }
+        _ => ProgramSetupResult {
+            program_name: journal.preflight.program_name.clone(),
+            status: ProgramSetupState::Ready,
+            message: format!("{} was added.", journal.preflight.program_name),
+            restart_notes,
+        },
+    };
     restart_flowcell_headless_backend()?;
     {
         let _source_guard = program_sources::source_quarantine_guard()?;
         let _bindings_guard = super::bindings::bindings_state_guard()?;
         verify_add_program_native_state(root, journal)?;
+        let transaction_token = root.file_name().and_then(|name| name.to_str())
+            .ok_or_else(|| "Add Program transaction directory has no valid token.".to_string())?;
+        save_program_setup_status_at(&program_setup_status_root()?, &setup_result, Some(ProgramSetupCommitReceipt {
+            transaction_token: transaction_token.to_string(),
+            executable_path: journal.preflight.executable_path.clone(),
+        }))?;
         journal.phase = AddProgramTransactionPhase::Committed;
         write_add_program_journal(
             root,
@@ -3121,7 +3402,8 @@ fn finalize_add_program_transaction(
             "Add Program committed, but temporary transaction cleanup failed at {}: {error}",
             root.display()
         )
-    })
+    })?;
+    Ok(setup_result)
 }
 
 #[tauri::command]
@@ -3272,6 +3554,10 @@ pub(crate) fn apply_add_program_plan(
             &manifest,
             enabled_state.clone(),
         )?;
+        if !preflight.sources.is_empty() && manifest.runner.kind == "blender-bridge" {
+            let setup = bootstrap_blender_program(&preflight.program_name, Some(&preflight.executable_path))?;
+            require_initialized_setup_for_sources(&setup)?;
+        }
         install_add_program_sources_while_source_locked(
             &preflight,
             &journal.planned_sources,
@@ -3663,7 +3949,7 @@ pub(crate) fn prepare_add_program_canonical_commit(
 }
 
 #[tauri::command]
-pub(crate) fn finalize_add_program_plan(transaction_token: String) -> Result<(), String> {
+pub(crate) fn finalize_add_program_plan(transaction_token: String) -> Result<ProgramSetupResult, String> {
     let lock = ADD_PROGRAM_TRANSACTION_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock
         .lock()
@@ -3691,13 +3977,32 @@ pub(crate) fn rollback_add_program_plan(
     let _guard = lock
         .lock()
         .map_err(|_| "Add Program transaction lock was poisoned.".to_string())?;
-    let root = locate_add_program_transaction(&transaction_token)?;
+    let root = match locate_add_program_transaction(&transaction_token) {
+        Ok(root) => root,
+        Err(error) => {
+            let _bindings_guard = super::bindings::bindings_state_guard()?;
+            let (_, bindings, _) = read_bindings_file_state()?;
+            if completed_add_program_without_journal(
+                &add_program_transactions_root()?, &program_setup_status_root()?, &bindings, &transaction_token,
+            )? {
+                return Ok("finalized".to_string());
+            }
+            return Err(error);
+        }
+    };
     let mut journal = read_add_program_journal(&root)?;
     if journal.phase == AddProgramTransactionPhase::AwaitingCanonical
         && canonical_matches_add_program(&journal)?
     {
         finalize_add_program_transaction(&root, &mut journal)?;
         return Ok("finalized".to_string());
+    }
+    if journal.phase == AddProgramTransactionPhase::Committed {
+        let _bindings_guard = super::bindings::bindings_state_guard()?;
+        let (_, bindings, _) = read_bindings_file_state()?;
+        if committed_program_setup_matches(&program_setup_status_root()?, &bindings, &transaction_token)? {
+            return Ok("finalized".to_string());
+        }
     }
     if matches!(
         journal.phase,

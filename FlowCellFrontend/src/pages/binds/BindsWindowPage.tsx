@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   loadBindsWorkspace,
   saveBindShortcut,
-  saveCoreActionShortcut
+  saveProgramActionShortcut
 } from "../../lib/binds";
 import { deriveBindsPanelButtonScope } from "../../lib/bindsButtonScope";
 import { deriveBindsPanelMacroScope } from "../../lib/bindsMacroScope";
@@ -516,8 +516,8 @@ export default function BindsWindowPage({
         return;
       }
 
-      if (activeButton.kind.trim().toLowerCase() === "core_action") {
-        const result = await saveCoreActionShortcut({
+      if (["program_action", "core_action"].includes(activeButton.kind.trim().toLowerCase())) {
+        const result = await saveProgramActionShortcut({
           actionId: activeButton.target,
           shortcut: validation.shortcut
         });
