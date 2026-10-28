@@ -1,4 +1,4 @@
-# Blender Theme Page Button
+# Blender in the Unified Theme Editor
 
 Blender Theme is an ordinary Blender-owned, page-enabled FlowCell Button package
 for Blender UI colors, Place Picture viewport overlays, and HDRI world settings.
@@ -7,53 +7,61 @@ the package rather than FlowCell Core.
 
 ## Install Or Open
 
-Adding the Blender program installs Theme as a declared starter in the
-`toolset` panel. To install it again after an intentional deletion:
+Open Main's Theme editor and select `Blender`. Its original Blender page opens
+directly with its existing controls and layout. There is no separate Theme
+Button in Blender's toolset, Pop, or Fan. The program header contains only
+`Target`; there is no Theme name row or Buttons and arrangements view.
+Every registered program has the same Popped Button Colors controls. Programs
+without their own Theme page use the original card through the built-in Core
+host, with edits scoped to that program and no Blender installation required.
 
-1. On Main, open Blender's `toolset` panel and choose Add Button. The locked
-   Buttons Editor opens its native content picker automatically.
-2. Select
-   `Programs/Blender/Blender Git Scripts/Toolsets/theme/flowcell.script.json`.
-3. Use Save Main Page Settings after the Button is added, then name its
-   `.json` file in the native save dialog.
-4. Reload the FlowCell Blender add-on or restart Blender after deployment.
-
-To use an installed copy, select its Blender panel and activate the `theme`
-owner Button. FlowCell opens that owner's package page in the generic isolated
-page host. The installed
-copy under `Blender Local Scripts/<ownerButtonId>/source/` is what runs; the Git
+Adding the Blender program installs its declared Theme contribution with an
+unplaced canonical owner. Existing installations retain that same owner and
+package; synchronization removes only its standalone Button occurrences.
+The installed copy under
+`Blender Local Scripts/<ownerButtonId>/source/` supplies those features; the Git
 Scripts package is only the catalog source.
+
+Main and each registered program have separate targets and libraries. Blender
+owns the presentation of its Buttons on Main, panels, toolsets, pop-outs and
+fans. Common Button scope supports all panels and pop-outs, pop-outs only, or a
+selected panel; Blender interface, picture and environment features remain
+program-wide. Desktop window positions and layouts stay in the Layout system.
 
 The compact default page starts directly at `Theme Palette`: four slightly
 taller bucket cards fit per row, each bucket's swatch, hex value, and `Apply`
 share one control line, and the darkness profile controls sit directly after
 `Load Buckets`. `Gradient 2` has one unlabeled checkbox directly beside its
 name instead of a separate gradient row. A separate `Popped Button Colors`
-section follows Theme Palette, then the full Place Picture section, with HDRI
-below it. Every action Button exposes its original
+section follows Theme Palette; Place Picture controls remain in the palette,
+with HDRI controls below the Button colors. Every action Button exposes its original
 explanatory hover tooltip; newer controls describe their current behavior.
 
 ## Basic Workflow
 
-1. Use the top `Browse` Button to choose a theme image. FlowCell samples it,
-   stages the returned colors, and also stages it as the Place Picture path.
+1. Use the top-left `Find Picture` Button to choose a picture. FlowCell samples
+   it into the theme buckets and places the same picture in the viewport
+   background. Use `Place Picture` instead to place a picture without changing
+   the buckets.
 2. Use `Absorb Theme` instead when the current Blender theme should populate the
    declared color fields.
 3. Choose `Dark Theme` or `Light Theme`, then tune the color fields.
 4. Press `Apply` to send the current theme mode and colors to Blender.
-5. Use `Save Package` to copy the theme/Place Picture images and staged fields
-   into one portable package. `Open Package`, `Previous`, and `Next` restore a
-   package, apply or clear its Place Picture first, and apply its theme last so
-   Blender saves both halves as one startup bundle.
+5. Use `Save Theme` to save one named Blender theme, including program fields,
+   assets, Button presentation and exact internal arrangements. `Open Theme`,
+   `Previous`, and `Next` use the same target library. `Import Theme` previews a
+   compatible supplied theme or local file and lists requirements before Apply
+   Theme. Use `Export Theme` to share the saved theme as one portable archive.
 6. Use `Save Buckets` or `Load Buckets` when only a JSON field snapshot is
    needed.
 7. Use the Place Picture and HDRI controls independently as needed.
 
 ## Popped Button Colors
 
-This section manages aggregate Surface colors for action Buttons in currently
-open Blender Pop-out and Fan windows. It never lists Button names or offers
-per-Button controls. Expanded regular and Tool Set Pop-outs contribute their
+This section manages Surface and text colors for action Buttons in currently
+open Blender Pop-out and Fan windows. Each Button has a named color row and
+participation checkbox. Individual color edits remain available when that
+Button is excluded from bulk gradients. Expanded regular and Tool Set Pop-outs contribute their
 rendered placements. Authored Pop-out Fans and legacy standalone Fans contribute
 the exact Fan-surface owner plus every member even while collapsed, so the owner
 and the Buttons revealed by fanning out already share the applied gradient.
@@ -76,7 +84,7 @@ action row.
 | `Scatter` | Redistributes the currently present popped-Button bucket colors across the remembered placements. It advances the persisted seed and hashes that seed with each hidden placement ID, so the color mapping remains deterministic until Scatter is pressed again. |
 | `Toggle Text` | Resolves the current live Blender Pop-out/Fan scope and switches all scoped Button label text together between black and white. The action changes only per-placement Text overrides; Surface colors and saved skins are preserved. |
 | `Gradient Colors` | Accepts a whole number from 2 through 16. It is the exact count of ordered colors that `Refill` requests from the current Theme image, displays between Top and Bottom, and includes in the smooth gradient. Changing the count resamples and immediately redraws every current stop so `Apply Gradient` remains usable before the next Refill. |
-| Aggregate color bucket | Shows one editable color plus the count of popped Buttons currently using it. Editing a bucket stages that color for every remembered member. |
+| Individual Button color | Shows the Button name, an editable color and its participation checkbox. Color edits affect that Button even when its checkbox is unchecked. |
 | Skin materials | Shows the exact non-text material colors for a tint-only skin that has no honest single Surface root. These groups stay read-only until `Refill` establishes an explicit Surface color. |
 | Top / intermediate colors / Bottom | Edit any ordered color in the popped-Button Surface gradient. Top and Bottom are the endpoints; every intermediate color appears between them. |
 | Spread | Controls how much of the Top-to-Bottom range is used. |
@@ -100,13 +108,15 @@ state or expose individual Button choices.
 | Control | Behavior |
 | --- | --- |
 | Theme image field | Holds the image used for color sampling. |
-| `Browse` | Chooses an image, samples it, and stages the resulting colors. |
+| `Find Picture` | Chooses a picture, samples it into the theme buckets, and places the same picture in the viewport background as one operation. Cancel changes nothing. |
 | `Absorb Theme` | Reads Blender's current theme into the declared color fields. |
 | `Save Buckets` | Saves the Theme/Place Picture snapshot fields to JSON; HDRI and world controls are excluded. |
 | `Load Buckets` | Loads only current snapshot fields, or maps a declared legacy `flowcell-blender-theme-v1` snapshot. |
-| `Save Package` | Saves only the Theme/Place Picture snapshot fields plus copied image assets under `flowcellbackend/local/blender_themes`; HDRI and world controls are excluded. Choose a new package name in that library because existing packages are never overwritten. |
-| `Open Package` | Opens a current package or a legacy `flowcell-blender-theme-pack-v1` package, then applies it. |
-| `Previous` / `Next` | Cycles the saved package library and immediately applies each selection. |
+| `Save Theme` | Saves a complete named theme under the resolved local data root at `themes/Blender/`: declared Blender fields and tone profiles, reference/Place Picture/HDRI assets, grid settings, X/Y/Z rotations, world strength, effective Button presentation and exact internal arrangements. |
+| `Open Theme` | Previews a theme from the selected target library and validates its target, assets and requirements before Apply Theme. Supported legacy files preserve settings they do not contain. |
+| `Import Theme` | Offers compatible supplied themes and a local file/archive choice. Browsing previews does not install tools or run Blender commands. |
+| `Export Theme` | Exports the actual saved theme as one portable archive with assets, literal Button presentation, arrangements and stable tool references or bundled sources. |
+| `Previous` / `Next` | Cycles the same saved-theme library and applies each selection while respecting the popped-appearance lock. |
 | `Dark Theme` | Selects dark visual mode without applying to Blender. |
 | `Light Theme` | Selects light visual mode without applying to Blender. |
 | `Apply` | Applies the current theme mode and color fields to Blender. |
@@ -145,9 +155,8 @@ state.
 
 | Control | Behavior |
 | --- | --- |
-| `Place Picture` | Applies the staged image and grid values to the viewport overlay. |
+| `Place Picture` | Chooses a picture and places it, with the staged grid values, in the viewport overlay. It never samples the picture or changes the theme buckets. Cancel changes nothing. |
 | Place Picture path | Holds the image path. |
-| `Browse` | Chooses the Place Picture path without applying it. |
 | `Grid` | Applies the staged near, distance, and far grid values. |
 | `Remove Grid` | Removes only the fake grid while leaving the picture and fake gizmos active. |
 | `Startup` | Saves the staged Place Picture state, including grid visibility, for Blender startup restoration. |
@@ -160,8 +169,11 @@ and transports their payload.
 
 Applying a theme writes one owner-runtime startup snapshot containing the theme
 and the currently active Place Picture, grid values, and grid visibility. A
-saved package therefore cannot restore its theme with an older package's
-picture. A pictureless package explicitly clears the older startup picture.
+saved theme therefore cannot restore its UI colors with an older theme's
+picture. Unified application handles the environment first, the picture and
+grid next, and UI colors last. An explicitly empty HDRI path clears the world
+without loading a default HDRI; rotation and strength values remain staged.
+An omitted legacy field preserves its current value.
 
 ## HDRI World
 
@@ -175,7 +187,10 @@ picture. A pictureless package explicitly clears the older startup picture.
 | `X`, `Y`, `Z` | Applies the matching rotation field in degrees. |
 | `WS` | Applies the staged world strength. |
 
-The initial manifest values are X `90`, Y `0`, Z `30`, and strength `0.25`.
+The initial manifest rotations are X `90 degrees`, Y `0 degrees`, and Z
+`30 degrees`; world strength is `0.25`. Complete themes include these fields
+and the HDRI asset. `Save Buckets` remains the narrower operation that excludes
+the environment.
 
 ## Updating Or Deleting
 
@@ -193,6 +208,11 @@ Deleting the Theme owner closes its page and removes its canonical graph, active
 record, owned Local Scripts package, bindings, generated bridge artifacts,
 registered Blender lifecycle hooks, overlays, timers, and Button-owned startup
 state. The Git Scripts catalog package remains available for a future install.
-Saved packages under `flowcellbackend/local/blender_themes/` are explicit shared
-Blender program data, not owner runtime state, so they remain available after a
-launcher is deleted and reinstalled.
+Named themes and their assets under the resolved local data root at
+`themes/Blender/` are shared Blender program data, so they remain available after
+a launcher is deleted and reinstalled. Main themes use `themes/main/`.
+Startup migration moves recognized old saves into these canonical target
+libraries while retaining recoverable previous data. Saving, opening, cycling,
+importing and exporting all use the canonical library after migration. Saving
+the same theme updates its identity; a different same-named theme is rejected
+instead of silently overwritten.

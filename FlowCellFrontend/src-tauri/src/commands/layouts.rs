@@ -546,7 +546,7 @@ pub(crate) fn show_save_file_dialog(
 fn normalize_theme_file_path(path: &Path) -> PathBuf {
     let path_text = path.to_string_lossy().to_string();
     let lower_path = path_text.to_ascii_lowercase();
-    if lower_path.ends_with(".flowtheme.json") {
+    if lower_path.ends_with(".flowtheme.json") || lower_path.ends_with(".flowcell-theme-pack.json") {
         return PathBuf::from(path_text);
     }
     if lower_path.ends_with(".json") {
@@ -596,44 +596,58 @@ pub(crate) fn authorize_flowcell_theme_asset(
 }
 
 #[tauri::command]
-pub(crate) fn get_flowcell_theme_directory() -> Result<String, String> {
-    // Saved FlowCell Themes live beside the Main Page layouts.
-    Ok(resolve_main_page_layouts_root()?.display().to_string())
+pub(crate) fn get_flowcell_theme_directory(program_name: Option<String>) -> Result<String, String> {
+    Ok(super::themes::resolve_theme_directory(program_name.as_deref())?.display().to_string())
 }
 
 #[tauri::command]
-pub(crate) fn save_flowcell_theme_file(path: String, theme: Value) -> Result<String, String> {
+pub(crate) fn save_flowcell_theme_file(path: String, mut theme: Value, program_name: Option<String>, replace_existing: Option<bool>) -> Result<String, String> {
     let trimmed_path = path.trim();
     if trimmed_path.is_empty() {
         return Err("Theme save path cannot be empty.".to_string());
     }
+    super::themes::validate_theme_target(&theme, program_name.as_deref())?;
+    let root = super::themes::resolve_theme_directory(program_name.as_deref())?;
     let theme_path = normalize_theme_file_path(Path::new(trimmed_path));
-    if let Some(parent) = theme_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!("Failed to create Theme folder at {}: {error}", parent.display())
-        })?;
-    }
+    let relative = theme_path.strip_prefix(&root)
+        .map_err(|_| format!("Save Theme uses the selected target library at {}. Use Export Theme to share a theme elsewhere.", root.display()))?;
+    let theme_path = super::themes::safe_theme_path(&root, &relative.to_string_lossy(), true)?;
+    super::themes::store_page_theme_assets(&mut theme, &theme_path)?;
     let contents = serde_json::to_string_pretty(&theme)
         .map_err(|error| format!("Failed to serialize FlowCell Theme: {error}"))?;
-    fs::write(&theme_path, contents).map_err(|error| {
-        format!("Failed to write FlowCell Theme at {}: {error}", theme_path.display())
-    })?;
+    if theme_path.is_file() {
+        let previous: Value = serde_json::from_str(&fs::read_to_string(&theme_path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("Existing theme is not valid JSON; choose a new name: {error}"))?;
+        let same_identity = theme.get("id").and_then(Value::as_str).filter(|id| !id.is_empty())
+            .is_some_and(|id| previous.get("id").and_then(Value::as_str) == Some(id));
+        if previous != theme && !same_identity && replace_existing != Some(true) {
+            return Err("A different theme already uses this name. Choose another name or explicitly confirm replacing that theme.".into());
+        }
+    }
+    crate::program_sources::transaction::write_json_file(&theme_path, contents.as_bytes(),
+        if theme_path.exists() { crate::program_sources::transaction::AtomicWriteMode::Replace }
+        else { crate::program_sources::transaction::AtomicWriteMode::Create })?;
     Ok(theme_path.display().to_string())
 }
 
 #[tauri::command]
-pub(crate) fn load_flowcell_theme_file(path: String) -> Result<Value, String> {
+pub(crate) fn load_flowcell_theme_file(path: String, program_name: Option<String>) -> Result<Value, String> {
     let trimmed_path = path.trim();
     if trimmed_path.is_empty() {
         return Err("Theme load path cannot be empty.".to_string());
     }
-    let theme_path = PathBuf::from(trimmed_path);
+    let mut migrated_path = Value::String(trimmed_path.to_string());
+    super::themes::remap_migrated_theme_paths(&mut migrated_path)?;
+    let theme_path = PathBuf::from(migrated_path.as_str().unwrap_or_default());
     let contents = fs::read_to_string(&theme_path).map_err(|error| {
         format!("Failed to read FlowCell Theme at {}: {error}", theme_path.display())
     })?;
-    serde_json::from_str::<Value>(&contents).map_err(|error| {
+    let mut theme = serde_json::from_str::<Value>(contents.trim_start_matches('\u{feff}')).map_err(|error| {
         format!("FlowCell Theme at {} is not valid JSON: {error}", theme_path.display())
-    })
+    })?;
+    super::themes::validate_theme_target(&theme, program_name.as_deref())?;
+    super::themes::remap_migrated_theme_paths(&mut theme)?;
+    Ok(theme)
 }
 
 #[tauri::command]

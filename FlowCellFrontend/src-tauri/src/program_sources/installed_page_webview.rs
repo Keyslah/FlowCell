@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::WebviewWindow;
 #[cfg(windows)]
@@ -15,7 +15,20 @@ struct InstalledPageNativeMessage {
     message_json: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct InstalledPageBounds {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default = "default_visible")]
+    pub visible: bool,
+}
+fn default_visible() -> bool { true }
+
 fn validate_window_label(label: &str) -> Result<(), String> {
+    if label == "flowcell-theme-editor" { return Ok(()); }
     if !label.starts_with(INSTALLED_PAGE_WINDOW_PREFIX)
         || label.len() <= INSTALLED_PAGE_WINDOW_PREFIX.len()
         || label.len() > 160
@@ -73,6 +86,16 @@ fn is_valid_page_message(message_json: &str, expected_nonce: &str) -> bool {
                 && request_id.len() <= 160
                 && !action_id.is_empty()
                 && action_id.len() <= 160
+        }
+        Some("theme-ready") => object.len() == 3,
+        Some("theme-response") => {
+            let request_id = message_field(&object, "requestId").unwrap_or_default();
+            object.len() == 7 && !request_id.is_empty() && request_id.len() <= 160
+                && object.get("ok").and_then(Value::as_bool).is_some()
+                && object.contains_key("result") && object.contains_key("error")
+        }
+        Some("theme-library") => {
+            object.len() == 4 && matches!(message_field(&object, "action"), Some("save" | "open" | "previous" | "next"))
         }
         Some("security-probe") => {
             object.len() == 10
@@ -155,10 +178,11 @@ mod platform {
         )
     }
 
-    fn page_bounds(width: u32, height: u32) -> Rect {
+    fn page_bounds(width: u32, height: u32, bounds: Option<InstalledPageBounds>) -> Rect {
+        let bounds = bounds.unwrap_or(InstalledPageBounds { x: 0, y: 0, width, height, visible: true });
         Rect {
-            position: PhysicalPosition::new(0, 0).into(),
-            size: PhysicalSize::new(width.max(1), height.max(1)).into(),
+            position: PhysicalPosition::new(bounds.x.min(i32::MAX as u32) as i32, bounds.y.min(i32::MAX as u32) as i32).into(),
+            size: PhysicalSize::new(bounds.width.max(1), bounds.height.max(1)).into(),
         }
     }
 
@@ -203,6 +227,7 @@ mod platform {
         window: WebviewWindow,
         html: String,
         nonce: String,
+        bounds: Option<InstalledPageBounds>,
     ) -> Result<(), String> {
         let label = window.label().to_string();
         validate_window_label(&label)?;
@@ -226,7 +251,8 @@ mod platform {
             let parent_environment = parent_webview.environment();
             let webview = WebViewBuilder::new()
                 .with_environment(parent_environment)
-                .with_bounds(page_bounds(size.width, size.height))
+                .with_bounds(page_bounds(size.width, size.height, bounds))
+                .with_visible(bounds.map_or(true, |bounds| bounds.visible))
                 .with_custom_protocol(PAGE_SCHEME.into(), move |_webview_id, request| {
                     let is_entry = request.uri().path() == "/index.html";
                     let status = if is_entry {
@@ -314,6 +340,7 @@ mod platform {
         window: WebviewWindow,
         width: u32,
         height: u32,
+        bounds: Option<InstalledPageBounds>,
     ) -> Result<(), String> {
         let label = window.label().to_string();
         validate_window_label(&label)?;
@@ -323,8 +350,10 @@ mod platform {
                 let webview = webviews
                     .get(&label)
                     .ok_or_else(|| "Installed page webview is not mounted.".to_string())?;
+                webview.set_visible(bounds.map_or(true, |bounds| bounds.visible))
+                    .map_err(|error| format!("Failed to set installed page visibility: {error}"))?;
                 webview
-                    .set_bounds(page_bounds(width, height))
+                    .set_bounds(page_bounds(width, height, bounds))
                     .map_err(|error| format!("Failed to resize installed page webview: {error}"))
             })
         })
@@ -383,8 +412,9 @@ pub(crate) async fn mount_installed_page_webview(
     window: WebviewWindow,
     html: String,
     nonce: String,
+    bounds: Option<InstalledPageBounds>,
 ) -> Result<(), String> {
-    platform::mount(window, html, nonce).await
+    platform::mount(window, html, nonce, bounds).await
 }
 
 #[cfg(windows)]
@@ -393,8 +423,9 @@ pub(crate) async fn resize_installed_page_webview(
     window: WebviewWindow,
     width: u32,
     height: u32,
+    bounds: Option<InstalledPageBounds>,
 ) -> Result<(), String> {
-    platform::resize(window, width, height).await
+    platform::resize(window, width, height, bounds).await
 }
 
 #[cfg(windows)]
@@ -418,6 +449,7 @@ pub(crate) async fn mount_installed_page_webview(
     _window: WebviewWindow,
     _html: String,
     _nonce: String,
+    _bounds: Option<InstalledPageBounds>,
 ) -> Result<(), String> {
     Err("Isolated installed page webviews are currently supported only on Windows.".into())
 }
@@ -428,6 +460,7 @@ pub(crate) async fn resize_installed_page_webview(
     _window: WebviewWindow,
     _width: u32,
     _height: u32,
+    _bounds: Option<InstalledPageBounds>,
 ) -> Result<(), String> {
     Err("Isolated installed page webviews are currently supported only on Windows.".into())
 }
@@ -450,6 +483,23 @@ pub(crate) async fn unmount_installed_page_webview(_window: WebviewWindow) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_contribution_messages_are_nonce_bound_and_cannot_request_commands() {
+        for action in ["save", "open", "previous", "next"] {
+            let mut message = serde_json::json!({ "channel": "flowcell-installed-page", "type": "theme-library", "nonce": "theme-1", "action": action });
+            assert!(is_valid_page_message(&message.to_string(), "theme-1"));
+            assert!(!is_valid_page_message(&message.to_string(), "other"));
+            message["command"] = serde_json::json!("execute");
+            assert!(!is_valid_page_message(&message.to_string(), "theme-1"));
+        }
+        let response = serde_json::json!({ "channel": "flowcell-installed-page", "type": "theme-response", "nonce": "theme-1",
+            "requestId": "capture-1", "ok": true, "result": { "fields": {} }, "error": null });
+        assert!(is_valid_page_message(&response.to_string(), "theme-1"));
+        assert!(!is_valid_page_message(&response.to_string(), "other"));
+        assert!(validate_window_label("flowcell-theme-editor").is_ok());
+        assert!(validate_window_label("flowcell-main").is_err());
+    }
 
     #[test]
     fn page_undo_accepts_only_the_three_nonce_bound_shortcuts() {

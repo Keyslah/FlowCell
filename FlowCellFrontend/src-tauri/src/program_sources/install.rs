@@ -136,6 +136,8 @@ pub(crate) struct InstalledChildSnapshot {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InstallButtonSourceResponse {
     pub owner_button_id: String,
+    #[serde(default)]
+    pub theme_contribution_only: bool,
     pub source_identity: InstalledSourceIdentity,
     pub owner: InstalledButtonSnapshot,
     pub children: Vec<InstalledChildSnapshot>,
@@ -207,6 +209,8 @@ struct ToolsetLayoutRectManifest {
     y: f64,
     width: f64,
     height: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    z_index: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -306,6 +310,9 @@ fn validate_toolset_layout_rect(
     validate_toolset_layout_number(rect.y, &format!("{subject}.y"))?;
     validate_toolset_layout_number(rect.width, &format!("{subject}.width"))?;
     validate_toolset_layout_number(rect.height, &format!("{subject}.height"))?;
+    if let Some(z_index) = rect.z_index {
+        validate_toolset_layout_number(z_index, &format!("{subject}.zIndex"))?;
+    }
     if rect.width <= 0.0 || rect.height <= 0.0 {
         return Err(format!(
             "Tool-set layout {subject} must have positive width and height."
@@ -399,6 +406,7 @@ fn validate_toolset_field(field: &ToolsetFieldManifest, index: usize) -> Result<
             y: field.y,
             width: field.width,
             height: field.height,
+            z_index: None,
         },
         &subject,
     )?;
@@ -2974,6 +2982,7 @@ pub(crate) fn build_response(
         .collect();
     InstallButtonSourceResponse {
         owner_button_id: record.owner_button_id.clone(),
+        theme_contribution_only: record.page.as_ref().is_some_and(|page| page.theme_contribution.is_some()),
         source_identity,
         owner,
         children,
@@ -4148,6 +4157,7 @@ mod tests {
                 delete_script: String::new(),
             },
             addon_reload_notes: String::new(),
+            theme_library: None,
             app_restart_notes: String::new(),
         }
     }
@@ -5344,6 +5354,27 @@ mod tests {
         .layout
         .expect("layout");
         assert!(validate_toolset_layout(&unknown_slot, &children).is_err());
+    }
+
+    #[test]
+    fn toolset_layout_preserves_optional_child_stacking() {
+        let children = layout_test_children();
+        let mut layout = toolset_manifest_with_layout(json!({
+            "width": 160, "height": 90,
+            "placements": {"run": {"x": 100, "y": 50, "width": 60, "height": 40, "zIndex": 8}}
+        })).expect("typed stacking layout").layout.expect("layout");
+        validate_toolset_layout(&layout, &children).expect("valid stacking layout");
+        assert_eq!(serde_json::to_value(&layout).expect("serialize").pointer("/placements/run/zIndex").and_then(Value::as_f64), Some(8.0));
+        let rect = layout.placements.as_mut().expect("placements").get_mut("run").expect("run");
+        rect.z_index = Some(f64::INFINITY);
+        assert!(validate_toolset_layout(&layout, &children).is_err());
+        let legacy = toolset_manifest_with_layout(json!({
+            "placements": {"run": {"x": 0, "y": 0, "width": 60, "height": 40}}
+        })).expect("legacy layout").layout.expect("layout");
+        assert!(serde_json::to_value(legacy).expect("serialize").pointer("/placements/run/zIndex").is_none());
+        assert!(toolset_manifest_with_layout(json!({
+            "placements": {"run": {"x": 0, "y": 0, "width": 60, "height": 40, "zIndex": "front"}}
+        })).is_err());
     }
 
     #[test]

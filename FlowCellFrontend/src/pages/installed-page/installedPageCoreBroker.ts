@@ -477,7 +477,7 @@ function requestLiveButtonDraft(
         }
         unlisten = stopListening;
         timeoutId = window.setTimeout(() => {
-          fail(new Error("An open Blender Pop-out stopped responding. Close it or reopen it, then press Rescan."));
+          fail(new Error("An open Pop-out stopped responding. Close it or reopen it, then press Rescan."));
         }, 2000);
         void requestButtonDraft(sessionId, requesterLabel, requestId).catch(fail);
       })
@@ -491,18 +491,18 @@ function expandedPopoutPlacementIds(
 ): string[] {
   const unit = document.popoutUnits[popoutUnitId];
   if (!unit) {
-    throw new Error("An open Blender Pop-out no longer has a live Button definition. Reopen it and press Rescan.");
+    throw new Error("An open Pop-out no longer has a live Button definition. Reopen it and press Rescan.");
   }
   const surface = document.surfaces[unit.surfaceId];
   if (!surface) {
-    throw new Error("An open Blender Pop-out no longer has a live Button surface. Reopen it and press Rescan.");
+    throw new Error("An open Pop-out no longer has a live Button surface. Reopen it and press Rescan.");
   }
   const placementIds = expandedButtonPopoutPlacementIds(document, unit);
   const seen = new Set<string>();
   return placementIds.flatMap((placementId) => {
     const placement = document.placements[placementId];
     if (!placement || placement.surfaceId !== unit.surfaceId || seen.has(placementId)) {
-      throw new Error("An open Blender Pop-out has stale Button placements. Reopen it and press Rescan.");
+      throw new Error("An open Pop-out has stale Button placements. Reopen it and press Rescan.");
     }
     seen.add(placementId);
     return [placementId];
@@ -516,12 +516,12 @@ function expandedFanPlacementIds(
 ): string[] {
   const setup = document.fanSetups[fanSetupId];
   if (!setup || !programNamesMatch(setup.programName, programName)) {
-    throw new Error("An open Blender Fan no longer has a live Button definition. Reopen it and press Rescan.");
+    throw new Error("An open Fan no longer has a live Button definition. Reopen it and press Rescan.");
   }
   const surface = document.surfaces[setup.fanSurfaceId];
   const ownerPlacement = resolvePanelOwnerFanPlacement(document, setup.id);
   if (!surface || surface.kind !== "fan" || !ownerPlacement) {
-    throw new Error("An open Blender Fan no longer has a live Button surface. Reopen it and press Rescan.");
+    throw new Error("An open Fan no longer has a live Button surface. Reopen it and press Rescan.");
   }
   const expectedPlacementIds = new Set([
     ownerPlacement.id,
@@ -531,13 +531,13 @@ function expandedFanPlacementIds(
     expectedPlacementIds.size !== surface.placementIds.length ||
     surface.placementIds.some((placementId) => !expectedPlacementIds.has(placementId))
   ) {
-    throw new Error("An open Blender Fan has stale Button placements. Reopen it and press Rescan.");
+    throw new Error("An open Fan has stale Button placements. Reopen it and press Rescan.");
   }
   const seen = new Set<string>();
   return surface.placementIds.flatMap((placementId) => {
     const placement = document.placements[placementId];
     if (!placement || placement.surfaceId !== surface.id || seen.has(placementId)) {
-      throw new Error("An open Blender Fan has stale Button placements. Reopen it and press Rescan.");
+      throw new Error("An open Fan has stale Button placements. Reopen it and press Rescan.");
     }
     seen.add(placementId);
     return [placementId];
@@ -615,14 +615,14 @@ async function liveProgramPopoutPaletteScope(
       const popoutUnitId = registered.buttonPopoutUnitId?.trim();
       const displayMode = registered.buttonDisplayMode;
       if (!popoutUnitId || (displayMode !== "collapsed" && displayMode !== "expanded")) {
-        throw new Error("An open Blender Pop-out is missing its live Button identity. Reopen it and press Rescan.");
+        throw new Error("An open Pop-out is missing its live Button identity. Reopen it and press Rescan.");
       }
       const draftSessionId = registered.buttonDraftSessionId?.trim();
       if (draftSessionId && !registered.buttonPopoutSettingsPath?.trim()) {
         return;
       }
       if (!draftSessionId && registered.buttonPopoutSettingsPath?.trim()) {
-        throw new Error("An open Blender Pop-out lost its live settings session. Reopen it and press Rescan.");
+        throw new Error("An open Pop-out lost its live settings session. Reopen it and press Rescan.");
       }
       candidates.push({
         windowLabel: handle.label,
@@ -640,7 +640,7 @@ async function liveProgramPopoutPaletteScope(
     }
     const fanSetupId = registered.buttonFanSetupId?.trim();
     if (!fanSetupId) {
-      throw new Error("An open Blender Fan is missing its live Button identity. Reopen it and press Rescan.");
+      throw new Error("An open Fan is missing its live Button identity. Reopen it and press Rescan.");
     }
     candidates.push({
       windowLabel: handle.label,
@@ -670,7 +670,7 @@ async function liveProgramPopoutPaletteScope(
       ? draftDocuments.get(candidate.draftSessionId)
       : current;
     if (!document) {
-      throw new Error("An open Blender popped Button session could not be read. Reopen it and press Rescan.");
+      throw new Error("An open popped Button session could not be read. Reopen it and press Rescan.");
     }
     const popoutUnit = candidate.windowKind === "button-popout"
       ? document.popoutUnits[candidate.popoutUnitId]
@@ -678,7 +678,7 @@ async function liveProgramPopoutPaletteScope(
     if (candidate.windowKind === "button-popout") {
       if (!popoutUnit) {
         throw new Error(
-          "An open Blender Pop-out no longer has a live Button definition. Reopen it and press Rescan."
+          "An open Pop-out no longer has a live Button definition. Reopen it and press Rescan."
         );
       }
       if (candidate.displayMode === "collapsed" && popoutUnit.interactionMode !== "fan") {
@@ -718,7 +718,7 @@ async function liveProgramPopoutPaletteScope(
         const unit = popoutUnit;
         if (!unit) {
           throw new Error(
-            "An open Blender Pop-out no longer has live screen-gradient geometry. Reopen it and press Rescan."
+            "An open Pop-out no longer has live screen-gradient geometry. Reopen it and press Rescan."
           );
         }
         if (candidate.displayMode === "collapsed") {
@@ -748,7 +748,7 @@ async function liveProgramPopoutPaletteScope(
         const collapsedEnvelope = setup?.collapsedBoundsEnvelope;
         if (!setup || !ownerPlacement) {
           throw new Error(
-            "An open Blender Fan is missing live screen-gradient geometry. Reopen it and press Rescan."
+            "An open Fan is missing live screen-gradient geometry. Reopen it and press Rescan."
           );
         }
         visibleBounds = candidate.snapshotBounds ?? flowCellBoundsFromDesktopBounds(setup.collapsedPanelOwnerBounds);
@@ -810,7 +810,7 @@ async function liveProgramPopoutPaletteScope(
         }
       } catch {
         throw new Error(
-          "An open Blender popped Button window has invalid screen-gradient geometry. Reopen it and press Rescan."
+          "An open popped Button window has invalid screen-gradient geometry. Reopen it and press Rescan."
         );
       }
     }
@@ -1302,14 +1302,14 @@ async function commitLiveProgramPopoutPalette(
   }
   if (draftPublishErrors.length > 0) {
     throw new Error(
-      `One or more open Blender Pop-outs could not be recolored: ${draftPublishErrors.join(" ")}`
+      `One or more open Pop-outs could not be recolored: ${draftPublishErrors.join(" ")}`
     );
   }
   return { scope, warnings };
 }
 
 function popoutPaletteResultMessage(scan: ProgramPopoutPaletteScan, changedCount: number): string {
-  if (scan.buttonCount === 0) return "No open Blender popped Buttons were found.";
+  if (scan.buttonCount === 0) return "No open popped Buttons were found.";
   return changedCount === 0
     ? `No popped Button colors changed; all ${scan.buttonCount} already matched.`
     : `Changed ${changedCount} of ${scan.buttonCount} open popped Button color${changedCount === 1 ? "" : "s"}.`;
@@ -1320,7 +1320,7 @@ function popoutTextResultMessage(
   changedCount: number,
   textColor: ProgramPopoutTextColor
 ): string {
-  if (scan.buttonCount === 0) return "No open Blender popped Buttons were found.";
+  if (scan.buttonCount === 0) return "No open popped Buttons were found.";
   const colorName = textColor === "#000000" ? "black" : "white";
   return changedCount === 0
     ? `All ${scan.buttonCount} open popped Button texts already matched ${colorName}.`
@@ -1357,8 +1357,8 @@ async function runButtonThemePalette(
       scan,
       revision,
       scan.buttonCount === 0
-        ? "No open Blender popped Buttons were found."
-        : `Found ${scan.colorCount} color${scan.colorCount === 1 ? "" : "s"} across ${scan.buttonCount} Button${scan.buttonCount === 1 ? "" : "s"} in ${live.windowCount} open Blender Pop-out/Fan window${live.windowCount === 1 ? "" : "s"}.`
+        ? `No open ${identity.programName} popped Buttons were found.`
+        : `Found ${scan.colorCount} color${scan.colorCount === 1 ? "" : "s"} across ${scan.buttonCount} Button${scan.buttonCount === 1 ? "" : "s"} in ${live.windowCount} open ${identity.programName} Pop-out/Fan window${live.windowCount === 1 ? "" : "s"}.`
     );
   }
   if (operation === "toggle-text") {

@@ -1,0 +1,43 @@
+{
+  "format": "flowcell-blender-theme-v1",
+  "savedAt": "1782870790",
+  "values": {
+    "GridDistance": "12.7 m",
+    "GridFarSpacing": "1 m",
+    "GridSpacing": "0.001 m",
+    "StaticBackgroundPath": "D:\\pics\\Sun2\\683633679_1391333963014432_929908766561595399_n.jpg",
+    "ThemeAccentTextHex": "#F5F6F6",
+    "ThemeControlTextHex": "#F5F6F6",
+    "ThemeControlsHex": "#3C61BE",
+    "ThemeDarksHex": "#1F1E1E",
+    "ThemeEditorBackgroundHex": "#1F1E1E",
+    "ThemeHeaderTextHex": "#F5F6F6",
+    "ThemeHeadersHex": "#534E54",
+    "ThemeHighlightsHex": "#CA8536",
+    "ThemeImagePath": "D:\\pics\\Sun2\\683633679_1391333963014432_929908766561595399_n.jpg",
+    "ThemeMiscHex": "#1F1E1E",
+    "ThemePaletteHexes": [
+      "#1F1E1E",
+      "#383739",
+      "#534E54",
+      "#6B666D",
+      "#83634A",
+      "#6A6D9A",
+      "#6A85C6",
+      "#9A8581",
+      "#CA8536",
+      "#9B9CB1",
+      "#C79A6B",
+      "#C9AF99",
+      "#CACBCD"
+    ],
+    "ThemeSceneHex": "#383739",
+    "ThemeTabsHex": "#6D2266",
+    "ThemeTabsTextHex": "#F5F6F6",
+    "ThemeTextHex": "#F5F6F6",
+    "ThemeViewportBackgroundHex": "#1F1E1E",
+    "ThemeViewportGradientEnabled": true,
+    "ThemeViewportGradientHex": "#383739",
+    "ThemeVisualMode": "dark"
+  }
+}

@@ -89,7 +89,7 @@ class TestElement {
   }
 }
 
-async function renderThemePage(ownerState = {}, actionResponses = {}) {
+async function renderThemePage(ownerState = {}, actionResponses = {}, embedded = false, buttonsOnly = false) {
   const root = new TestElement("main");
   const requests = [];
   const timers = new Map();
@@ -102,7 +102,9 @@ async function renderThemePage(ownerState = {}, actionResponses = {}) {
   };
   const window = {
     flowcellPage: {
-      descriptor: page,
+      descriptor: { ...page, embeddedTheme: embedded, programName: buttonsOnly ? "Krita" : "Blender", config: { ...page.config, buttonsOnly } },
+      setThemeHandler: (handler) => { root.themeRequest = handler; },
+      themeLibrary: (action) => { root.libraryAction = action; },
       request: async (actionId, payload) => {
         requests.push({ actionId, payload });
         if (actionId === page.config.actions.state.read) return { state: ownerState };
@@ -296,7 +298,8 @@ test("Theme is an ordinary page-enabled Blender script package", () => {
     "sharedProgramDataNamespace",
     "supportedDataFormats",
     "refreshEvents",
-    "config"
+    "config",
+    "themeContribution"
   ]);
   assert.equal(page.schemaVersion, 1);
   assert.equal(page.id, "blender.theme");
@@ -366,7 +369,7 @@ test("gradient swatches retain color editing without separate eyedropper buttons
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.0.36");
+  assert.equal(contribution.version, "3.1.1");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -456,8 +459,8 @@ test("generic Core capability contracts are explicit and stable", () => {
   assert.deepEqual(actionById.get("environment.file.select").handler.options.extensions, ["hdr", "exr"]);
   assert.match(
     pageScript,
-    /browseTheme[\s\S]*requestAction\(\s*actions\.theme\.select[\s\S]*requestAction\(\s*actions\.theme\.sample/,
-    "Browse must select a fresh image before sampling its palette"
+    /findPicture[\s\S]*requestAction\(\s*actions\.theme\.select[\s\S]*requestAction\(\s*actions\.theme\.sample/,
+    "Find Picture must select a fresh image before sampling its palette"
   );
 });
 
@@ -737,7 +740,7 @@ test("checkbox requests run in the background, serialize fresh revisions and sav
   assert.equal(spread.value, "62");
   setInput(input, "#ABCDEF");
   root.focusInput(null);
-  await clickPageButton(root, "Save Package");
+  await clickPageButton(root, "Save Theme");
   assert.equal(root.requests.some(({ actionId }) => actionId === "theme.package.save"), false);
   assert.equal(root.requests.some(({ actionId }) => actionId === "button-theme.edit"), false, "manual edit waits behind the second checkbox");
   pending[1].finish();
@@ -1321,6 +1324,7 @@ test("the package restores the original Theme wording", () => {
   );
   assert.deepEqual(
     Object.fromEntries([
+      "theme.image.select",
       "theme.absorb",
       "theme.fields.save",
       "theme.fields.load",
@@ -1336,10 +1340,11 @@ test("the package restores the original Theme wording", () => {
       "environment.reset"
     ].map((actionId) => [actionId, page.config.actionLabels[actionId]])),
     {
+      "theme.image.select": "Find Picture",
       "theme.absorb": "Absorb Theme",
       "theme.fields.save": "Save Buckets",
       "theme.fields.load": "Load Buckets",
-      "theme.package.open": "Open Package",
+      "theme.package.open": "Open Theme",
       "theme.mode.dark": "Dark Theme",
       "theme.mode.light": "Light Theme",
       "picture.apply": "Place Picture",
@@ -1355,23 +1360,23 @@ test("the package restores the original Theme wording", () => {
 
 test("every rendered Theme button restores an explanatory tooltip", async () => {
   assert.deepEqual(page.config.actionTooltips, {
-    "theme.image.select": "Pick an image, sample theme colors, and place it as the Place Picture image.",
+    "theme.image.select": "Choose a picture, sample its colors into the theme buckets, and place it in the Blender viewport background.",
     "theme.image.sample": "Sample theme colors from the selected reference image.",
     "theme.absorb": "Read the current Blender theme and stage all visible buckets.",
     "theme.refill": "Randomly remix the staged sampled colors into a different bucket set and apply it.",
     "theme.fields.save": "Save the current staged Blender theme buckets for later reuse.",
     "theme.fields.load": "Load saved Blender theme buckets back into this page.",
-    "theme.package.save": "Save the theme images, staged Blender colors, and current popped Button fill and text gradients, highlights and glow with this package.",
-    "theme.package.open": "Pick a saved theme package, or browse for one.",
-    "theme.package.previous": "Load the previous saved theme package.",
-    "theme.package.next": "Load the next saved theme package.",
+    "theme.package.save": "Save the theme images, staged Blender colors, and current popped Button fill and text gradients, highlights and glow with this theme.",
+    "theme.package.open": "Pick a saved theme, or browse for one.",
+    "theme.package.previous": "Load the previous saved theme.",
+    "theme.package.next": "Load the next saved theme.",
     "theme.mode.dark": "Stage a dark theme preset on this page. Apply sends it to Blender.",
     "theme.mode.light": "Stage a light theme preset on this page. Apply sends it to Blender.",
     "theme.profile.save": "Save the current darkness settings under the entered profile name.",
     "theme.apply": "Apply the currently visible theme role colors.",
     "theme.apply-bucket": "Apply only this theme bucket.",
     "button-theme.scan": "Collect individual colors from scoped action Buttons in open Blender Pop-out and Fan windows. Each Button has its own editable color; editor previews remain excluded.",
-    "button-theme.participation": "Unchecked Buttons ignore gradients and bulk theme changes. Their individual colors remain editable and are saved with packages.",
+    "button-theme.participation": "Unchecked Buttons ignore gradients and bulk theme changes. Their individual colors remain editable and are saved with themes.",
     "button-theme.apply": "Apply the listed colors to checked Buttons. Individual color edits apply directly, including to unchecked Buttons. Rescan is required if the open windows changed.",
     "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Layout spans all visible Buttons on each monitor along the Angle; otherwise each window has its own gradient. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
     "button-theme.apply-text": "Apply the Button Text gradient to every Blender popped Button label, independently of the fill. One Text Color keeps the labels solid; more colors run from Start to End along the text Angle and curve.",
@@ -1379,9 +1384,9 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
     "button-theme.refill-colors": "Sample the selected number of Gradient Colors from the current Theme image, show them as ordered gradient stops, and apply the gradient to scoped Buttons in open Blender Pop-outs and Fans.",
     "button-theme.scatter": "Redistribute the currently present aggregate colors across the same live scanned Buttons using remembered hidden placement IDs.",
     "button-theme.toggle-text": "Toggle all scoped Button label text in open Blender Pop-outs and Fans between black and white, replacing any text gradient, without changing Surface colors or saved skins.",
-    "button-theme.settings": "Apply separate Regular, Hover, and Active highlights and glow to Blender buttons. Regular applies only while neither hovered nor active. Saved packages include all three groups.",
+    "button-theme.settings": "Apply separate Regular, Hover, and Active highlights and glow to Blender buttons. Regular applies only while neither hovered nor active. Saved themes include all three groups.",
     "picture.file.select": "Pick a Place Picture image.",
-    "picture.apply": "Choose a picture and place it in the Blender viewport with the overlay.",
+    "picture.apply": "Choose a picture and place it in the Blender viewport with the overlay. Theme buckets are not changed.",
     "picture.grid": "Apply Grid Scale and Subdivisions and enable Blender's native viewport grid.",
     "picture.grid.remove": "Hide Blender's native grid; keep any Place Picture image and gizmos active.",
     "picture.startup": "Save the current Place Picture image so Blender restores it on startup.",
@@ -1582,13 +1587,13 @@ test("package page is headerless and keeps Theme plus Place Picture compact", ()
   assert.doesNotMatch(renderThemeSource, /applyRow/);
 });
 
-test("reference row shows only package name beside Browse and replaces the bottom picture section", async () => {
+test("reference row shows only package name beside Find Picture and replaces the bottom picture section", async () => {
   const root = await renderThemePage({
     activePackage: { name: "Ocean", path: "C:\\Themes\\Ocean\\package.json" },
     fields: { theme_image_path: "C:\\Images\\reference.png", static_background_path: "C:\\Images\\picture.png" }
   });
   const row = root.querySelectorAll("div").find((node) => classes(node).includes("theme-reference-row"));
-  assert.deepEqual(row.children.map((child) => child.textContent), ["Browse", "Ocean", "Absorb Theme", "Refill", "Clear Picture", "Place Picture"]);
+  assert.deepEqual(row.children.map((child) => child.textContent), ["Find Picture", "Ocean", "Absorb Theme", "Refill", "Clear Picture", "Place Picture"]);
   assert.equal(row.querySelectorAll("input").length, 0);
   assert.equal(root.querySelectorAll("h2").some((node) => node.textContent === "Place Picture"), false);
   assert.equal(root.querySelectorAll("input").some((node) => String(node.value).includes("C:\\Images")), false);
@@ -1613,6 +1618,58 @@ test("Place Picture prompts each time then places the selection; cancel changes 
   assert.equal(root.requests.filter(({ actionId }) => actionId === "picture.clear").length, 1);
 });
 
+test("Find Picture fills the theme buckets and places the same picture; Place Picture only places", async () => {
+  const sampled = ["#0B3D2E", "#E8D9B5", "#7A4E2D", "#C2593A", "#1F6F8B"];
+  const roleFieldIds = page.config.roles.map(({ fieldId }) => fieldId);
+  let themeSelection = { selected: true, path: "C:\\Images\\reference.png" };
+  let releasePlacement = null;
+  const root = await renderThemePage({ fields: { static_background_path: "C:\\Images\\old.png" } }, {
+    "theme.image.select": () => themeSelection,
+    "theme.image.sample": ({ imagePath }) => ({ selected: true, imagePath, paletteHexes: sampled }),
+    "picture.file.select": { selected: true, path: "C:\\Images\\backdrop.png" },
+    "picture.apply": ({ static_background_path }) => new Promise((resolve) => {
+      releasePlacement = () => resolve({ static_background_path });
+    })
+  });
+  const pictureActions = () => root.requests.map(({ actionId }) => actionId).filter((actionId) =>
+    ["theme.image.select", "theme.image.sample", "picture.file.select", "picture.apply", "theme.apply"].includes(actionId));
+  const lastPlacement = () => root.requests.filter(({ actionId }) => actionId === "picture.apply").at(-1).payload;
+  const savedFields = async () => {
+    await root.flushTimers();
+    return plain(root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state.fields);
+  };
+  const roleColors = (fields) => roleFieldIds.map((fieldId) => fields[fieldId]);
+  const defaultRoleColors = roleFieldIds.map((fieldId) => fieldById.get(fieldId).defaultValue);
+
+  await clickPageButton(root, "Find Picture");
+  assert.deepEqual(pictureActions(), ["theme.image.select", "theme.image.sample", "picture.apply"]);
+  assert.equal(lastPlacement().static_background_path, "C:\\Images\\reference.png");
+  assert.equal(root.dataset.busy, "true", "Find Picture stays one operation until the picture is placed");
+  releasePlacement();
+  await settlePageAction();
+  assert.equal(root.dataset.busy, "false");
+  const found = await savedFields();
+  assert.deepEqual([...found.theme_palette_hexes].sort(), [...sampled].sort());
+  assert.equal(found.theme_image_path, "C:\\Images\\reference.png");
+  assert.equal(found.static_background_path, "C:\\Images\\reference.png");
+  assert.notDeepEqual(roleColors(found), defaultRoleColors, "sampled colors must reach the theme buckets");
+
+  themeSelection = { selected: false, path: "" };
+  await clickPageButton(root, "Find Picture");
+  assert.deepEqual(pictureActions().slice(3), ["theme.image.select"], "cancelling Find Picture changes nothing");
+
+  await clickPageButton(root, "Place Picture");
+  releasePlacement();
+  await settlePageAction();
+  assert.deepEqual(pictureActions().slice(4), ["picture.file.select", "picture.apply"]);
+  assert.equal(lastPlacement().static_background_path, "C:\\Images\\backdrop.png");
+  const placed = await savedFields();
+  assert.equal(placed.static_background_path, "C:\\Images\\backdrop.png");
+  assert.equal(placed.theme_image_path, "C:\\Images\\reference.png");
+  assert.deepEqual(placed.theme_palette_hexes, found.theme_palette_hexes);
+  assert.deepEqual(roleColors(placed), roleColors(found), "Place Picture must not touch the theme buckets");
+});
+
 test("native Grid exposes native settings while retaining hidden legacy saved values", async () => {
   const legacyGrid = { grid_spacing_m: 0.25, grid_distance_m: 17, grid_far_spacing_m: 3 };
   const root = await renderThemePage({ fields: legacyGrid }, {
@@ -1634,7 +1691,7 @@ test("native Grid exposes native settings while retaining hidden legacy saved va
       assert.equal(actionById.get(actionId).responseSchema.properties.fieldPatch.properties[fieldId].type, "number");
     }
   }
-  for (const [label, actionId] of [["Grid", "picture.grid"], ["Save Buckets", "theme.fields.save"], ["Save Package", "theme.package.save"]]) {
+  for (const [label, actionId] of [["Grid", "picture.grid"], ["Save Buckets", "theme.fields.save"], ["Save Theme", "theme.package.save"]]) {
     if (label === "Grid") {
       const checkbox = root.querySelectorAll("input").find((input) => input["aria-label"] === "Grid");
       checkbox.checked = true;
@@ -1721,7 +1778,7 @@ test("native grid controls normalize values, adopt Blender results and persist t
   assert.equal(gridRequest.payload.grid_subdivisions, 5);
   assert.equal(control("Grid Scale").value, "0.003");
   assert.equal(control("Subdivisions (unitless)").value, "8");
-  for (const [label, actionId] of [["Save Buckets", "theme.fields.save"], ["Save Package", "theme.package.save"]]) {
+  for (const [label, actionId] of [["Save Buckets", "theme.fields.save"], ["Save Theme", "theme.package.save"]]) {
     await clickPageButton(root, label);
     const request = root.requests.find((candidate) => candidate.actionId === actionId);
     const values = request.payload.values || request.payload;
@@ -1742,15 +1799,15 @@ test("loading a package applies its native grid scale with its picture", async (
       fieldPatch: { static_background_path: "C:\\Themes\\fine.png", grid_scale: 0.005, grid_subdivisions: 5 }
     }
   });
-  await clickPageButton(root, "Open Package");
+  await clickPageButton(root, "Open Theme");
   const request = root.requests.find(({ actionId }) => actionId === "picture.apply");
   assert.equal(request.payload.static_background_path, "C:\\Themes\\fine.png");
   assert.equal(request.payload.grid_scale, 0.005);
   assert.equal(request.payload.grid_subdivisions, 5);
 });
 
-test("older saved fields and packages adopt the current grid defaults", async () => {
-  for (const [label, actionId] of [["Load Buckets", "theme.fields.load"], ["Open Package", "theme.package.open"], ["Previous", "theme.package.previous"], ["Next", "theme.package.next"]]) {
+test("older saved fields and themes preserve omitted grid settings", async () => {
+  for (const [label, actionId] of [["Load Buckets", "theme.fields.load"], ["Open Theme", "theme.package.open"], ["Previous", "theme.package.previous"], ["Next", "theme.package.next"]]) {
     for (const storedGrid of [{}, { grid_scale: 0.2 }, { grid_subdivisions: 4 }]) {
       const root = await renderThemePage({ fields: { grid_scale: 0.005, grid_subdivisions: 20 } }, {
         "button-theme.settings": { settings: poppedSettings(), configured: true },
@@ -1762,15 +1819,15 @@ test("older saved fields and packages adopt the current grid defaults", async ()
       await clickPageButton(root, label);
       await root.flushTimers();
       const fields = root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state.fields;
-      assert.equal(fields.grid_scale, storedGrid.grid_scale ?? 0.01, `${label} resets missing scale`);
-      assert.equal(fields.grid_subdivisions, storedGrid.grid_subdivisions ?? 10, `${label} resets missing subdivisions`);
+      assert.equal(fields.grid_scale, storedGrid.grid_scale ?? 0.005, `${label} preserves missing scale`);
+      assert.equal(fields.grid_subdivisions, storedGrid.grid_subdivisions ?? 20, `${label} preserves missing subdivisions`);
       assert.equal(fields.grid_enabled, true);
       assert.equal(root.requests.some(({ actionId }) => actionId === "picture.grid"), false);
       const picture = root.requests.find(({ actionId }) => actionId === "picture.apply");
       if (actionId === "theme.fields.load") assert.equal(picture, undefined, "loading fields only stages settings");
       else {
-        assert.equal(picture.payload.grid_scale, storedGrid.grid_scale ?? 0.01);
-        assert.equal(picture.payload.grid_subdivisions, storedGrid.grid_subdivisions ?? 10);
+        assert.equal(picture.payload.grid_scale, storedGrid.grid_scale ?? 0.005);
+        assert.equal(picture.payload.grid_subdivisions, storedGrid.grid_subdivisions ?? 20);
         assert.equal(picture.payload.grid_enabled, true);
       }
     }
@@ -1778,7 +1835,7 @@ test("older saved fields and packages adopt the current grid defaults", async ()
 });
 
 test("cancelled or failed saved-field loads preserve the current native grid settings", async () => {
-  for (const [label, actionId] of [["Load Buckets", "theme.fields.load"], ["Open Package", "theme.package.open"], ["Previous", "theme.package.previous"], ["Next", "theme.package.next"]]) {
+  for (const [label, actionId] of [["Load Buckets", "theme.fields.load"], ["Open Theme", "theme.package.open"], ["Previous", "theme.package.previous"], ["Next", "theme.package.next"]]) {
     for (const response of [{ selected: false, fieldPatch: {} }, () => { throw new Error("Load failed"); }]) {
       const root = await renderThemePage({ fields: { grid_scale: 0.005, grid_subdivisions: 20 } }, {
         "button-theme.settings": { settings: poppedSettings(), configured: true },
@@ -1937,7 +1994,7 @@ test("effects apply without replacing the applied gradient and package save capt
   assert.equal(root.requests.some(({ payload }) => payload.resetOverrides === true), false, "effects apply is not a package reset");
   // An Apply Buckets/gradient operation can change the live profile since the last page read.
   live = { ...live, colors: ["#111111", "#555555", "#AAAAAA"], seed: 47 };
-  await clickPageButton(root, "Save Package");
+  await clickPageButton(root, "Save Theme");
   const save = root.requests.find(({ actionId }) => actionId === "theme.package.save");
   assert.deepEqual(plain(save.payload.values.popped_button_settings), live);
   assert.equal("lockSettings" in save.payload.values.popped_button_settings, false);
@@ -1972,7 +2029,7 @@ test("Save Package records staged individual colors and unchecked appearances wi
     "theme.package.open": () => ({ selected: true, fieldPatch: saved, packageName: "Exact colors", packagePath: "C:\\Themes\\exact.json" })
   });
   setInput(labelledInput(root, "Cube color picker"), "#ABCDEF", "input");
-  await clickPageButton(root, "Save Package");
+  await clickPageButton(root, "Save Theme");
   assert.deepEqual(saved.popped_button_settings, live);
   assert.deepEqual(saved.popped_button_appearance, { version: 1, placements: [...appearance.placements,
     { placementId: "cube", buttonId: "cube-button", color: "#ABCDEF" }
@@ -1981,7 +2038,7 @@ test("Save Package records staged individual colors and unchecked appearances wi
   assert.equal(applied, undefined, "Save is capture-only, not a live theme mutation");
   assert.equal(root.requests.some(({ actionId }) => actionId === "button-theme.apply" || actionId === "button-theme.edit"), false);
   assert.ok(root.querySelectorAll("span").some(({ textContent }) => textContent === "Exact colors"));
-  await clickPageButton(root, "Open Package");
+  await clickPageButton(root, "Open Theme");
   assert.deepEqual(applied.buttonAppearance, saved.popped_button_appearance);
   assert.equal(applied.resetOverrides, true);
 });
@@ -1992,7 +2049,7 @@ test("Save Package fails explicitly if a staged color has no verified live Butto
     "button-theme.settings": { settings: poppedSettings(), configured: true, buttonAppearance: { version: 1, placements: [] }, placementLinks: [] }
   });
   setInput(labelledInput(root, "Cube color picker"), "#ABCDEF", "input");
-  await clickPageButton(root, "Save Package");
+  await clickPageButton(root, "Save Theme");
   assert.equal(root.requests.some(({ actionId }) => actionId === "theme.package.save"), false);
   assert.match(root.status.textContent, /no longer open/);
   assert.equal(root.dataset.busy, "false");
@@ -2042,11 +2099,11 @@ test("legacy packages retain last used settings and popped package settings appl
     "picture.clear": () => { throw new Error("Blender picture bridge is offline"); }
   });
   const previous = plain(live);
-  await clickPageButton(root, "Open Package");
+  await clickPageButton(root, "Open Theme");
   assert.deepEqual(live, previous);
   const next = poppedSettings({ colors: ["#110044", "#3300AA"], activeGlowAmount: 1 });
   packageFields = { popped_button_settings: next };
-  await clickPageButton(root, "Open Package");
+  await clickPageButton(root, "Open Theme");
   assert.deepEqual(live, next);
   assert.equal(root.status.dataset.kind, "error");
   assert.match(root.status.textContent, /picture bridge is offline/);
@@ -2192,7 +2249,7 @@ test("package save holds the operation lock while reading settings so a gradient
     },
     "theme.package.save": { saved: true, packagePath: "C:\\Themes\\saved.json" }
   });
-  await clickPageButton(root, "Save Package");
+  await clickPageButton(root, "Save Theme");
   assert.equal(root.dataset.busy, "true");
   await clickPageButton(root, "Apply Gradient");
   assert.equal(root.requests.some(({ actionId }) => actionId === "button-theme.refill"), false);
@@ -2211,7 +2268,7 @@ test("invalid saved popped settings fail explicitly instead of being treated as 
       "button-theme.settings": { settings: current, configured: true, message: "Settings ready" },
       "theme.package.open": { selected: true, fieldPatch: { popped_button_settings: invalid, tabs_hex: "#112233" }, packagePath: "C:\\Themes\\broken.json" }
     });
-    await clickPageButton(root, "Open Package");
+    await clickPageButton(root, "Open Theme");
     assert.match(root.status.textContent, /invalid popped Button settings/);
     assert.equal(root.status.dataset.kind, "error");
     assert.equal(root.requests.some(({ actionId, payload }) => actionId === "button-theme.settings" && payload.settings), false);
@@ -2249,7 +2306,7 @@ test("a locked package selection survives a picture failure and reopening before
     "theme.package.open": { selected: true, fieldPatch: { popped_button_settings: selected }, packagePath: "C:\\Themes\\sand.json" },
     "picture.clear": () => { throw new Error("Picture bridge unavailable"); }
   });
-  await clickPageButton(root, "Open Package");
+  await clickPageButton(root, "Open Theme");
   assert.equal(root.status.dataset.kind, "error");
   assert.deepEqual(live, original);
   await root.flushTimers();
@@ -2488,7 +2545,7 @@ test("spatial effect curves edit, apply, save, lock, reopen and reset independen
   assert.equal(live.textColor, "#FFFFFF");
   assert.equal(channelStops(root, "fill")[0].value, "#EE0000");
   assert.equal(channelStops(root, "text")[0].value, "#000000");
-  await clickPageButton(root, "Save Package");
+  await clickPageButton(root, "Save Theme");
   assert.deepEqual(saved.popped_button_settings, live);
   const captured = structuredClone(live);
   const reopened = await renderThemePage({}, responses);
@@ -2502,7 +2559,7 @@ test("spatial effect curves edit, apply, save, lock, reopen and reset independen
   lock.checked = true;
   dispatch(lock, "change");
   await settlePageAction();
-  await clickPageButton(reopened, "Open Package");
+  await clickPageButton(reopened, "Open Theme");
   assert.equal(live.highlightCurve, undefined, "lock preserves current effects");
   const unlock = poppedControl(reopened, "lockSettings");
   unlock.checked = false;
@@ -2602,7 +2659,7 @@ test("independent state curves apply, save and reopen with exact state amounts a
   assert.equal(live.highlightCurve.at(-1).y, 0);
   for (const key of Object.keys(originalAmounts).filter((key) => key.endsWith("Amount"))) assert.equal(live[key], originalAmounts[key], `${key} is the unchanged 100% reference`);
   assert.equal(live.effectCurveEditors, undefined, "tab selections and links are page state, not runtime settings");
-  await clickPageButton(root, "Save Package");
+  await clickPageButton(root, "Save Theme");
   assert.deepEqual(saved.popped_button_settings, live);
   await root.flushTimers();
   const owner = plain(root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state);
@@ -2614,7 +2671,7 @@ test("independent state curves apply, save and reopen with exact state amounts a
   assert.equal(curvePoints(channelBox(reopened, "glow"))[0].cy, "100");
   toolButton(channelBox(reopened, "glow"), "Full curve").click();
   await clickPageButton(reopened, "Apply Highlights & Glow");
-  await clickPageButton(reopened, "Open Package");
+  await clickPageButton(reopened, "Open Theme");
   assert.deepEqual(live, saved.popped_button_settings, "opening the package restores every independent state curve");
 });
 
@@ -2763,7 +2820,7 @@ test("Grid defaults on and unchecking saves explicit false through package reloa
   checkbox().checked = false;
   dispatch(checkbox(), "change");
   await new Promise((resolve) => setImmediate(resolve));
-  await clickPageButton(root, "Save Package");
+  await clickPageButton(root, "Save Theme");
   assert.equal(saved.grid_enabled, false);
   assert.equal(saved.grid_scale, 0.01);
   assert.equal(saved.grid_subdivisions, 10);
@@ -2771,7 +2828,7 @@ test("Grid defaults on and unchecking saves explicit false through package reloa
   dispatch(checkbox(), "change");
   await settlePageAction();
   assert.equal(checkbox().checked, true);
-  await clickPageButton(root, "Open Package");
+  await clickPageButton(root, "Open Theme");
   assert.equal(checkbox().checked, false);
   assert.equal(root.requests.filter(({ actionId }) => actionId === "picture.apply").at(-1).payload.grid_enabled, false);
   await clickPageButton(root, "Save Buckets");
@@ -2841,9 +2898,165 @@ test("themes without a picture still honor explicit grid on and off", async () =
       "button-theme.settings": { settings: poppedSettings(), configured: true },
       "theme.package.open": { selected: true, fieldPatch: { static_background_path: "", grid_enabled } }
     });
-    await clickPageButton(root, "Open Package");
+    await clickPageButton(root, "Open Theme");
     const actionIds = root.requests.map(({ actionId }) => actionId);
     assert.ok(actionIds.includes(grid_enabled ? "picture.grid" : "picture.grid.remove"));
     assert.equal(actionIds.includes(grid_enabled ? "picture.grid.remove" : "picture.grid"), false);
   }
+});
+
+
+test("embedded contribution reads canonical settings without initializing or saving a second library", async () => {
+  const root = await renderThemePage({}, { "button-theme.settings": { settings: poppedSettings(), configured: false } }, true);
+  assert.equal(root.requests.some(({ actionId, payload }) => actionId === "button-theme.settings" && payload.settings), false);
+  for (const [label, action] of [["Save Theme", "save"], ["Open Theme", "open"], ["Previous", "previous"], ["Next", "next"]]) {
+    await clickPageButton(root, label);
+    assert.equal(root.libraryAction, action);
+  }
+  assert.equal(root.requests.some(({ actionId }) => actionId.startsWith("theme.package.")), false);
+});
+
+test("buttons-only mode renders the identical Popped Button Colors card with read-only canonical startup", async () => {
+  const responses = { "button-theme.settings": { settings: poppedSettings(), configured: false } };
+  const full = await renderThemePage({}, responses, true);
+  const common = await renderThemePage({}, responses, true, true);
+  const structure = (node) => ({ tag: node.tagName, className: node.className, text: node.textContent,
+    type: node.type, setting: node.dataset?.setting, value: node.value, checked: node.checked,
+    children: node.children.map(structure) });
+  assert.equal(full.children.length, 3);
+  assert.equal(common.children.length, 1);
+  assert.deepEqual(structure(common.children[0]), structure(full.children[1]));
+  assert.deepEqual(common.requests.map(({ actionId }) => actionId), ["owner-state.read", "button-theme.settings", "button-theme.scan"]);
+  assert.equal(common.requests.some(({ actionId, payload }) => actionId === "button-theme.settings" && payload.settings), false);
+  await assert.rejects(common.themeRequest("apply", { fields: { tabs_hex: "#123456" } }), /only Button appearance operations/);
+});
+
+test("buttons-only Refill chooses an image then uses the original sampling and gradient actions", async () => {
+  const root = await renderThemePage({}, {
+    "button-theme.settings": { settings: poppedSettings(), configured: true },
+    "theme.image.select": { selected: true, path: "C:\\Art\\Reference.png" },
+    "theme.image.sample": { selected: true, paletteHexes: ["#123456", "#ABCDEF"] },
+    "button-theme.refill": { revision: 2, placements: [] }
+  }, true, true);
+  const initialCount = root.requests.length;
+  await clickPageButton(root, "Refill");
+  assert.deepEqual(root.requests.slice(initialCount).map(({ actionId }) => actionId),
+    ["theme.image.select", "theme.image.sample", "button-theme.refill"]);
+  assert.equal(root.requests.find(({ actionId }) => actionId === "theme.image.sample").payload.imagePath, "C:\\Art\\Reference.png");
+  assert.deepEqual(plain(root.requests.find(({ actionId }) => actionId === "button-theme.refill").payload.colors), ["#123456", "#ABCDEF"]);
+  assert.equal(root.requests.some(({ actionId }) => /^(environment\.|picture\.|theme\.apply)/.test(actionId)), false);
+});
+
+test("buttons-only Refill cancellation leaves appearance untouched and full Blender mode keeps its image workflow", async () => {
+  const responses = { "button-theme.settings": { settings: poppedSettings(), configured: true },
+    "theme.image.select": { selected: false, path: "" } };
+  const common = await renderThemePage({}, responses, true, true);
+  await clickPageButton(common, "Refill");
+  assert.equal(common.requests.filter(({ actionId }) => actionId === "theme.image.select").length, 1);
+  assert.equal(common.requests.some(({ actionId }) => actionId === "theme.image.sample" || actionId === "button-theme.refill"), false);
+  const full = await renderThemePage({}, responses, true);
+  await clickPageButton(full.children[1], "Refill");
+  assert.equal(full.requests.some(({ actionId }) => actionId === "theme.image.select"), false);
+  assert.match(full.status.textContent, /Choose a theme image/);
+});
+
+test("embedded contribution captures declared persistent settings and assets without transient Button caches", async () => {
+  const root = await renderThemePage({ fields: { hdri_path: "C:\\assets\\environment.hdr", world_strength: 2.5 }, tone: { profiles: [] } },
+    { "button-theme.settings": { settings: poppedSettings(), configured: true } }, true);
+  const captured = plain(await root.themeRequest("capture"));
+  assert.deepEqual(Object.keys(captured).sort(), ["fields", "tone"]);
+  assert.deepEqual(Object.keys(captured.fields).sort(), [...page.themeContribution.persistentFieldIds].sort());
+  assert.equal(captured.fields.world_strength, 2.5);
+  assert.equal(captured.fields.hdri_path, "C:\\assets\\environment.hdr");
+  assert.equal(Object.hasOwn(captured, "buttonTheme"), false);
+  assert.deepEqual(page.themeContribution.assetFieldIds, ["theme_image_path", "static_background_path", "hdri_path"]);
+});
+
+test("embedded stage is partial and read-only, while explicit apply calls only relevant existing integration commands", async () => {
+  const root = await renderThemePage({ fields: { grid_scale: 0.2, world_strength: 4 } },
+    { "button-theme.settings": { settings: poppedSettings(), configured: true }, "environment.strength": {} }, true);
+  const previousRequestCount = root.requests.length;
+  await root.themeRequest("validate", { fields: { tabs_hex: "#123456" } });
+  await assert.rejects(root.themeRequest("validate", { fields: { tabs_hex: "wrong" } }), /Invalid program Theme value/);
+  await assert.rejects(root.themeRequest("validate", { fields: { world_strength: "wrong" } }), /Invalid program Theme value/);
+  await root.themeRequest("stage", { fields: { tabs_hex: "#123456" } });
+  assert.equal(root.requests.length, previousRequestCount);
+  let captured = plain(await root.themeRequest("capture"));
+  assert.equal(captured.fields.tabs_hex, "#123456");
+  assert.equal(captured.fields.grid_scale, 0.2);
+  assert.equal(captured.fields.world_strength, 4);
+  await assert.rejects(root.themeRequest("stage", { fields: { host_exe: "unexpected" } }), /Unsupported program Theme field/);
+  await root.themeRequest("apply", { fields: { world_strength: 3 } });
+  const applied = root.requests.slice(previousRequestCount);
+  assert.deepEqual(applied.map(({ actionId }) => actionId), ["environment.strength"]);
+  assert.deepEqual(plain(applied[0].payload), { world_strength: 3 });
+});
+
+
+test("embedded named-theme selection preserves the lock and restores the selected saved settings on unlock", async () => {
+  const original = poppedSettings();
+  const selected = poppedSettings({ colors: ["#552244", "#EE99BB"], hoverGlowAmount: 3 });
+  let live = original;
+  const root = await renderThemePage({ buttonTheme: { lockSettings: true }, activePackage: { name: "Old", path: "old.json", poppedButtonSettings: original } }, {
+    "button-theme.settings": (payload) => {
+      if (payload.settings) live = plain(payload.settings);
+      return { settings: live, configured: true };
+    }
+  }, true);
+  assert.equal((await root.themeRequest("policy")).preservePoppedAppearance, true);
+  await root.themeRequest("set-active", { name: "Selected", path: "themes/Blender/selected.flowtheme.json", buttonSettings: selected });
+  assert.deepEqual(live, original, "selecting metadata does not apply a locked appearance");
+  await root.flushTimers();
+  const state = root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state;
+  assert.equal(state.activePackage.name, "Selected");
+  assert.equal(state.activePackage.path, "themes/Blender/selected.flowtheme.json");
+  const lock = poppedControl(root, "lockSettings"); lock.checked = false; dispatch(lock, "change");
+  await settlePageAction();
+  assert.deepEqual(live, selected);
+  assert.equal(root.requests.some(({ actionId }) => actionId.startsWith("theme.package.")), false);
+});
+
+
+test("embedded theme apply orders environment then picture then startup snapshot and retains incoming values", async () => {
+  const root = await renderThemePage({}, {
+    "button-theme.settings": { settings: poppedSettings(), configured: true },
+    "environment.apply": { fieldPatch: { world_strength: 99 } },
+    "picture.apply": {}, "theme.apply": {}
+  }, true);
+  const start = root.requests.length;
+  await root.themeRequest("apply", { fields: {
+    hdri_path: "C:/theme/sky.hdr", world_strength: 2.5, static_background_path: "C:/theme/picture.png", tabs_hex: "#123456"
+  } });
+  const requests = root.requests.slice(start);
+  assert.deepEqual(requests.map(({ actionId }) => actionId), ["environment.apply", "environment.strength", "picture.apply", "theme.apply"]);
+  assert.equal(requests[1].payload.world_strength, 2.5);
+  assert.equal(requests.at(-1).payload.tabs_hex, "#123456");
+  assert.equal((await root.themeRequest("capture")).fields.world_strength, 2.5);
+});
+
+test("embedded themes with no HDRI restore picture and grid without loading a default environment", async () => {
+  for (const grid_enabled of [true, false]) {
+    const root = await renderThemePage({ fields: { static_background_path: "C:/previous.png", grid_scale: 0.2 } }, {
+      "button-theme.settings": { settings: poppedSettings(), configured: true },
+      "picture.clear": { fieldPatch: { grid_enabled: !grid_enabled, grid_scale: 1 } }
+    }, true);
+    const start = root.requests.length;
+    await root.themeRequest("apply", { fields: { hdri_path: "", rotation_x_deg: 40, world_strength: 2.5,
+      static_background_path: "", grid_enabled, tabs_hex: "#123456" } });
+    const requests = root.requests.slice(start);
+    assert.deepEqual(requests.map(({ actionId }) => actionId), ["environment.clear", "picture.clear",
+      grid_enabled ? "picture.grid" : "picture.grid.remove", "theme.apply"]);
+    const fields = (await root.themeRequest("capture")).fields;
+    assert.equal(fields.grid_enabled, grid_enabled);
+    assert.equal(fields.grid_scale, 0.2, "omitted grid scale keeps its prior value");
+    assert.equal(fields.world_strength, 2.5, "HDRI settings stay staged without loading a default image");
+  }
+  const root = await renderThemePage({ fields: { static_background_path: "C:/keep.png", grid_scale: 0.2 } }, {
+    "button-theme.settings": { settings: poppedSettings(), configured: true }
+  }, true);
+  const start = root.requests.length;
+  await root.themeRequest("apply", { fields: { hdri_path: "" } });
+  const requests = root.requests.slice(start);
+  assert.deepEqual(requests.map(({ actionId }) => actionId), ["environment.clear", "picture.apply"]);
+  assert.equal(requests[1].payload.static_background_path, "C:/keep.png", "omitted picture stays intact across clear-world integration");
 });

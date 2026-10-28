@@ -239,12 +239,13 @@ function New-FlowCellProgramPackage([System.IO.DirectoryInfo]$ProgramDirectory) 
   if ($contract.Manifest.programId -eq 'blender') {
     # Saved themes come only from the current library. Old exported copies in
     # the catalog must never restore themes that were removed from that folder.
-    $themePrefix = "Programs/$($ProgramDirectory.Name)/blender themes/Packages/"
-    $programFiles = @($trackedFiles | Where-Object { -not $_.StartsWith($themePrefix, [StringComparison]::OrdinalIgnoreCase) })
+    $themePrefix = "Programs/$($ProgramDirectory.Name)/themes/Blender/"
+    $legacyThemePrefix = "Programs/$($ProgramDirectory.Name)/blender themes/Packages/"
+    $programFiles = @($trackedFiles | Where-Object { -not $_.StartsWith($themePrefix, [StringComparison]::OrdinalIgnoreCase) -and -not $_.StartsWith($legacyThemePrefix, [StringComparison]::OrdinalIgnoreCase) })
   }
   Copy-TrackedProgramFolder $ProgramDirectory $destination $programFiles
   if ($contract.Manifest.programId -eq 'blender') {
-    $themes = Copy-BlenderThemePackages -SourceLibrary $resolvedBlenderThemeLibrary -Destination (Join-Path $destination 'blender themes/Packages')
+    $themes = Copy-BlenderThemePackages -SourceLibrary $resolvedBlenderThemeLibrary -Destination (Join-Path $destination 'themes/Blender')
     Write-Host "Blender themes: $($themes.PackageCount) packages, $($themes.AssetCount) assets from $resolvedBlenderThemeLibrary"
   }
   $catalogRelative = Convert-ToSafeRelativeFolder ([string]$contract.Manifest.gitScriptsFolder) 'gitScriptsFolder' $ProgramDirectory.Name

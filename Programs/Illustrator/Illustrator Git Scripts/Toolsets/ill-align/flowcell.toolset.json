@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "illustrator.ill-align",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "label": "Ill Align",
   "tooltip": "Align Illustrator selections to the FlowCell anchor or active artboard.",
   "kind": "toolset",
@@ -34,24 +34,288 @@
     "width": 620,
     "height": 236,
     "fields": [
-      { "id": "x_origin_active", "kind": "toggle", "label": "X Origin active", "payloadKey": "", "defaultValue": false, "x": 8, "y": 8, "width": 120, "height": 36, "zIndex": 1, "hidden": true },
-      { "id": "y_origin_active", "kind": "toggle", "label": "Y Origin active", "payloadKey": "", "defaultValue": false, "x": 8, "y": 8, "width": 120, "height": 36, "zIndex": 1, "hidden": true },
-      { "id": "group", "kind": "toggle", "label": "Group selection", "payloadKey": "group", "defaultValue": false, "x": 8, "y": 188, "width": 180, "height": 36, "zIndex": 2, "hidden": true }
+      {
+        "id": "x_origin_active",
+        "kind": "toggle",
+        "label": "X Origin active",
+        "payloadKey": "",
+        "defaultValue": false,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "y_origin_active",
+        "kind": "toggle",
+        "label": "Y Origin active",
+        "payloadKey": "",
+        "defaultValue": false,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "group",
+        "kind": "toggle",
+        "label": "Group selection",
+        "payloadKey": "group",
+        "defaultValue": false,
+        "x": 8,
+        "y": 188,
+        "width": 180,
+        "height": 36,
+        "zIndex": 2,
+        "hidden": true
+      }
     ],
     "childBehaviors": {
-      "x_min": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "X", "mode": "MIN", "modifier": { "origin": { "$field": "x_origin_active" } }, "group": { "$field": "group" } } },
-      "x_center": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "X", "mode": "CENTER", "modifier": "", "group": { "$field": "group" } } },
-      "x_max": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "X", "mode": "MAX", "modifier": { "origin": { "$field": "x_origin_active" } }, "group": { "$field": "group" } } },
-      "x_surface": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "X", "mode": "CENTER", "modifier": "SURFACE", "group": { "$field": "group" } } },
-      "x_geo": { "toggleFields": ["x_origin_active"], "execute": false },
-      "y_min": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "Y", "mode": "MIN", "modifier": { "origin": { "$field": "y_origin_active" } }, "group": { "$field": "group" } } },
-      "y_center": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "Y", "mode": "CENTER", "modifier": "", "group": { "$field": "group" } } },
-      "y_max": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "Y", "mode": "MAX", "modifier": { "origin": { "$field": "y_origin_active" } }, "group": { "$field": "group" } } },
-      "y_surface": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "Y", "mode": "CENTER", "modifier": "SURFACE", "group": { "$field": "group" } } },
-      "y_geo": { "toggleFields": ["y_origin_active"], "execute": false },
-      "center_artboard": { "execute": true, "payloadTemplate": { "command": "center_artboard", "group": { "$field": "group" } } },
-      "center_everything": { "execute": true, "payloadTemplate": { "command": "center_all", "group": { "$field": "group" } } },
-      "toggle_group": { "toggleFields": ["group"], "execute": false }
+      "x_min": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "align_axis",
+          "axis": "X",
+          "mode": "MIN",
+          "modifier": {
+            "origin": {
+              "$field": "x_origin_active"
+            }
+          },
+          "group": {
+            "$field": "group"
+          }
+        }
+      },
+      "x_center": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "align_axis",
+          "axis": "X",
+          "mode": "CENTER",
+          "modifier": "",
+          "group": {
+            "$field": "group"
+          }
+        }
+      },
+      "x_max": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "align_axis",
+          "axis": "X",
+          "mode": "MAX",
+          "modifier": {
+            "origin": {
+              "$field": "x_origin_active"
+            }
+          },
+          "group": {
+            "$field": "group"
+          }
+        }
+      },
+      "x_surface": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "align_axis",
+          "axis": "X",
+          "mode": "CENTER",
+          "modifier": "SURFACE",
+          "group": {
+            "$field": "group"
+          }
+        }
+      },
+      "x_geo": {
+        "toggleFields": [
+          "x_origin_active"
+        ],
+        "execute": false
+      },
+      "y_min": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "align_axis",
+          "axis": "Y",
+          "mode": "MIN",
+          "modifier": {
+            "origin": {
+              "$field": "y_origin_active"
+            }
+          },
+          "group": {
+            "$field": "group"
+          }
+        }
+      },
+      "y_center": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "align_axis",
+          "axis": "Y",
+          "mode": "CENTER",
+          "modifier": "",
+          "group": {
+            "$field": "group"
+          }
+        }
+      },
+      "y_max": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "align_axis",
+          "axis": "Y",
+          "mode": "MAX",
+          "modifier": {
+            "origin": {
+              "$field": "y_origin_active"
+            }
+          },
+          "group": {
+            "$field": "group"
+          }
+        }
+      },
+      "y_surface": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "align_axis",
+          "axis": "Y",
+          "mode": "CENTER",
+          "modifier": "SURFACE",
+          "group": {
+            "$field": "group"
+          }
+        }
+      },
+      "y_geo": {
+        "toggleFields": [
+          "y_origin_active"
+        ],
+        "execute": false
+      },
+      "center_artboard": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "center_artboard",
+          "group": {
+            "$field": "group"
+          }
+        }
+      },
+      "center_everything": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "center_all",
+          "group": {
+            "$field": "group"
+          }
+        }
+      },
+      "toggle_group": {
+        "toggleFields": [
+          "group"
+        ],
+        "execute": false
+      }
+    },
+    "placements": {
+      "x_min": {
+        "x": 0,
+        "y": 0,
+        "width": 68.53610824921516,
+        "height": 42,
+        "zIndex": 0
+      },
+      "x_center": {
+        "x": 68.53610824921516,
+        "y": 0,
+        "width": 84.55831945244073,
+        "height": 42,
+        "zIndex": 1
+      },
+      "x_max": {
+        "x": 153.0944277016559,
+        "y": 0,
+        "width": 72.12996252813582,
+        "height": 42,
+        "zIndex": 2
+      },
+      "x_surface": {
+        "x": 225.2243902297917,
+        "y": 0,
+        "width": 89.65467162142194,
+        "height": 42,
+        "zIndex": 3
+      },
+      "x_geo": {
+        "x": 314.87906185121363,
+        "y": 0,
+        "width": 80.24327412136108,
+        "height": 42,
+        "zIndex": 4
+      },
+      "y_min": {
+        "x": 0,
+        "y": 42,
+        "width": 68.30773082836899,
+        "height": 42,
+        "zIndex": 5
+      },
+      "y_center": {
+        "x": 68.30773082836899,
+        "y": 42,
+        "width": 84.3299191419693,
+        "height": 42,
+        "zIndex": 6
+      },
+      "y_max": {
+        "x": 152.6376499703383,
+        "y": 42,
+        "width": 71.90162325666502,
+        "height": 42,
+        "zIndex": 7
+      },
+      "y_surface": {
+        "x": 224.53927322700332,
+        "y": 42,
+        "width": 89.42627131095053,
+        "height": 42,
+        "zIndex": 8
+      },
+      "y_geo": {
+        "x": 313.96554453795386,
+        "y": 42,
+        "width": 80.01486618101458,
+        "height": 42,
+        "zIndex": 9
+      },
+      "center_artboard": {
+        "x": 0,
+        "y": 84,
+        "width": 53.31919984101271,
+        "height": 42,
+        "zIndex": 10
+      },
+      "center_everything": {
+        "x": 53.31919984101271,
+        "y": 84,
+        "width": 75.80800484867135,
+        "height": 42,
+        "zIndex": 11
+      },
+      "toggle_group": {
+        "x": 129.12720468968405,
+        "y": 84,
+        "width": 71.4208114188505,
+        "height": 42,
+        "zIndex": 12
+      }
     }
   }
 }

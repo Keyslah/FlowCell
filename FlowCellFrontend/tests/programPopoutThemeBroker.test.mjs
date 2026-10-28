@@ -91,7 +91,11 @@ function harness(hooks = {}) {
     window: { setTimeout, clearTimeout }
   });
   const run = (capability, options, payload = {}) => module.exports.runInstalledPageCoreAction(identity, "test", { kind: "core-action", capability, options, payload });
-  return { run, initial, commits, windows, drafts, get document() { return document; }, get saves() { return saves; } };
+  const runForProgram = (programName, options, payload = {}) => module.exports.runInstalledPageCoreAction(
+    { ...identity, ownerButtonId: `theme-${programName}`, programName }, "test",
+    { kind: "core-action", capability: "button-theme.palette", options, payload }
+  );
+  return { run, runForProgram, initial, commits, windows, drafts, get document() { return document; }, get saves() { return saves; } };
 }
 
 function addLivePopout(h, { collapsed = false, draftSessionId } = {}) {
@@ -140,6 +144,34 @@ function addLiveMember(h, id, y) {
   doc.surfaces.pop.placementIds.push(id);
   doc.popoutUnits.unit.memberPlacementIds.push(id);
 }
+
+test("generic popped colors scope scans and edits to the selected program", async () => {
+  const h = harness();
+  addLivePopout(h);
+  const doc = h.document;
+  doc.buttons.krita = { ...doc.buttons.owner, id: "krita", label: "Krita Tools", metadata: { programName: "Krita", panelName: "Tools" } };
+  doc.placements.krita = { ...doc.placements.owner, id: "krita", buttonId: "krita", surfaceId: "krita-pop" };
+  doc.surfaces["krita-pop"] = { ...doc.surfaces.pop, id: "krita-pop", placementIds: ["krita"] };
+  doc.popoutUnits["krita-unit"] = { ...doc.popoutUnits.unit, id: "krita-unit", surfaceId: "krita-pop", ownerButtonId: "krita", ownerPlacementId: "krita" };
+  h.windows.set("krita-live", { ...h.windows.get("live"), programName: "Krita", buttonPopoutUnitId: "krita-unit" });
+  const blender = structuredClone(doc.programPopoutThemes.blender);
+  const scan = await h.runForProgram("Krita", { operation: "scan" });
+  assert.equal(scan.buttonCount, 1);
+  assert.equal(scan.placements[0].label, "Krita Tools");
+  assert.match(scan.message, /1 open Krita Pop-out\/Fan window/);
+  assert.doesNotMatch(scan.message, /Blender/);
+  await h.runForProgram("Krita", { operation: "edit" }, {
+    expectedRevision: scan.revision, edits: [{ placementId: scan.placements[0].placementId, color: "#ABCDEF" }]
+  });
+  assert.deepEqual(h.document.programPopoutColorOverrides.krita, { surface: "#ABCDEF" });
+  assert.equal(h.document.programPopoutColorOverrides.owner, undefined);
+  await h.runForProgram("Krita", { operation: "settings" }, { settings: { ...h.initial, hoverGlowAmount: 17 } });
+  assert.equal(h.document.programPopoutThemes.krita.hoverGlowAmount, 17);
+  assert.deepEqual(h.document.programPopoutThemes.blender, blender);
+  const empty = await h.runForProgram("Illustrator", { operation: "scan" });
+  assert.equal(empty.buttonCount, 0);
+  assert.equal(empty.message, "No open Illustrator popped Buttons were found.");
+});
 
 test("individual fill and selected text edits override the shared gradient without changing other Buttons or the recipe", async () => {
   const h = harness();

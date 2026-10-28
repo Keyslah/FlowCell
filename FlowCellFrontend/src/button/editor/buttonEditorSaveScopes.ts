@@ -4,6 +4,7 @@ import type {
   ButtonStateDocument
 } from "../types.js";
 import { cloneButtonDocument } from "../state/buttonDefaults.js";
+import { resolveButtonPlacementPresentation } from "../state/buttonPresentation.js";
 import type { ButtonPlacementSizingMode } from "./buttonSizeAssignments.js";
 import {
   applyButtonSettingsFile,
@@ -467,7 +468,6 @@ export function buildButtonTextScopedDocument(
   const scopedButtonIds = new Set<string>();
 
   for (const entry of scope.entries) {
-    scopedButtonIds.add(entry.buttonId);
     const committedPlacement = requireDraftRecord(
       committed.placements,
       entry.placementId,
@@ -477,7 +477,8 @@ export function buildButtonTextScopedDocument(
     if (committedPlacement.buttonId !== entry.buttonId || draftPlacement.buttonId !== entry.buttonId) {
       throw new Error(`Button placement '${entry.placementId}' no longer belongs to '${entry.buttonId}'.`);
     }
-    if (committedPlacement.activationCycle === null) {
+    if (!draftPlacement.presentationOverride) scopedButtonIds.add(entry.buttonId);
+    if (committedPlacement.activationCycle === null && !draftPlacement.presentationOverride) {
       baseLabelButtonIds.add(entry.buttonId);
     }
     const draftCycleStatesById = new Map(
@@ -501,6 +502,13 @@ export function buildButtonTextScopedDocument(
           }
         : null
     };
+    if (draftPlacement.presentationOverride) {
+      const currentOverride = next.placements[entry.placementId].presentationOverride ?? {};
+      for (const key of ["label", "tooltip"] as const) {
+        if (draftPlacement.presentationOverride[key] !== undefined) currentOverride[key] = draftPlacement.presentationOverride[key];
+      }
+      next.placements[entry.placementId].presentationOverride = currentOverride;
+    }
   }
 
   for (const buttonId of scopedButtonIds) {
@@ -534,9 +542,9 @@ export function applyButtonTextSavedScope(
   const baseLabelButtonIds = new Set<string>();
   const scopedButtonIds = new Set<string>();
   for (const entry of scope.entries) {
-    scopedButtonIds.add(entry.buttonId);
     const savedPlacement = saved.placements[entry.placementId];
-    if (savedPlacement?.activationCycle === null) {
+    if (!savedPlacement?.presentationOverride) scopedButtonIds.add(entry.buttonId);
+    if (savedPlacement?.activationCycle === null && !savedPlacement.presentationOverride) {
       baseLabelButtonIds.add(entry.buttonId);
     }
   }
@@ -558,6 +566,12 @@ export function applyButtonTextSavedScope(
     const savedPlacement = saved.placements[entry.placementId];
     const targetPlacement = target.placements[entry.placementId];
     if (savedPlacement && targetPlacement) {
+      if (savedPlacement.presentationOverride) {
+        targetPlacement.presentationOverride ??= {};
+        for (const key of ["label", "tooltip"] as const) {
+          if (savedPlacement.presentationOverride[key] !== undefined) targetPlacement.presentationOverride[key] = savedPlacement.presentationOverride[key];
+        }
+      }
       targetPlacement.textFitMode = savedPlacement.textFitMode;
       targetPlacement.textAlignment = savedPlacement.textAlignment;
       targetPlacement.minimumFontSize = savedPlacement.minimumFontSize;
@@ -578,11 +592,20 @@ export function applyButtonTextSavedScope(
 export function buildButtonAnimationScopedDocument(
   committed: ButtonStateDocument,
   draft: ButtonStateDocument,
-  buttonId: string
+  buttonId: string,
+  placementId?: string
 ): ButtonStateDocument {
   const committedButton = requireDraftRecord(committed.buttons, buttonId, "Saved Button");
   const draftButton = requireDraftRecord(draft.buttons, buttonId, "Button");
   const next = cloneButtonDocument(committed);
+  if (placementId) {
+    const placement = requireDraftRecord(next.placements, placementId, "Saved Button occurrence");
+    const draftPlacement = requireDraftRecord(draft.placements, placementId, "Button occurrence");
+    if (placement.buttonId !== buttonId || draftPlacement.buttonId !== buttonId) throw new Error("Animation occurrence belongs to another Button.");
+    placement.presentationOverride ??= {};
+    placement.presentationOverride.activationAnimation = structuredClone(resolveButtonPlacementPresentation(draftButton, draftPlacement).activationAnimation);
+    return next;
+  }
   next.buttons[buttonId] = {
     ...structuredClone(committedButton),
     activationAnimation: structuredClone(draftButton.activationAnimation)
@@ -594,8 +617,18 @@ export function buildButtonAnimationScopedDocument(
 export function applyButtonAnimationSavedScope(
   target: ButtonStateDocument,
   saved: ButtonStateDocument,
-  buttonId: string
+  buttonId: string,
+  placementId?: string
 ): void {
+  if (placementId) {
+    const savedPlacement = saved.placements[placementId];
+    const targetPlacement = target.placements[placementId];
+    if (savedPlacement?.buttonId === buttonId && targetPlacement?.buttonId === buttonId) {
+      targetPlacement.presentationOverride ??= {};
+      targetPlacement.presentationOverride.activationAnimation = structuredClone(resolveButtonPlacementPresentation(saved.buttons[buttonId], savedPlacement).activationAnimation);
+    }
+    return;
+  }
   const savedButton = saved.buttons[buttonId];
   if (savedButton && target.buttons[buttonId]) {
     target.buttons[buttonId].activationAnimation = structuredClone(savedButton.activationAnimation);

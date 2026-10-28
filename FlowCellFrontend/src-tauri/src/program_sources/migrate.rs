@@ -1844,6 +1844,7 @@ mod tests {
                 delete_script: String::new(),
             },
             addon_reload_notes: String::new(),
+            theme_library: None,
             app_restart_notes: String::new(),
         };
         let panel_record = root.join("cycle_versions_back.flowcell-panel-item.json");
@@ -1901,6 +1902,7 @@ mod tests {
                 delete_script: String::new(),
             },
             addon_reload_notes: String::new(),
+            theme_library: None,
             app_restart_notes: String::new(),
         };
 

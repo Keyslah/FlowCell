@@ -1,0 +1,33 @@
+{
+  "format": "flowcell-blender-theme-v1",
+  "savedAt": "1780447884",
+  "values": {
+    "StaticBackgroundPath": "",
+    "ThemeAccentTextHex": "#515144",
+    "ThemeControlTextHex": "#515144",
+    "ThemeControlsHex": "#3A6A24",
+    "ThemeDarksHex": "#9CCA4D",
+    "ThemeEditorBackgroundHex": "#9CCA4D",
+    "ThemeHeaderTextHex": "#515144",
+    "ThemeHeadersHex": "#3A6A24",
+    "ThemeHighlightsHex": "#386622",
+    "ThemeImagePath": "D:\\pics\\Sun2\\fern.jpeg",
+    "ThemeMiscHex": "#9CCA4D",
+    "ThemePaletteHexes": [
+      "#699D37",
+      "#9CCA4D",
+      "#202010",
+      "#204F0F",
+      "#3A6A24",
+      "#9CCA4D"
+    ],
+    "ThemeSceneHex": "#699D37",
+    "ThemeTabsHex": "#699D37",
+    "ThemeTabsTextHex": "#515144",
+    "ThemeTextHex": "#515144",
+    "ThemeViewportBackgroundHex": "#699D37",
+    "ThemeViewportGradientEnabled": true,
+    "ThemeViewportGradientHex": "#9CCA4D",
+    "ThemeVisualMode": "light"
+  }
+}

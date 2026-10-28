@@ -158,7 +158,7 @@
     },
     {
       "id": "blender.theme",
-      "version": "3.0.36",
+      "version": "3.1.1",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/theme",
       "importKind": "script",
@@ -208,7 +208,7 @@
     },
     {
       "id": "blender.alignment-tools",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/alignment-tools/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -223,7 +223,7 @@
     },
     {
       "id": "blender.boolean",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/boolean/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -238,7 +238,7 @@
     },
     {
       "id": "blender.flatten-revolve",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/flatten-revolve/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -253,7 +253,7 @@
     },
     {
       "id": "blender.remesh",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/remesh/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -268,7 +268,7 @@
     },
     {
       "id": "blender.rotate",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/rotate/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -283,7 +283,7 @@
     },
     {
       "id": "blender.smart-axis",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/smart-axis/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -298,7 +298,7 @@
     },
     {
       "id": "blender.tri-poly",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/tri-poly/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -313,7 +313,7 @@
     },
     {
       "id": "blender.xyz-dimensions",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/xyz-dimensions/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -334,5 +334,6 @@
     "deleteScript": "Remove-BlenderFlowCellButton.ps1"
   },
   "addonReloadNotes": "Reload the FlowCell Blender add-on or restart Blender after bridge deployment changes.",
-  "appRestartNotes": "Restart FlowCell after changing this program manifest."
+  "appRestartNotes": "Restart FlowCell after changing this program manifest.",
+  "themeLibrary": "themes/Blender"
 }

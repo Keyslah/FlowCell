@@ -16,6 +16,8 @@ use commands::layouts::*;
 use commands::macros::*;
 use commands::programs::*;
 use commands::screen_color::*;
+use commands::theme_archive::*;
+use commands::themes::*;
 use commands::tool_packages::*;
 use commands::windows::*;
 
@@ -190,6 +192,17 @@ fn main() {
             get_flowcell_theme_directory,
             save_flowcell_theme_file,
             load_flowcell_theme_file,
+            list_flowcell_themes,
+            get_theme_migration_path_map,
+            get_theme_tool_descriptors,
+            export_flowcell_theme_archive,
+            package_flowcell_theme_archive,
+            validate_flowcell_theme_assets,
+            prepare_theme_archive_sources,
+            finish_theme_archive_sources,
+            read_flowcell_theme_archive,
+            materialize_flowcell_theme_archive,
+            program_sources::installed_page::resolve_theme_contribution,
             list_program_folders,
             list_panel_folders,
             list_available_program_packages,
@@ -306,6 +319,9 @@ fn main() {
             recover_add_program_transactions_on_startup(app.handle())
                 .map_err(std::io::Error::other)?;
             recover_add_panel_transactions_on_startup().map_err(std::io::Error::other)?;
+            if let Err(error) = migrate_theme_libraries_on_startup() {
+                append_flowcell_local_log("themes.log", &format!("Theme migration will resume on next startup: {error}"));
+            }
             start_flowcell_backend().map_err(std::io::Error::other)?;
 
             if let Err(error) = synchronize_tool_set_hotkeys(app.handle()) {

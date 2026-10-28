@@ -382,7 +382,8 @@ export function validateInstalledButtonLayout<T>(layout: T): T {
     Object.entries(layout.placements).forEach(([slot, rect]) => {
       if (!slot.trim()) invalid("placements", "cannot contain an empty slot.");
       validateRect(rect, `placements.${slot}`);
-      rejectUnknownKeys(rect as UnknownRecord, ["x", "y", "width", "height"], `placements.${slot}`);
+      rejectUnknownKeys(rect as UnknownRecord, ["x", "y", "width", "height", "zIndex"], `placements.${slot}`);
+      validateOptionalFiniteNumber(rect as UnknownRecord, "zIndex", `placements.${slot}`);
     });
   }
 

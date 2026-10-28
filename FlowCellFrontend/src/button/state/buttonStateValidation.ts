@@ -28,6 +28,7 @@ import {
 } from "../skins/buttonSkinColors.js";
 import { isButtonActivationAnimationPresetId, isButtonAnimationFadeCurve, isButtonAnimationFrequency, isButtonAnimationOpacity } from "../animations/buttonActivationAnimations.js";
 import { normalizeProgramPopoutColorOverride, normalizeProgramPopoutThemeLock, normalizeProgramPopoutThemeSettings } from "../../theme/programPopoutTheme.js";
+import { BUTTON_PRESENTATION_OVERRIDE_KEYS, resolveButtonPlacementPresentation } from "./buttonPresentation.js";
 
 export interface ButtonStateValidationIssue {
   path: string;
@@ -881,6 +882,17 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       addIssue(issues, path, "Placement geometry must be finite and positive.");
     }
     if (!document.buttons[placement.buttonId]) addIssue(issues, `${path}.buttonId`, "Placement references a missing Button.");
+    if (document.buttons[placement.buttonId]?.metadata?.themeContributionOnly === true) {
+      addIssue(issues, `${path}.buttonId`, "Theme contributions are edited through Theme and cannot have ordinary Button placements.");
+    }
+    if (placement.presentationOverride !== undefined) {
+      if (!isObject(placement.presentationOverride) || Object.keys(placement.presentationOverride).some((key) =>
+        !(BUTTON_PRESENTATION_OVERRIDE_KEYS as readonly string[]).includes(key))) {
+        addIssue(issues, `${path}.presentationOverride`, "A placement may override presentation only, never execution or ownership.");
+      } else if (document.buttons[placement.buttonId]) {
+        validateButtonRecord(resolveButtonPlacementPresentation(document.buttons[placement.buttonId], placement), placement.buttonId, issues);
+      }
+    }
     const surface = document.surfaces[placement.surfaceId];
     if (!isObject(surface)) addIssue(issues, `${path}.surfaceId`, "Placement references a missing surface.");
     else if (Array.isArray(surface.placementIds) && !surface.placementIds.includes(key)) {
@@ -896,7 +908,7 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     } else if (placement.visualStateMap !== null) {
       validateButtonVisualStateMap(
         placement.visualStateMap,
-        document.buttons[placement.buttonId],
+        document.buttons[placement.buttonId] ? resolveButtonPlacementPresentation(document.buttons[placement.buttonId], placement) : undefined,
         placement.activationCycle,
         `${path}.visualStateMap`,
         issues

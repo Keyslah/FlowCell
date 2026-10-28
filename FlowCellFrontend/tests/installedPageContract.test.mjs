@@ -585,12 +585,16 @@ test("Core contains no retired product page routes, actions, modules, or fallbac
     ["src", "lib", "illustratorLayers.ts"],
     ["src-tauri", "src", "commands", "illustrator.rs"],
     ["src-tauri", "src", "commands", "organization.rs"],
-    ["src-tauri", "src", "commands", "themes.rs"],
     ["src-tauri", "src", "commands", "tool_state.rs"]
   ];
   for (const parts of retiredPaths) {
     assert.equal(existsSync(join(frontendRoot, ...parts)), false, parts.join("/"));
   }
+
+  const themeStorage = read(frontendRoot, "src-tauri", "src", "commands", "themes.rs");
+  assert.match(themeStorage, /resolve_theme_directory/);
+  assert.match(themeStorage, /require_registered_program_name/);
+  assert.doesNotMatch(themeStorage, /fn (?:sample_blender_theme|save_blender_theme|load_blender_theme)/);
 
   const runtimeFiles = [
     ["src", "AppBase.tsx"],
@@ -648,4 +652,51 @@ test("generated Button staging is token-bound, hash-verified, and product-neutra
     nativeRuntime,
     /windows\.setup-organization|flowcell\.windows\.setup-organization/
   );
+});
+
+
+test("theme library preflight reports contribution versions and legacy assets without applying or staging", async () => {
+  const source = read(frontendRoot, "src", "pages", "theme", "ThemeContribution.tsx");
+  const parsed = ts.createSourceFile("ThemeContribution.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const names = ["record", "declaredAssetPaths", "reviewThemeContribution"];
+  const functions = parsed.statements.filter((statement) => ts.isFunctionDeclaration(statement) && names.includes(statement.name?.text))
+    .map((statement) => statement.getText(parsed).replace(/^export /, "")).join("\n");
+  const compiled = ts.transpileModule(functions, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const calls = [];
+  const review = new Function("invoke", `${compiled}\nreturn reviewThemeContribution;`)(async (command, payload) => {
+    calls.push({ command, payload });
+    throw new Error("Required theme asset 'C:/missing.hdr' was not found.");
+  });
+  const controller = {
+    sourceId: "example.theme",
+    capture: async () => ({ sourceId: "example.theme", sourceVersion: "2.0.0", state: { fields: {} }, assetFields: ["fields.picture"] }),
+    validate: async () => {},
+    loadLegacy: async () => ({ state: { fields: { picture: "C:/missing.hdr" } } }),
+    stage: () => { throw new Error("Preview must not stage"); },
+    apply: () => { throw new Error("Preview must not apply"); }
+  };
+  const contribution = { sourceId: "example.theme", sourceVersion: "1.0.0", state: { fields: {} }, assetFields: ["fields.other"] };
+  let issues = await review(controller, { portable: { contributions: { example: contribution } }, legacy: null });
+  assert.equal(issues.length, 2);
+  assert.match(issues[0], /1\.0\.0.*2\.0\.0/);
+  assert.match(issues[1], /asset declarations/);
+  assert.deepEqual(calls, []);
+  issues = await review(null, { portable: { contributions: { example: contribution } }, legacy: null });
+  assert.match(issues[0], /installed theme features/);
+  issues = await review(controller, { path: "legacy.json", portable: null, legacy: {} });
+  assert.match(issues[0], /missing\.hdr/);
+  assert.deepEqual(calls, [{ command: "validate_flowcell_theme_assets", payload: { paths: ["C:/missing.hdr"] } }]);
+});
+
+test("theme preview accepts embedded raster signatures and never renders SVG or external markup", () => {
+  const source = read(frontendRoot, "src", "pages", "theme", "ThemeLibraryDialog.tsx");
+  const parsed = ts.createSourceFile("ThemeLibraryDialog.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const fn = parsed.statements.find((statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === "portableThemeThumbnail");
+  const compiled = ts.transpileModule(fn.getText(parsed).replace(/^export /, ""), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const thumbnail = new Function(`${compiled}\nreturn portableThemeThumbnail;`)();
+  const svg = Buffer.from('<svg onload="alert(1)"></svg>').toString("base64");
+  assert.equal(thumbnail({ assets: [{ path: "pretend.png", base64: svg }] }), null);
+  assert.equal(thumbnail({ assets: [{ url: "https://example.invalid/image.png" }] }), null);
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]).toString("base64");
+  assert.equal(thumbnail({ assets: [{ base64: svg }, { base64: png }] }), `data:image/png;base64,${png}`);
 });

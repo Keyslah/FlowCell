@@ -101,6 +101,14 @@ pub(crate) struct InstalledPageAction {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ThemeContributionManifest {
+    pub version: u32,
+    pub persistent_field_ids: Vec<String>,
+    pub asset_field_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct InstalledPageManifest {
     pub schema_version: u32,
     pub id: String,
@@ -121,6 +129,8 @@ pub(crate) struct InstalledPageManifest {
     pub refresh_events: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme_contribution: Option<ThemeContributionManifest>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -164,6 +174,9 @@ pub(crate) struct InstalledPageDescriptor {
     pub supported_data_formats: Vec<String>,
     pub config: Value,
     pub refresh_events: Vec<String>,
+    pub theme_contribution: Option<ThemeContributionManifest>,
+    pub source_id: Option<String>,
+    pub source_version: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -768,6 +781,16 @@ pub(crate) fn validate_and_normalize_page_manifest(
         true,
     )?;
     normalize_unique_refresh_events(&mut page.refresh_events)?;
+    if let Some(contribution) = page.theme_contribution.as_mut() {
+        if contribution.version != 1 {
+            return Err("Unsupported theme contribution version.".into());
+        }
+        normalize_unique_tokens(&mut contribution.persistent_field_ids, "page.themeContribution.persistentFieldIds", false)?;
+        normalize_unique_tokens(&mut contribution.asset_field_ids, "page.themeContribution.assetFieldIds", false)?;
+        if contribution.asset_field_ids.iter().any(|id| !contribution.persistent_field_ids.contains(id)) {
+            return Err("Theme asset fields must be declared persistent theme fields.".into());
+        }
+    }
     if page.actions.len() > MAX_PAGE_ACTIONS {
         return Err(format!(
             "Installed page '{}' declares more than {MAX_PAGE_ACTIONS} actions.",
@@ -1966,6 +1989,28 @@ fn asset_mime_type(path: &str) -> &'static str {
     }
 }
 
+/// Discover a package-owned contribution without installing or executing it.
+#[tauri::command]
+pub(crate) fn resolve_theme_contribution(program_name: String) -> Result<Option<InstalledPageDescriptor>, String> {
+    let program_name = crate::require_registered_program_name(&program_name)?;
+    let panels = crate::list_panel_folders(program_name.clone())?;
+    let mut matches = Vec::new();
+    for panel_name in panels {
+        for resolution in super::execute::list_active_source_records(&program_name, &panel_name)? {
+            if resolution.record.page.as_ref().is_some_and(|page| page.theme_contribution.is_some()) {
+                matches.push(resolution);
+            }
+        }
+    }
+    if matches.len() > 1 {
+        return Err(format!("{} installed Theme contributions match {}. Resolve the ambiguous owners before editing.", matches.len(), program_name));
+    }
+    let Some(resolution) = matches.pop() else { return Ok(None); };
+    let page_id = resolution.record.page.as_ref().unwrap().id.clone();
+    resolve_installed_page(resolution.record.owner_button_id, program_name,
+        resolution.record.panel_name, resolution.file_name, page_id).map(Some)
+}
+
 #[tauri::command]
 pub(crate) fn resolve_installed_page(
     owner_button_id: String,
@@ -2033,6 +2078,8 @@ pub(crate) fn resolve_installed_page(
         .display()
         .to_string();
     Ok(InstalledPageDescriptor {
+        source_id: resolution.record.bundled_source_id.clone(),
+        source_version: resolution.record.bundled_source_version.clone(),
         owner_button_id: resolution.record.owner_button_id,
         program_id: resolution.record.program_id,
         program_name: resolution.record.program_name,
@@ -2056,6 +2103,7 @@ pub(crate) fn resolve_installed_page(
         supported_data_formats: page.supported_data_formats,
         config: page.config.unwrap_or(Value::Null),
         refresh_events: page.refresh_events,
+        theme_contribution: page.theme_contribution,
     })
 }
 
@@ -2105,7 +2153,7 @@ fn read_owner_state(
     }
     let raw = fs::read_to_string(&path)
         .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
-    let envelope = serde_json::from_str::<OwnerStateEnvelope>(&raw)
+    let mut envelope = serde_json::from_str::<OwnerStateEnvelope>(&raw)
         .map_err(|error| format!("Installed page owner state is invalid: {error}"))?;
     if envelope.schema_version != 1
         || envelope.page_id != page.id
@@ -2114,6 +2162,9 @@ fn read_owner_state(
         return Err(
             "Installed page owner state does not match its declared page format.".to_string(),
         );
+    }
+    if crate::commands::themes::remap_migrated_theme_paths(&mut envelope.value)? {
+        write_owner_state(record, page, envelope.value.clone())?;
     }
     Ok(envelope.value)
 }
@@ -2672,6 +2723,7 @@ mod tests {
             shared_program_data_namespace: None,
             supported_data_formats: vec!["example.data.v1".to_string()],
             refresh_events: vec!["example:refresh".to_string()],
+            theme_contribution: None,
             config: Some(json!({ "mode": "example" })),
         }
     }

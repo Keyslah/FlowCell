@@ -4,6 +4,7 @@
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
     "resources": {
+      "../public/themes/main/": "themes/main/",
       "../../dist/installer-resources/flowcellbackend/": "flowcellbackend/",
       "../../dist/installer-resources/tools/": "tools/",
       "../../dist/installer-resources/flowcell-installed.json": "flowcell-installed.json",

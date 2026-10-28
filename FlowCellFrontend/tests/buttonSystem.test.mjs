@@ -168,6 +168,7 @@ import {
 import {
   ensureFanSetup,
   ensureRegularPopout,
+  hideThemeContributionOwner,
   removeOwnedButtonGraph,
   resolveDiscardedStagedOwnerButtonIds,
   resolveUninstallOwnerButtonIds
@@ -2763,7 +2764,7 @@ test("Main Button single clicks select, double clicks execute, and Pop or Fan st
   assert.match(buttonHost, /interactionElement\.addEventListener\("dblclick", handleDoubleClick\)/);
   assert.match(
     buttonHost,
-    /const handleDoubleClick = \(event: Event\) => \{[\s\S]{0,520}await handler\(buttonRef\.current, event as MouseEvent\);[\s\S]{0,320}const placementCycle = placementRef\.current\.activationCycle;[\s\S]{0,260}placementCycle && placementCycle\.states\.length >= 2[\s\S]{0,260}requestActivationTriggerRef\.current\("press", interactionId, true\);[\s\S]{0,120}requestActivationTriggerRef\.current\("release", interactionId, true\);[\s\S]{0,180}await advanceButtonActivationState\(buttonRef\.current\.id, stateCount\)/
+    /const handleDoubleClick = \(event: Event\) => \{[\s\S]{0,520}await handler\(buttonRef\.current, event as MouseEvent\);[\s\S]{0,320}const placementCycle = placementRef\.current\.activationCycle;[\s\S]{0,260}placementCycle && placementCycle\.states\.length >= 2[\s\S]{0,260}requestActivationTriggerRef\.current\("press", interactionId, true\);[\s\S]{0,120}requestActivationTriggerRef\.current\("release", interactionId, true\);[\s\S]{0,180}await advanceButtonActivationState\(activationStateKeyRef\.current, stateCount\)/
   );
   assert.match(buttonHost, /selectionOnlyRef\.current && trigger !== "hover" && !allowSelectionOnlyTrigger/);
   assert.match(buttonHost, /if \(selectionOnlyRef\.current\) \{\s*pressActivationInteractionIdRef\.current = null;\s*\} else \{/);
@@ -2823,7 +2824,7 @@ test("Button activation state drives live labels and mapped visuals without exte
   );
 
   assert.match(buttonHost, /subscribeButtonActivationState\([\s\S]{0,1300}setActivationStateIndex\(index\)/);
-  assert.match(buttonHost, /const activationStateKey = activationCycle \? placement\.id : button\.id;/);
+  assert.match(buttonHost, /const activationStateKey = activationCycle \|\| placement\.presentationOverride\?\.activationBehavior \? placement\.id : button\.id;/);
   assert.match(buttonHost, /const authoredVisualStates = useMemo\(\(\) => new Set<ButtonSkinVisualState>/);
   assert.match(buttonHost, /resolveButtonAppearance\(\{[\s\S]{0,180}activationBehavior: button\.activationBehavior,[\s\S]{0,100}activationCycle,[\s\S]{0,160}visualStateMap: placement\.visualStateMap/);
   assert.match(buttonHost, /visualStateMap: placement\.visualStateMap,\s*authoredVisualStates,/);
@@ -2973,7 +2974,8 @@ test("explicit Pop and Fan opens reveal after show while layout restore stays pa
   );
   assert.match(nativeWindows, /if explicit_open_reveal \{[\s\S]{0,420}return \(ScopedWindowPlacement::Normal, true\);/);
   assert.match(nativeWindows, /entry\.initial_reveal = true;/);
-  assert.match(nativeWindows, /if force\.unwrap_or\(false\) \{[\s\S]{0,260}entry\.last_placement = None;/);
+  assert.match(nativeWindows, /apply_scoped_window_state\([\s\S]{0,420}force\.unwrap_or\(false\),/);
+  assert.doesNotMatch(nativeWindows, /if force\.unwrap_or\(false\) \{[\s\S]{0,260}entry\.last_placement = None;/);
 });
 
 test("skin compilation keeps authored source separate from deterministic sanitized markup", () => {
@@ -7592,7 +7594,7 @@ test("Blender Flatten/Revolve ships one clean-import toolset with skinned select
 
   assert.equal(manifest.kind, "toolset");
   assert.equal(manifest.program, "Blender");
-  assert.equal(manifest.version, "1.1.0");
+  assert.equal(manifest.version, "1.1.1");
   assert.equal(manifest.source, "flatten revolve.py");
   assert.deepEqual(childSlots, [
     "pivot_select",
@@ -7618,14 +7620,14 @@ test("Blender Flatten/Revolve ships one clean-import toolset with skinned select
   assert.equal(manifest.layout.height, 260);
   assert.deepEqual(manifest.layout.updatePolicy, { appendMissingChildSlots: true });
   assert.deepEqual(manifest.layout.placements, {
-    pivot_select: { x: 8, y: 8, width: 144, height: 42 },
-    flatten_profile: { x: 8, y: 58, width: 144, height: 42 },
-    flatten_axis_select: { x: 160, y: 58, width: 72, height: 42 },
-    generate_revolve: { x: 8, y: 108, width: 144, height: 42 },
-    revolve_axis_select: { x: 160, y: 108, width: 72, height: 42 },
-    angle_input: { x: 240, y: 108, width: 104, height: 42 },
-    steps_input: { x: 352, y: 108, width: 104, height: 42 },
-    merge_input: { x: 464, y: 108, width: 128, height: 42 }
+    pivot_select: { x: 8, y: 50, width: 144, height: 42, zIndex: 4 },
+    flatten_profile: { x: 8, y: 8, width: 144, height: 42, zIndex: 0 },
+    flatten_axis_select: { x: 152, y: 8, width: 72, height: 42, zIndex: 1 },
+    generate_revolve: { x: 224, y: 8, width: 144, height: 42, zIndex: 2 },
+    revolve_axis_select: { x: 368, y: 8, width: 72, height: 42, zIndex: 3 },
+    angle_input: { x: 152, y: 50, width: 104, height: 42, zIndex: 5 },
+    steps_input: { x: 256, y: 50, width: 104, height: 42, zIndex: 6 },
+    merge_input: { x: 360, y: 50, width: 128, height: 42, zIndex: 7 }
   });
   assert.equal(manifest.layout.fields.length, 6);
   assert.equal(manifest.layout.fields.every((field) => field.hidden === true), true);
@@ -7724,7 +7726,7 @@ test("Blender Tri Poly ships clean-import skinned Angle and Sides value Buttons"
 
   assert.equal(manifest.kind, "toolset");
   assert.equal(manifest.program, "Blender");
-  assert.equal(manifest.version, "1.1.0");
+  assert.equal(manifest.version, "1.1.1");
   assert.equal(manifest.source, "tri poly.py");
   assert.deepEqual(
     manifest.children.map((child) => child.slot),
@@ -7756,14 +7758,14 @@ test("Blender Tri Poly ships clean-import skinned Angle and Sides value Buttons"
   assert.equal(manifest.layout.height, 160);
   assert.deepEqual(manifest.layout.updatePolicy, { appendMissingChildSlots: true });
   assert.deepEqual(manifest.layout.placements, {
-    triangle_equilateral: { x: 8, y: 8, width: 144, height: 42 },
-    triangle_isosceles: { x: 160, y: 8, width: 144, height: 42 },
-    triangle_50: { x: 312, y: 8, width: 144, height: 42 },
-    angle_input: { x: 464, y: 8, width: 104, height: 42 },
-    triangle_right: { x: 8, y: 58, width: 144, height: 42 },
-    triangle_scalene: { x: 160, y: 58, width: 144, height: 42 },
-    polygon_create: { x: 312, y: 58, width: 144, height: 42 },
-    sides_input: { x: 464, y: 58, width: 104, height: 42 }
+    triangle_equilateral: { x: 8, y: 8, width: 144, height: 42, zIndex: 0 },
+    triangle_isosceles: { x: 160, y: 8, width: 144, height: 42, zIndex: 1 },
+    triangle_50: { x: 312, y: 8, width: 144, height: 42, zIndex: 2 },
+    angle_input: { x: 464, y: 8, width: 104, height: 42, zIndex: 6 },
+    triangle_right: { x: 8, y: 58, width: 144, height: 42, zIndex: 3 },
+    triangle_scalene: { x: 160, y: 58, width: 144, height: 42, zIndex: 4 },
+    polygon_create: { x: 312, y: 58, width: 144, height: 42, zIndex: 5 },
+    sides_input: { x: 464, y: 58, width: 104, height: 42, zIndex: 7 }
   });
   assert.equal(manifest.layout.fields.length, 2);
   assert.equal(manifest.layout.fields.every((field) => field.hidden === true), true);
@@ -7850,7 +7852,7 @@ test("Blender Rotate shares one inline-value Button between Transform and Distri
     "flowcell.toolset.json"
   );
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  assert.equal(manifest.version, "1.1.0");
+  assert.equal(manifest.version, "1.1.1");
   assert.deepEqual(
     manifest.children.map((child) => child.slot),
     [
@@ -7876,10 +7878,11 @@ test("Blender Rotate shares one inline-value Button between Transform and Distri
   );
   assert.deepEqual(manifest.layout.updatePolicy, { appendMissingChildSlots: true });
   assert.deepEqual(manifest.layout.placements.value_input, {
-    x: 160,
-    y: 208,
+    x: 248,
+    y: 193,
     width: 144,
-    height: 42
+    height: 42,
+    zIndex: 16
   });
   assert.deepEqual(manifest.layout.fields.map((field) => field.id), [
     "axis",
@@ -8401,6 +8404,53 @@ test("fan validation enforces identity, exact membership, anchors, and bounds", 
     wrongOwnerResult.issues.some((issue) => issue.path === `fanSetups.${fan.id}.panelOwnerButtonId`),
     true
   );
+});
+
+test("theme contribution synchronization retains its owner and settings without a standalone Button", () => {
+  const document = createButtonStateDocument();
+  const identity = source("Blender", "toolset", "theme.flowcell-source.json");
+  const owner = button("theme", "single-script", identity);
+  owner.metadata.localSetting = "preserve";
+  document.buttons.theme = owner;
+  document.buttons.other = button("other", "single-script", source("Blender", "toolset", "other.py"));
+  addScopePanelSurface(document, "panel", "toolset", ["theme", "other"]);
+  const originalOwner = structuredClone(owner);
+  const otherPlacement = structuredClone(document.placements["placement-panel-other"]);
+  const descriptor = {
+    ownerButtonId: owner.id, themeContributionOnly: true,
+    sourceIdentity: { programName: "Blender", panelName: "toolset", fileName: "theme.flowcell-source.json" },
+    owner: { label: "Theme", executionTarget: owner.executionTarget }, children: []
+  };
+  const result = reconcileBundledProgramSources(document, [descriptor]);
+  assert.deepEqual(result.buttons.theme, { ...originalOwner, metadata: { ...originalOwner.metadata, themeContributionOnly: true } });
+  assert.deepEqual(result.placements["placement-panel-other"], otherPlacement);
+  assert.deepEqual(result.surfaces.panel.placementIds, ["placement-panel-other"]);
+  assert.equal(result.placements["placement-panel-theme"], undefined);
+  assert.deepEqual(reconcileBundledProgramSources(result, [descriptor]), result);
+  const fresh = reconcileBundledProgramSources(createButtonStateDocument(), [descriptor]);
+  assert.equal(fresh.buttons.theme.metadata.themeContributionOnly, true);
+  assert.equal(Object.values(fresh.placements).some((placement) => placement.buttonId === "theme"), false);
+  assert.equal(validateButtonStateDocument(fresh).valid, true);
+});
+
+test("theme contribution migration removes Pop and Fan occurrences without moving retained Buttons", () => {
+  const document = createButtonStateDocument();
+  document.buttons.theme = button("theme", "single-script", source("Blender", "Tools", "theme.py"));
+  document.buttons.other = button("other", "single-script", source("Blender", "Tools", "other.py"));
+  const pop = ensureRegularPopout(document, [document.buttons.theme, document.buttons.other]);
+  const fan = ensureFanSetup({ document, programName: "Blender", panelName: "Tools", buttons: [document.buttons.theme, document.buttons.other] });
+  const otherPlacements = Object.values(document.placements).filter((placement) => placement.buttonId === "other").map((placement) => structuredClone(placement));
+  hideThemeContributionOwner(document, "theme");
+  assert.equal(document.buttons.theme.metadata.themeContributionOnly, true);
+  assert.equal(Object.values(document.placements).some((placement) => placement.buttonId === "theme"), false);
+  assert.deepEqual(otherPlacements.map((placement) => document.placements[placement.id]), otherPlacements);
+  assert.deepEqual(pop.memberSourceIdentities, [document.buttons.other.sourceIdentity]);
+  assert.deepEqual(fan.fanMemberButtonIds, ["other"]);
+  assert.equal(validateButtonStateDocument(document).valid, true);
+  assert.equal(ensureRegularPopout(document, [document.buttons.theme, document.buttons.other]).id, pop.id);
+  assert.equal(ensureFanSetup({ document, programName: "Blender", panelName: "Tools", buttons: [document.buttons.theme, document.buttons.other] }).id, fan.id);
+  assert.throws(() => ensureRegularPopout(document, [document.buttons.theme]), /at least one/);
+  assert.throws(() => ensureFanSetup({ document, programName: "Blender", panelName: "Tools", buttons: [document.buttons.theme] }), /at least one/);
 });
 
 test("shared owner-graph removal cleans children, surfaces, popouts, fans, anchors, and uninstall IDs", () => {

@@ -889,7 +889,7 @@ test("skin assignment keeps authored colors unless a later Theme color explicitl
   assert.deepEqual(document, before);
 });
 
-test("theme application preserves layout and writes only explicit host appearance overrides", () => {
+test("legacy theme application restores saved size and text fields without inferring positions", () => {
   const source = fixture();
   Object.assign(source.placements["placement-button-a"], {
     width: 24,
@@ -931,18 +931,18 @@ test("theme application preserves layout and writes only explicit host appearanc
       highlightOnHover: placementAfter.highlightOnHover
     },
     {
-      width: 20,
-      height: 20,
-      textFitMode: "shrink",
-      textAlignment: "skin",
-      textOffsetX: 0,
-      textOffsetY: 0,
-      minimumFontSize: 8,
-      textSizeOverride: null,
-      allowLabelResize: false,
-      matchHitboxToSkin: true,
-      allowStretching: false,
-      highlightOnHover: false
+      width: 24,
+      height: 22,
+      textFitMode: "shrink-and-stack",
+      textAlignment: "right",
+      textOffsetX: 2,
+      textOffsetY: -1,
+      minimumFontSize: 9,
+      textSizeOverride: 12,
+      allowLabelResize: true,
+      matchHitboxToSkin: false,
+      allowStretching: true,
+      highlightOnHover: true
     }
   );
   assert.deepEqual(result.document.themeOverrides["placement-button-a"], theme.buttons[0].themeOverride);
@@ -1238,7 +1238,7 @@ test("program target discovery supports All, selected-panel, and Pop-outs Only s
   };
   assert.deepEqual(
     listThemePlacements(document, popoutsTarget).map((entry) => entry.id).sort(),
-    ["placement-button-a-pop", "placement-button-other-tool-pop"]
+    ["placement-button-a-pop", "placement-button-b-fan", "placement-button-other-tool-pop"]
   );
 
   const popoutsTheme = JSON.parse(JSON.stringify(captureThemeFile({
@@ -1250,7 +1250,7 @@ test("program target discovery supports All, selected-panel, and Pop-outs Only s
   assert.deepEqual(popoutsTheme.target, popoutsTarget);
   assert.deepEqual(
     popoutsTheme.buttons.map((entry) => entry.surfaceKind).sort(),
-    ["regular-popout", "tool-set-popout"]
+    ["fan", "regular-popout", "tool-set-popout"]
   );
 
   const unknownArea = structuredClone(popoutsTheme);
@@ -1260,7 +1260,7 @@ test("program target discovery supports All, selected-panel, and Pop-outs Only s
   panelBoundPopouts.target.panelName = "Tools";
   assert.equal(isFlowCellThemeFile(panelBoundPopouts), false);
   const nonPopoutAppearance = structuredClone(popoutsTheme);
-  nonPopoutAppearance.buttons[0].surfaceKind = "fan";
+  nonPopoutAppearance.buttons[0].surfaceKind = "panel";
   assert.equal(isFlowCellThemeFile(nonPopoutAppearance), false);
 });
 
@@ -1724,7 +1724,7 @@ test("FlowCell page registry round-trips Main background and individual rail tok
     true
   );
   const document = fixture();
-  assert.equal(listThemePlacements(document, { kind: "flowcell", page: "main" }).length, 2);
+  assert.equal(listThemePlacements(document, { kind: "flowcell", page: "main" }).length, 0);
   assert.equal(listThemePlacements(document, { kind: "flowcell", page: "macro-lab" }).length, 0);
   assert.equal(listThemePlacements(document, { kind: "flowcell", page: "binds" }).length, 0);
   const mainFixture = mainProgramRailGroupFixture();
@@ -1811,7 +1811,7 @@ test("the new Concrete Main theme draws every rail box and leaves Buttons and De
   assert.equal(isThemePageAppearance(concreteWithPath), false);
 });
 
-test("Main Theme application never changes Button geometry or sibling layout", () => {
+test("legacy Main Theme geometry collisions reject without reflow or partial appearance", () => {
   const { document, ids } = mainProgramRailGroupFixture();
   const before = structuredClone(document);
   const theme = capturedMainProgramGroup(document, [ids.first, ids.second]);
@@ -1819,11 +1819,7 @@ test("Main Theme application never changes Button geometry or sibling layout", (
   theme.buttons.find((button) => button.placementId === ids.second).height = 24;
   theme.buttons.find((button) => button.placementId === ids.first).themeOverride.colors.surface = "#123456";
 
-  const result = applyThemeFile(document, theme);
-  assert.equal(result.appliedButtonCount, 2);
-  assert.equal(result.issues.length, 0);
-  assert.deepEqual(result.document.placements, before.placements);
-  assert.equal(result.document.themeOverrides[ids.first].colors.surface, "#123456");
+  assert.throws(() => applyThemeFile(document, theme), /overlap/);
   assert.deepEqual(document, before);
 });
 
@@ -1880,7 +1876,7 @@ test("legacy per-placement Theme clones retain one current-skin display identity
   assert.equal(themeSkinAssignmentIdentity(document, first).key, secondIdentity.key);
 });
 
-test("obsolete Theme size values are ignored for Main Buttons with or without obstacles", () => {
+test("legacy Main sizes restore exactly and conflicting sizes preserve the previous setup", () => {
   const oversizeFixture = mainProgramRailGroupFixture();
   const oversizeBefore = structuredClone(oversizeFixture.document);
   const oversizeTheme = capturedMainProgramGroup(
@@ -1894,8 +1890,11 @@ test("obsolete Theme size values are ignored for Main Buttons with or without ob
   assert.equal(oversizeResult.appliedButtonCount, 2);
   assert.equal(oversizeResult.skippedButtonCount, 0);
   assert.equal(oversizeResult.issues.length, 0);
-  assert.deepEqual(oversizeResult.document.placements, oversizeBefore.placements);
-  assert.deepEqual(oversizeResult.document, oversizeBefore);
+  for (const id of [oversizeFixture.ids.first, oversizeFixture.ids.second]) {
+    assert.equal(oversizeResult.document.placements[id].width, 400);
+    assert.equal(oversizeResult.document.placements[id].x, oversizeBefore.placements[id].x);
+    assert.equal(oversizeResult.document.placements[id].y, oversizeBefore.placements[id].y);
+  }
   assert.deepEqual(oversizeFixture.document, oversizeBefore);
 
   const obstacleFixture = mainProgramRailGroupFixture({ withObstacle: true });
@@ -1906,16 +1905,11 @@ test("obsolete Theme size values are ignored for Main Buttons with or without ob
   );
   obstacleTheme.buttons.find((button) => button.placementId === obstacleFixture.ids.first).height = 50;
   obstacleTheme.buttons.find((button) => button.placementId === obstacleFixture.ids.second).height = 24;
-  const obstacleResult = applyThemeFile(obstacleFixture.document, obstacleTheme);
-  assert.equal(obstacleResult.appliedButtonCount, 2);
-  assert.equal(obstacleResult.skippedButtonCount, 0);
-  assert.equal(obstacleResult.issues.length, 0);
-  assert.deepEqual(obstacleResult.document.placements, obstacleBefore.placements);
-  assert.deepEqual(obstacleResult.document, obstacleBefore);
+  assert.throws(() => applyThemeFile(obstacleFixture.document, obstacleTheme), /overlap/);
   assert.deepEqual(obstacleFixture.document, obstacleBefore);
 });
 
-test("unregistered Main controls remain fixed and ignore Theme layout fields", () => {
+test("legacy Main controls restore saved text and size while preserving their position", () => {
   const appearanceFixture = mainProgramRailGroupFixture({ withObstacle: true });
   const appearanceBefore = structuredClone(appearanceFixture.document);
   const appearanceTheme = capturedMainProgramGroup(
@@ -1945,7 +1939,7 @@ test("unregistered Main controls remain fixed and ignore Theme layout fields", (
   );
   assert.equal(
     applied.document.placements[appearanceFixture.ids.obstacle].textAlignment,
-    appearanceBefore.placements[appearanceFixture.ids.obstacle].textAlignment
+    "right"
   );
   assert.deepEqual(appearanceFixture.document, appearanceBefore);
 
@@ -1963,7 +1957,9 @@ test("unregistered Main controls remain fixed and ignore Theme layout fields", (
     [resizeFixture.ids.obstacle]: resizeFixture.ids.obstacle
   });
   assert.equal(rejected.issues.length, 0);
-  assert.deepEqual(rejected.document.placements, resizeBefore.placements);
+  assert.equal(rejected.document.placements[resizeFixture.ids.obstacle].width, resizeBefore.placements[resizeFixture.ids.obstacle].width + 1);
+  assert.equal(rejected.document.placements[resizeFixture.ids.obstacle].x, resizeBefore.placements[resizeFixture.ids.obstacle].x);
+  assert.equal(rejected.document.placements[resizeFixture.ids.obstacle].y, resizeBefore.placements[resizeFixture.ids.obstacle].y);
   assert.deepEqual(resizeFixture.document, resizeBefore);
 });
 
@@ -2069,8 +2065,6 @@ test("gradient baking uses current deployed positions without changing Main layo
     appearance.gradientEnabled = true;
     appearance.scatterEnabled = false;
   });
-  theme.buttons.find((appearance) => appearance.placementId === ids.first).height = 50;
-  theme.buttons.find((appearance) => appearance.placementId === ids.second).height = 24;
 
   const staleCenters = Object.fromEntries(theme.buttons.map((appearance) => {
     const current = document.placements[appearance.placementId];
@@ -2148,7 +2142,7 @@ test("unchanged Button Section themes preserve every placement geometry", () => 
   );
 });
 
-test("Button Section Theme values never resize or realign placements", () => {
+test("legacy Button Section sizes restore without realigning placements", () => {
   const document = fixture();
   const before = structuredClone(document);
   const theme = captured(document);
@@ -2167,24 +2161,19 @@ test("Button Section Theme values never resize or realign placements", () => {
   );
   assert.equal(applied.document.placements["placement-button-b"].x, 50);
   assert.equal(applied.document.placements["placement-button-b"].y, 10);
-  assert.deepEqual(applied.document.placements, before.placements);
+  assert.equal(applied.document.placements["placement-button-a"].width, 30);
+  assert.equal(applied.document.placements["placement-button-b"].width, 30);
   assert.deepEqual(document, before);
 });
 
-test("oversize Button Section values are ignored instead of touching layout", () => {
+test("invalid legacy Button Section sizes reject without touching layout", () => {
   const document = fixture();
   const oversize = captured(document);
   oversize.buttons.forEach((appearance) => {
     appearance.width = 90;
     appearance.height = 20;
   });
-  const failed = applyThemeFile(document, oversize);
-  assert.equal(failed.appliedButtonCount, 2);
-  assert.equal(failed.skippedButtonCount, 0);
-  assert.deepEqual(Object.keys(failed.matchedPlacementIds).sort(), [
-    "placement-button-a",
-    "placement-button-b"
-  ]);
-  assert.equal(failed.issues.length, 0);
-  assert.deepEqual(failed.document, document);
+  const before = structuredClone(document);
+  assert.throws(() => applyThemeFile(document, oversize), /outside its exact surface bounds|overlap/);
+  assert.deepEqual(document, before);
 });

@@ -1,0 +1,35 @@
+{
+  "format": "flowcell-blender-theme-v1",
+  "savedAt": "1782874179",
+  "values": {
+    "GridDistance": "12.7 m",
+    "GridFarSpacing": "1 m",
+    "GridSpacing": "0.001 m",
+    "StaticBackgroundPath": "D:\\pics\\Sun2\\ChatGPT Image Jan 6, 2026, 08_31_12 PM.png",
+    "ThemeAccentTextHex": "#F19E4B",
+    "ThemeControlTextHex": "#F6F6F6",
+    "ThemeControlsHex": "#492246",
+    "ThemeDarksHex": "#102C3B",
+    "ThemeEditorBackgroundHex": "#102C3B",
+    "ThemeHeaderTextHex": "#F6F6F6",
+    "ThemeHeadersHex": "#3B403F",
+    "ThemeHighlightsHex": "#102C3B",
+    "ThemeImagePath": "D:\\pics\\Sun2\\ChatGPT Image Jan 6, 2026, 08_31_12 PM.png",
+    "ThemeMiscHex": "#102C3B",
+    "ThemePaletteHexes": [
+      "#102C3B",
+      "#492246",
+      "#23434F",
+      "#3B403F",
+      "#F6F6F6"
+    ],
+    "ThemeSceneHex": "#23434F",
+    "ThemeTabsHex": "#23434F",
+    "ThemeTabsTextHex": "#F6F6F6",
+    "ThemeTextHex": "#F6F6F6",
+    "ThemeViewportBackgroundHex": "#102C3B",
+    "ThemeViewportGradientEnabled": false,
+    "ThemeViewportGradientHex": "#23434F",
+    "ThemeVisualMode": "dark"
+  }
+}

@@ -154,19 +154,14 @@ pub(crate) fn load_tool_field_file(
 }
 
 fn validate_tool_package_storage_folder(value: &str) -> Result<String, String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty()
-        || trimmed.len() > 80
-        || !trimmed
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-    {
-        return Err(
-            "Tool-package storageFolder must contain only letters, numbers, '-', or '_'."
-                .to_string(),
-        );
+    let normalized = value.trim().replace('\\', "/");
+    if normalized.is_empty() || normalized.len() > 240 || normalized.split('/').any(|part| {
+        part.is_empty() || part == "." || part == ".." || validate_folder_name(part, "Storage folder").is_err()
+            || part.ends_with('.') || part.ends_with(' ')
+    }) {
+        return Err("Tool-package storageFolder must be a safe relative folder path.".into());
     }
-    Ok(trimmed.to_string())
+    Ok(normalized)
 }
 
 fn validate_tool_package_manifest_suffix(value: &str) -> Result<String, String> {
@@ -200,7 +195,18 @@ fn authorize_tool_package_source(
 
 fn tool_package_root(storage_folder: &str) -> Result<PathBuf, String> {
     let storage_folder = validate_tool_package_storage_folder(storage_folder)?;
-    let root = resolve_flowcell_local_root()?.join(storage_folder);
+    // Older installed contributions must never reopen the retired writable library.
+    if storage_folder.eq_ignore_ascii_case("blender_themes") {
+        return super::themes::resolve_theme_directory(Some("Blender"));
+    }
+    if let Some(program) = storage_folder.strip_prefix("themes/") {
+        if !program.contains('/') {
+            return super::themes::resolve_theme_directory(if program == "main" { None } else { Some(program) });
+        }
+    }
+    let local = resolve_flowcell_local_root()?;
+    fs::create_dir_all(&local).map_err(|error| error.to_string())?;
+    let root = super::themes::safe_theme_path(&local, &storage_folder, true)?;
     fs::create_dir_all(&root).map_err(|error| {
         format!(
             "Failed to create tool-package folder at {}: {error}",
@@ -208,6 +214,18 @@ fn tool_package_root(storage_folder: &str) -> Result<PathBuf, String> {
         )
     })?;
     Ok(root)
+}
+
+fn validate_package_theme_scope(program_name: &str, storage_folder: &str) -> Result<(), String> {
+    let normalized = validate_tool_package_storage_folder(storage_folder)?;
+    let target = if normalized.eq_ignore_ascii_case("blender_themes") { Some("Blender") }
+        else { normalized.strip_prefix("themes/").and_then(|path| path.split('/').next()) };
+    if let Some(target) = target {
+        if !target.eq_ignore_ascii_case(program_name) {
+            return Err("A program theme contribution may only use its own target library.".into());
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -220,6 +238,7 @@ pub(crate) fn resolve_tool_package_root(
     format_id: String,
 ) -> Result<String, String> {
     authorize_tool_package_source(&program_name, &panel_name, &file_name, &capability)?;
+    validate_package_theme_scope(&program_name, &storage_folder)?;
     validate_tool_field_format_id(&format_id)?;
     Ok(tool_package_root(&storage_folder)?.display().to_string())
 }
@@ -281,6 +300,7 @@ pub(crate) fn save_tool_package(
     values: Value,
 ) -> Result<String, String> {
     authorize_tool_package_source(&program_name, &panel_name, &file_name, &capability)?;
+    validate_package_theme_scope(&program_name, &storage_folder)?;
     let format_id = validate_tool_field_format_id(&format_id)?;
     let manifest_suffix = validate_tool_package_manifest_suffix(&manifest_suffix)?;
     let root = tool_package_root(&storage_folder)?;
@@ -326,22 +346,22 @@ fn save_tool_package_to_root(
             selected_parent.display()
         )
     })?;
+    let relative_parent = canonical_parent.strip_prefix(&canonical_root).map_err(|_| {
+        format!("Themes must be saved inside their target library at {}.", root.display())
+    })?;
+    if !relative_parent.as_os_str().is_empty() {
+        super::themes::safe_theme_path(&canonical_root, &relative_parent.to_string_lossy(), false)?;
+    }
     let stem = tool_package_stem(&selected_path, manifest_suffix);
-    let package_dir = root.join(&stem);
+    let selected_existing = selected_path.is_file()
+        && selected_path.file_name() == Some(std::ffi::OsStr::new(&format!("{stem}{manifest_suffix}")))
+        && canonical_parent.file_name() == Some(std::ffi::OsStr::new(&stem));
+    let package_dir = if selected_existing { selected_parent.to_path_buf() } else { selected_parent.join(&stem) };
     // Selecting an existing manifest in its own immediate library folder is an
     // explicit update (the native Save dialog confirms replacement).
-    let updating = canonical_parent.parent() == Some(canonical_root.as_path())
-        && selected_path.is_file()
-        && selected_path.file_name() == Some(std::ffi::OsStr::new(&format!("{stem}{manifest_suffix}")))
+    let updating = selected_existing
         && fs::canonicalize(&package_dir).ok().as_ref() == Some(&canonical_parent)
         && fs::canonicalize(&selected_path).ok().is_some_and(|path| path.parent() == Some(canonical_parent.as_path()));
-    if canonical_parent != canonical_root && !updating {
-        return Err(format!(
-            "Tool packages must be saved directly inside the package library at {}.",
-            root.display()
-        ));
-    }
-
     if updating {
         let previous: Value = serde_json::from_str(&fs::read_to_string(&selected_path)
             .map_err(|error| format!("Failed to read existing tool package: {error}"))?)
@@ -534,9 +554,12 @@ pub(crate) fn load_tool_package(
     legacy_asset_keys: Vec<String>,
 ) -> Result<Value, String> {
     authorize_tool_package_source(&program_name, &panel_name, &file_name, &capability)?;
+    validate_package_theme_scope(&program_name, &storage_folder)?;
     validate_tool_package_storage_folder(&storage_folder)?;
     let format_id = validate_tool_field_format_id(&format_id)?;
-    let file_path = PathBuf::from(manifest_path.trim());
+    let mut migrated_path = Value::String(manifest_path.trim().to_string());
+    super::themes::remap_migrated_theme_paths(&mut migrated_path)?;
+    let file_path = PathBuf::from(migrated_path.as_str().unwrap_or_default());
     if !file_path.is_file() {
         return Err(format!(
             "Tool-package manifest was not found: {}",
@@ -712,6 +735,7 @@ pub(crate) fn list_tool_packages(
     manifest_suffix: String,
 ) -> Result<Vec<Value>, String> {
     authorize_tool_package_source(&program_name, &panel_name, &file_name, &capability)?;
+    validate_package_theme_scope(&program_name, &storage_folder)?;
     validate_tool_field_format_id(&format_id)?;
     let suffix = validate_tool_package_manifest_suffix(&manifest_suffix)?.to_ascii_lowercase();
     let root = tool_package_root(&storage_folder)?;
@@ -726,7 +750,9 @@ fn list_tool_packages_in_root(root: &Path, suffix: &str) -> Result<Vec<Value>, S
             root.display()
         )
     })?;
-    for entry in fs::read_dir(root)
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(folder) = pending.pop() {
+    for entry in fs::read_dir(&folder)
         .map_err(|error| error.to_string())?
         .flatten()
     {
@@ -743,16 +769,19 @@ fn list_tool_packages_in_root(root: &Path, suffix: &str) -> Result<Vec<Value>, S
         let Ok(canonical_package_dir) = fs::canonicalize(&package_dir) else {
             continue;
         };
-        if canonical_package_dir.parent() != Some(canonical_root.as_path()) {
+        if !canonical_package_dir.starts_with(&canonical_root) {
             continue;
         }
         if package_dir
             .file_name()
             .and_then(|value| value.to_str())
-            .is_some_and(|value| value.starts_with(".flowcell-package-staging-"))
+            .is_some_and(|value| value.starts_with('.'))
         {
             continue;
         }
+        let relative = canonical_package_dir.strip_prefix(&canonical_root).map_err(|error| error.to_string())?;
+        if super::themes::safe_theme_path(&canonical_root, &relative.to_string_lossy(), false).is_err() { continue; }
+        pending.push(package_dir.clone());
         let Ok(files) = fs::read_dir(&canonical_package_dir) else {
             continue;
         };
@@ -788,6 +817,7 @@ fn list_tool_packages_in_root(root: &Path, suffix: &str) -> Result<Vec<Value>, S
             break;
         }
     }
+    }
     packages.sort_by(|left, right| left.0.to_lowercase().cmp(&right.0.to_lowercase()));
     Ok(packages
         .into_iter()
@@ -804,6 +834,33 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn nested_theme_storage_is_scoped_and_rejects_traversal() {
+        assert!(super::validate_tool_package_storage_folder("themes/Fusion 360/nested").is_ok());
+        assert!(super::validate_tool_package_storage_folder("themes/../outside").is_err());
+        assert!(super::validate_tool_package_storage_folder("C:/outside").is_err());
+        assert!(super::validate_package_theme_scope("Blender", "themes/Blender").is_ok());
+        assert!(super::validate_package_theme_scope("Blender", "blender_themes").is_ok());
+        assert!(super::validate_package_theme_scope("Blender", "themes/Krita").is_err());
+    }
+
+    #[test]
+    fn nested_themes_save_and_browse_in_the_same_library() {
+        let root = temporary_root("nested");
+        let nested = root.join("My Collection"); fs::create_dir_all(&nested).unwrap();
+        let path = nested.join("Named.flowcell-theme-pack.json");
+        let saved = save_tool_package_to_root(&root, "blender-theme", &path.display().to_string(),
+            ".flowcell-theme-pack.json", &["grid_enabled".into()], &[], &json!({"grid_enabled":false})).unwrap();
+        assert!(Path::new(&saved).starts_with(&nested));
+        let listed = list_tool_packages_in_root(&root, ".flowcell-theme-pack.json").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["manifestPath"], fs::canonicalize(&saved).unwrap().display().to_string());
+        save_tool_package_to_root(&root, "blender-theme", &saved,
+            ".flowcell-theme-pack.json", &["grid_enabled".into()], &[], &json!({"grid_enabled":true})).unwrap();
+        assert_eq!(list_tool_packages_in_root(&root, ".flowcell-theme-pack.json").unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn temporary_root(name: &str) -> PathBuf {
         let token = std::time::SystemTime::now()
@@ -861,7 +918,7 @@ mod tests {
         );
         assert!(outside_result
             .expect_err("outside library must fail")
-            .contains("directly inside the package library"));
+            .contains("inside their target library"));
 
         let selected = root.join("Sample.flowcell-tool-package.json");
         let saved = save_tool_package_to_root(

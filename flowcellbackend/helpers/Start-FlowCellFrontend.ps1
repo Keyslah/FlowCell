@@ -1,6 +1,9 @@
 # Description: Builds and starts the development frontend independently of the installed backend.
 param(
-    [switch]$ForceRestart
+    [switch]$ForceRestart,
+    # Only rewrite the release build-freshness stamps, then exit without building or launching
+    # anything. Update-FrontendBuildStamp.ps1 uses this after a manual `npm run tauri build`.
+    [switch]$RefreshBuildStampOnly
 )
 
 Set-StrictMode -Version Latest
@@ -317,6 +320,15 @@ function Get-FlowCellFrontendGitCommit {
     }
 }
 
+function Write-FlowCellFrontendBuildStamp {
+    $sourceCommit = Get-FlowCellFrontendGitCommit
+    if (-not [string]::IsNullOrWhiteSpace($sourceCommit)) {
+        Set-Content -LiteralPath $frontendSourceCommitPath -Value $sourceCommit -Encoding UTF8
+    }
+    $sourceStamp = Get-FlowCellFrontendSourceStamp -SourceRoots (Get-FlowCellFrontendSourceRoots)
+    Set-Content -LiteralPath $frontendSourceStampPath -Value $sourceStamp -Encoding UTF8
+}
+
 function Get-FlowCellFrontendProcess {
     $runningFrontend = Get-Process -Name 'flowcell_frontend' -ErrorAction SilentlyContinue
     if (-not $runningFrontend) {
@@ -551,6 +563,24 @@ function Stop-FlowCellFrontendProcess {
     }
 }
 
+if ($RefreshBuildStampOnly) {
+    if (-not (Test-Path -LiteralPath $frontendExePath -PathType Leaf)) {
+        Write-Warning "No release build found at $frontendExePath. Run 'npm run tauri build' first; skipping stamp refresh."
+        return
+    }
+
+    Write-FlowCellFrontendBuildStamp
+    $buildRequired = Test-FlowCellFrontendBuildRequired
+    Write-LauncherLog ("Refreshed release build stamps for a manual build without building or launching; next launch rebuild required: {0}." -f $buildRequired)
+    if ($buildRequired) {
+        Write-Warning 'Build stamps refreshed, but some source is newer than the release build (or git is unavailable), so the next launch will still rebuild.'
+    }
+    else {
+        Write-Output 'FlowCell frontend build stamps refreshed; next launch will skip the rebuild.'
+    }
+    return
+}
+
 Ensure-Directory -Path $logsRoot
 Write-LauncherLog 'Frontend launch requested.'
 $launchMutex = Acquire-FlowCellFrontendLaunchMutex
@@ -659,12 +689,7 @@ try {
                 throw "Tauri frontend build exited with code $buildExitCode."
             }
 
-            $sourceCommit = Get-FlowCellFrontendGitCommit
-            if (-not [string]::IsNullOrWhiteSpace($sourceCommit)) {
-                Set-Content -LiteralPath $frontendSourceCommitPath -Value $sourceCommit -Encoding UTF8
-            }
-            $sourceStamp = Get-FlowCellFrontendSourceStamp -SourceRoots (Get-FlowCellFrontendSourceRoots)
-            Set-Content -LiteralPath $frontendSourceStampPath -Value $sourceStamp -Encoding UTF8
+            Write-FlowCellFrontendBuildStamp
         }
 
         if (-not (Test-Path -LiteralPath $frontendExePath -PathType Leaf)) {

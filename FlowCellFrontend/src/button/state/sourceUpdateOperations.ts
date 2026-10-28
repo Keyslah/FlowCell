@@ -1,5 +1,6 @@
 import type {
   ButtonPlacement,
+  ButtonRect,
   ButtonRecord,
   ButtonStateDocument,
   ToolSetActionExecutionTarget,
@@ -13,6 +14,7 @@ import type { InstallButtonSourceResult } from "./ButtonStateRepository.js";
 import { cloneButtonDocument } from "./buttonDefaults.js";
 import { validateInstalledButtonLayout } from "./installedButtonLayoutValidation.js";
 import { resolveInstalledToolFields } from "./installedToolFields.js";
+import { hideThemeContributionOwner } from "./buttonDocumentOperations.js";
 
 function stableDocumentIdSegment(value: string): string {
   const normalized = value.trim().toLocaleLowerCase();
@@ -67,7 +69,7 @@ function appendMissingToolSetChildren(
     if (document.buttons[childId] || document.placements[placementId]) {
       throw new Error(`Tool-set child migration ID '${childId}' is already in use.`);
     }
-    const rect = installed.layout?.placements?.[child.slot] ?? starter.rects[child.slot];
+    const rect: (ButtonRect & { zIndex?: number }) | undefined = installed.layout?.placements?.[child.slot] ?? starter.rects[child.slot];
     if (!rect) throw new Error(`Tool-set child '${child.slot}' has no placement.`);
     document.buttons[childId] = {
       id: childId,
@@ -90,7 +92,7 @@ function appendMissingToolSetChildren(
       buttonId: childId,
       surfaceId: surface.id,
       ...rect,
-      zIndex: surface.placementIds.length,
+      zIndex: rect.zIndex ?? surface.placementIds.length,
       skinOverrideId: null,
       textFitMode: "shrink",
       textAlignment: "skin",
@@ -133,6 +135,7 @@ export function applyInstalledSourceUpdate(
     }
     owner.sourceIdentity = installed.sourceIdentity;
     owner.executionTarget = installed.executionTarget;
+    if (installed.themeContributionOnly) hideThemeContributionOwner(document, owner.id);
     if (installed.updateTransactionToken) {
       owner.metadata = {
         ...owner.metadata,
@@ -191,5 +194,9 @@ export function applyInstalledSourceUpdate(
       toolSetSlot: child.slot
     };
   }
-  unit.fields = resolveInstalledToolFields(layout?.fields, installed.children);
+  const previousFields = new Map(unit.fields.map((field) => [field.id.trim().toLocaleLowerCase("en-US"), field]));
+  unit.fields = resolveInstalledToolFields(layout?.fields, installed.children).map((field) => {
+    const previous = previousFields.get(field.id.trim().toLocaleLowerCase("en-US"));
+    return previous ? { ...field, x: previous.x, y: previous.y, width: previous.width, height: previous.height, zIndex: previous.zIndex } : field;
+  });
 }

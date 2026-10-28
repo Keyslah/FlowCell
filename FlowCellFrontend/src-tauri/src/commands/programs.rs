@@ -5362,6 +5362,7 @@ pub(crate) fn list_panel_script_files(
     let mut records =
         program_sources::execute::list_active_source_records(&program_name, &panel_name)?
             .into_iter()
+            .filter(|resolution| !resolution.record.page.as_ref().is_some_and(|page| page.theme_contribution.is_some()))
             .map(|resolution| {
                 let record = resolution.record;
                 let execution_file_name = resolution.file_name.clone();

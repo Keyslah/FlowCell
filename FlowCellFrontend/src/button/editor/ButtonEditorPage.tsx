@@ -1,4 +1,5 @@
 import { ButtonCloseControlFields } from "./ButtonCloseControlEditor";
+import { editButtonPlacementPresentation, resolveButtonPlacementPresentation } from "../state/buttonPresentation.js";
 import {
   useCallback,
   useEffect,
@@ -355,7 +356,7 @@ function addPlacement(
   document: ButtonStateDocument,
   buttonId: string,
   surfaceId: string,
-  desired?: Partial<ButtonRect>
+  desired?: Partial<ButtonRect & { zIndex?: number }>
 ): ButtonPlacement {
   const surface = document.surfaces[surfaceId];
   if (!surface) throw new Error("The selected Button surface no longer exists.");
@@ -383,7 +384,7 @@ function addPlacement(
     buttonId,
     surfaceId,
     ...available,
-    zIndex: surface.placementIds.length,
+    zIndex: desired?.zIndex ?? surface.placementIds.length,
     skinOverrideId: null,
     textFitMode: document.buttons[buttonId]?.defaultTextFitMode ?? "shrink",
     textAlignment: "skin",
@@ -430,7 +431,7 @@ function addInstalledSingle(
   document: ButtonStateDocument,
   result: InstallButtonSourceResult,
   surfaceId: string
-): ButtonPlacement {
+): ButtonPlacement | null {
   if (!result.executionTarget) throw new Error("The installed script did not return an execution target.");
   document.buttons[result.ownerButtonId] = createButtonRecord({
     id: result.ownerButtonId,
@@ -438,8 +439,10 @@ function addInstalledSingle(
     label: result.label,
     tooltip: result.tooltip,
     sourceIdentity: result.sourceIdentity,
-    executionTarget: result.executionTarget
+    executionTarget: result.executionTarget,
+    metadata: result.themeContributionOnly ? { themeContributionOnly: true } : undefined
   });
+  if (result.themeContributionOnly) return null;
   return addPlacement(document, result.ownerButtonId, surfaceId);
 }
 
@@ -675,7 +678,18 @@ function ButtonEditorContent({
           ? workingSizingModeOverride?.sizingMode
           : "responsive"
       );
-  const selectedButton = selectedPlacement ? store.draft.buttons[selectedPlacement.buttonId] ?? null : null;
+  const selectedCanonicalButton = selectedPlacement ? store.draft.buttons[selectedPlacement.buttonId] ?? null : null;
+  const selectedButton = selectedCanonicalButton ? resolveButtonPlacementPresentation(selectedCanonicalButton, selectedPlacement) : null;
+  const editorButtonPresentation = (document: ButtonStateDocument, buttonId: string) => {
+    const button = document.buttons[buttonId];
+    return button && resolveButtonPlacementPresentation(button,
+      selectedPlacement?.buttonId === buttonId ? document.placements[selectedPlacement.id] : null);
+  };
+  const editEditorButtonPresentation = (document: ButtonStateDocument, buttonId: string,
+    patch: NonNullable<ButtonPlacement["presentationOverride"]>) => {
+    if (selectedPlacement?.buttonId === buttonId) editButtonPlacementPresentation(document, selectedPlacement.id, patch);
+    else Object.assign(document.buttons[buttonId], structuredClone(patch));
+  };
   const navigationButtonId = resolveButtonEditorNavigationButtonId(
     store.draft,
     selectedButton?.id ?? ""
@@ -1085,8 +1099,10 @@ function ButtonEditorContent({
         nextSurface = panelSurface.id;
         if (installed!.children.length === 0) {
           const placement = addInstalledSingle(draft, installed!, panelSurface.id);
-          selectedPlacement = placement.id;
-          freshPlacementsRef.current.add(placement.id);
+          if (placement) {
+            selectedPlacement = placement.id;
+            freshPlacementsRef.current.add(placement.id);
+          }
         } else {
           const created = addInstalledToolSet(draft, installed!, panelSurface.id);
           selectedPlacement = created.ownerPlacement.id;
@@ -1095,7 +1111,7 @@ function ButtonEditorContent({
       }, { label: "Add Button content" });
       setSelectedSurfaceId(nextSurface);
       setFocusedPlacementId(selectedPlacement);
-      setSelectedPlacementIds(new Set([selectedPlacement]));
+      setSelectedPlacementIds(new Set(selectedPlacement ? [selectedPlacement] : []));
     } catch (error) {
       let cleanupError: unknown = null;
       if (installed) {
@@ -2376,19 +2392,19 @@ function ButtonEditorContent({
     buttonId: string,
     successMessage: string
   ): Promise<boolean> => {
-    const animation = structuredClone(nextDraft.buttons[buttonId]?.activationAnimation ?? null);
+    const animation = structuredClone(editorButtonPresentation(nextDraft, buttonId)?.activationAnimation ?? null);
+    const animationPlacementId = selectedPlacement?.buttonId === buttonId && selectedPlacement.presentationOverride ? selectedPlacement.id : undefined;
     if (!store.committed.buttons[buttonId]) {
       store.transact((draft) => {
-        const target = draft.buttons[buttonId];
-        if (target) target.activationAnimation = animation;
+        if (draft.buttons[buttonId]) editEditorButtonPresentation(draft, buttonId, { activationAnimation: animation });
       }, { label: "Edit Button animation" });
       setMessage(`${successMessage} Save Settings first because this is a new Button.`);
       return false;
     }
     const frozenDraft = cloneButtonDocument(nextDraft);
     return Boolean(await commitScopedDocument(
-      (committed) => buildButtonAnimationScopedDocument(committed, frozenDraft, buttonId),
-      (draft, saved) => applyButtonAnimationSavedScope(draft, saved, buttonId),
+      (committed) => buildButtonAnimationScopedDocument(committed, frozenDraft, buttonId, animationPlacementId),
+      (draft, saved) => applyButtonAnimationSavedScope(draft, saved, buttonId, animationPlacementId),
       successMessage
     ));
   };
@@ -2414,14 +2430,14 @@ function ButtonEditorContent({
         opacity,
         fadeCurve
       });
-      const current = store.current().buttons[button.id];
+      const current = editorButtonPresentation(store.current(), button.id);
       if (!current) return;
       const draftAlreadyMatches = current.activationAnimation?.presetId === presetId &&
         (current.activationAnimation.opacity ?? 1) === opacity &&
         JSON.stringify(getButtonAnimationFrequency(current.activationAnimation)) === JSON.stringify(frequency) &&
         JSON.stringify(getButtonAnimationFadeCurve(current.activationAnimation)) === JSON.stringify(fadeCurve) &&
         desktopBoundsEqual(current.activationAnimation.desktopBounds, resolvedBounds);
-      const committedAnimation = store.committed.buttons[button.id]?.activationAnimation;
+      const committedAnimation = editorButtonPresentation(store.committed, button.id)?.activationAnimation;
       const committedAlreadyMatches = committedAnimation?.presetId === presetId &&
         (committedAnimation.opacity ?? 1) === opacity &&
         JSON.stringify(getButtonAnimationFrequency(committedAnimation)) === JSON.stringify(frequency) &&
@@ -2432,13 +2448,13 @@ function ButtonEditorContent({
         return;
       }
       const nextDraft = cloneButtonDocument(store.current());
-      nextDraft.buttons[button.id].activationAnimation = {
+      editEditorButtonPresentation(nextDraft, button.id, { activationAnimation: {
         presetId,
         opacity,
         frequency: structuredClone(frequency),
         fadeCurve: structuredClone(fadeCurve),
         desktopBounds: resolvedBounds
-      };
+      } });
       await persistButtonAnimation(nextDraft, button.id, "Animation applied.");
       setActiveAnimationEditorButtonId(button.id);
     } catch (error) {
@@ -2452,9 +2468,9 @@ function ButtonEditorContent({
     try {
       const bounds = await saveButtonActivationAnimationEditorBounds();
       const nextDraft = cloneButtonDocument(store.current());
-      const target = nextDraft.buttons[button.id];
+      const target = editorButtonPresentation(nextDraft, button.id);
       if (!target?.activationAnimation) return;
-      target.activationAnimation.desktopBounds = bounds;
+      editEditorButtonPresentation(nextDraft, button.id, { activationAnimation: { ...structuredClone(target.activationAnimation), desktopBounds: bounds } });
       await persistButtonAnimation(
         nextDraft,
         button.id,
@@ -2481,8 +2497,7 @@ function ButtonEditorContent({
     if (!button) return;
     if (!presetId) {
       const nextDraft = cloneButtonDocument(store.current());
-      const target = nextDraft.buttons[button.id];
-      if (target) target.activationAnimation = null;
+      if (nextDraft.buttons[button.id]) editEditorButtonPresentation(nextDraft, button.id, { activationAnimation: null });
       await persistButtonAnimation(nextDraft, button.id, "No animation applied.");
       await hideButtonActivationAnimationEditorWindow().catch(() => {});
       setActiveAnimationEditorButtonId(null);
@@ -3147,15 +3162,13 @@ function ButtonEditorContent({
           onButtonLabelChange={(label) => {
             if (!selectedButton) return;
             store.transact((draft) => {
-              const target = draft.buttons[selectedButton.id];
-              target.label = label;
+              editEditorButtonPresentation(draft, selectedButton.id, { label });
             }, { label: "Edit Button label", coalesceKey: `label:${selectedButton.id}` });
           }}
           onButtonTooltipChange={(tooltip) => {
             if (!selectedButton) return;
             store.transact((draft) => {
-              const target = draft.buttons[selectedButton.id];
-              target.tooltip = tooltip;
+              editEditorButtonPresentation(draft, selectedButton.id, { tooltip });
             }, { label: "Edit Button tooltip", coalesceKey: `tooltip:${selectedButton.id}` });
           }}
           onActivationCycleChange={(activationCycle) => {

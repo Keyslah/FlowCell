@@ -8,6 +8,29 @@
     #111715;
 }
 
+.theme-editor.theme-editor { grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; padding-bottom: 12px; }
+.theme-editor.theme-editor--program-page { grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; padding: 8px; }
+.theme-editor--program-page .theme-editor__scope { padding: 0; border: 0; background: none; }
+.theme-editor__header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.theme-editor__header-actions { justify-content: flex-end; }
+.theme-editor__content { min-height: 0; overflow: hidden; }
+.theme-editor__common { height: 100%; overflow: auto; display: grid; gap: 14px; align-content: start; }
+.theme-editor__common[hidden] { display: none; }
+.theme-editor .theme-editor__status { position: static; padding: 8px 0; }
+.theme-editor-contribution { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.theme-editor-contribution[hidden] { display: none; }
+.theme-editor-contribution__page { position: relative; flex: 1; min-height: 0; }
+.theme-library-backdrop { position: fixed; inset: 0; z-index: 100; background: #000a; display: grid; place-items: center; padding: 24px; }
+.theme-library-dialog { width: min(980px, 100%); max-height: 90vh; overflow: auto; background: #17201c; border: 1px solid #4d6858; border-radius: 12px; padding: 20px; }
+.theme-library-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.theme-library-columns { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(280px, 2fr); gap: 20px; }
+.theme-library-list { display: flex; flex-direction: column; gap: 8px; }
+.theme-library-list button { text-align: left; }
+.theme-library-list small { display: block; opacity: .7; }
+.theme-library-swatches { display: flex; min-height: 70px; border-radius: 8px; overflow: hidden; }
+.theme-library-swatches span { flex: 1; min-width: 16px; }
+.theme-library-dialog footer { margin-top: 20px; text-align: right; }
+
 .theme-editor *,
 .theme-editor *::before,
 .theme-editor *::after {

@@ -731,8 +731,9 @@ test("Button Text exposes the complete selectable Button Tooltip beside the acti
   assert.match(editor, /buttonTooltip=\{selectedButton\?\.tooltip \?\? ""\}/);
   assert.match(
     editor,
-    /onButtonTooltipChange=\{\(tooltip\) => \{[\s\S]{0,260}target\.tooltip = tooltip;[\s\S]{0,180}coalesceKey: `tooltip:\$\{selectedButton\.id\}`/
+    /onButtonTooltipChange=\{\(tooltip\) => \{[\s\S]{0,260}editEditorButtonPresentation\(draft, selectedButton\.id, \{ tooltip \}\);[\s\S]{0,180}coalesceKey: `tooltip:\$\{selectedButton\.id\}`/
   );
+  assert.match(editor, /resolveButtonPlacementPresentation\(selectedCanonicalButton, selectedPlacement\)/);
   assert.match(css, /\.button-text-label-grid[\s\S]{0,160}grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   const tooltipEditorCss = css.match(/\.button-tooltip-editor\s*\{[\s\S]*?\}/);
   assert.ok(tooltipEditorCss, "Button Tooltip editor styles must exist");

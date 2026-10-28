@@ -402,6 +402,7 @@ export async function openInstalledPageWindow(args: {
 }
 
 export interface InstalledPageOpenDescriptor {
+  themeContribution?: { version: number } | null;
   window: {
     title: string;
     width: number;
@@ -437,6 +438,10 @@ export async function resolveAndOpenInstalledPageWindow(args: {
     fileName: args.fileName,
     pageId: args.pageId
   });
+  if (descriptor.themeContribution?.version === 1) {
+    await openThemeEditorWindow({ target: args.programName });
+    return;
+  }
   await openInstalledPageWindow({
     ...args,
     title: descriptor.window.title,

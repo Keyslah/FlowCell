@@ -1,7 +1,7 @@
 {
     "schemaVersion": 1,
     "id": "blender.flatten-revolve",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "label": "flatten revolve",
     "tooltip": "Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place.",
     "kind": "toolset",
@@ -71,51 +71,59 @@
         "placements": {
             "pivot_select": {
                 "x": 8,
-                "y": 8,
+                "y": 50,
                 "width": 144,
-                "height": 42
+                "height": 42,
+                "zIndex": 4
             },
             "flatten_profile": {
                 "x": 8,
-                "y": 58,
+                "y": 8,
                 "width": 144,
-                "height": 42
+                "height": 42,
+                "zIndex": 0
             },
             "flatten_axis_select": {
-                "x": 160,
-                "y": 58,
+                "x": 152,
+                "y": 8,
                 "width": 72,
-                "height": 42
+                "height": 42,
+                "zIndex": 1
             },
             "generate_revolve": {
-                "x": 8,
-                "y": 108,
+                "x": 224,
+                "y": 8,
                 "width": 144,
-                "height": 42
+                "height": 42,
+                "zIndex": 2
             },
             "revolve_axis_select": {
-                "x": 160,
-                "y": 108,
+                "x": 368,
+                "y": 8,
                 "width": 72,
-                "height": 42
+                "height": 42,
+                "zIndex": 3
             },
             "angle_input": {
-                "x": 240,
-                "y": 108,
+                "x": 152,
+                "y": 50,
                 "width": 104,
-                "height": 42
+                "height": 42,
+                "zIndex": 5
             },
             "steps_input": {
-                "x": 352,
-                "y": 108,
+                "x": 256,
+                "y": 50,
                 "width": 104,
-                "height": 42
+                "height": 42,
+                "zIndex": 6
             },
             "merge_input": {
-                "x": 464,
-                "y": 108,
+                "x": 360,
+                "y": 50,
                 "width": 128,
-                "height": 42
+                "height": 42,
+                "zIndex": 7
             }
         },
         "fields": [
@@ -126,11 +134,31 @@
                 "payloadKey": "center_mode",
                 "defaultValue": "WORLD",
                 "options": [
-                    { "id": "geometry", "label": "Geometry", "value": "GEOMETRY" },
-                    { "id": "origin", "label": "Origin", "value": "ORIGIN" },
-                    { "id": "world", "label": "World", "value": "WORLD" },
-                    { "id": "cursor", "label": "Cursor", "value": "CURSOR" },
-                    { "id": "object", "label": "Object", "value": "OBJECT" }
+                    {
+                        "id": "geometry",
+                        "label": "Geometry",
+                        "value": "GEOMETRY"
+                    },
+                    {
+                        "id": "origin",
+                        "label": "Origin",
+                        "value": "ORIGIN"
+                    },
+                    {
+                        "id": "world",
+                        "label": "World",
+                        "value": "WORLD"
+                    },
+                    {
+                        "id": "cursor",
+                        "label": "Cursor",
+                        "value": "CURSOR"
+                    },
+                    {
+                        "id": "object",
+                        "label": "Object",
+                        "value": "OBJECT"
+                    }
                 ],
                 "x": 8,
                 "y": 8,
@@ -146,9 +174,21 @@
                 "payloadKey": "flatten_axis",
                 "defaultValue": "Y",
                 "options": [
-                    { "id": "x", "label": "X", "value": "X" },
-                    { "id": "y", "label": "Y", "value": "Y" },
-                    { "id": "z", "label": "Z", "value": "Z" }
+                    {
+                        "id": "x",
+                        "label": "X",
+                        "value": "X"
+                    },
+                    {
+                        "id": "y",
+                        "label": "Y",
+                        "value": "Y"
+                    },
+                    {
+                        "id": "z",
+                        "label": "Z",
+                        "value": "Z"
+                    }
                 ],
                 "x": 160,
                 "y": 58,
@@ -164,9 +204,21 @@
                 "payloadKey": "revolve_axis",
                 "defaultValue": "Z",
                 "options": [
-                    { "id": "x", "label": "X", "value": "X" },
-                    { "id": "y", "label": "Y", "value": "Y" },
-                    { "id": "z", "label": "Z", "value": "Z" }
+                    {
+                        "id": "x",
+                        "label": "X",
+                        "value": "X"
+                    },
+                    {
+                        "id": "y",
+                        "label": "Y",
+                        "value": "Y"
+                    },
+                    {
+                        "id": "z",
+                        "label": "Z",
+                        "value": "Z"
+                    }
                 ],
                 "x": 160,
                 "y": 108,
@@ -233,8 +285,12 @@
                 "execute": true,
                 "payloadTemplate": {
                     "command": "flatten_profile",
-                    "center_mode": { "$field": "center_mode" },
-                    "flatten_axis": { "$field": "flatten_axis" }
+                    "center_mode": {
+                        "$field": "center_mode"
+                    },
+                    "flatten_axis": {
+                        "$field": "flatten_axis"
+                    }
                 }
             },
             "flatten_axis_select": {
@@ -245,11 +301,21 @@
                 "execute": true,
                 "payloadTemplate": {
                     "command": "generate_revolve",
-                    "center_mode": { "$field": "center_mode" },
-                    "revolve_axis": { "$field": "revolve_axis" },
-                    "angle_deg": { "$field": "angle_deg" },
-                    "revolve_steps": { "$field": "revolve_steps" },
-                    "merge_distance": { "$field": "merge_distance" }
+                    "center_mode": {
+                        "$field": "center_mode"
+                    },
+                    "revolve_axis": {
+                        "$field": "revolve_axis"
+                    },
+                    "angle_deg": {
+                        "$field": "angle_deg"
+                    },
+                    "revolve_steps": {
+                        "$field": "revolve_steps"
+                    },
+                    "merge_distance": {
+                        "$field": "merge_distance"
+                    }
                 }
             },
             "revolve_axis_select": {

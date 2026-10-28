@@ -7,6 +7,7 @@ import {
   useState
 } from "react";
 import { flushSync } from "react-dom";
+import { resolveButtonPlacementPresentation } from "./state/buttonPresentation.js";
 import type {
   ButtonCoreMeasurement,
   ButtonCycleAdvanceTrigger,
@@ -139,7 +140,7 @@ function isButtonSelectValue(
 }
 
 export function ButtonHost({
-  button,
+  button: canonicalButton,
   placement,
   skin,
   themeOverride,
@@ -168,6 +169,7 @@ export function ButtonHost({
   onVisualStateChange,
   onNaturalMeasurement
 }: ButtonHostProps) {
+  const button = useMemo(() => resolveButtonPlacementPresentation(canonicalButton, placement), [canonicalButton, placement]);
   const [coreElement, setCoreElement] = useState<HTMLElement | SVGElement | null>(null);
   const [labelElement, setLabelElement] = useState<HTMLElement | SVGElement | null>(null);
   const [shadowRoot, setShadowRoot] = useState<ShadowRoot | null>(null);
@@ -219,7 +221,9 @@ export function ButtonHost({
   const activationStateCount = activationCycle
     ? getButtonPlacementActivationStateCount(activationCycle)
     : getButtonActivationStateCount(button.activationBehavior);
-  const activationStateKey = activationCycle ? placement.id : button.id;
+  const activationStateKey = activationCycle || placement.presentationOverride?.activationBehavior ? placement.id : button.id;
+  const activationStateKeyRef = useRef(activationStateKey);
+  activationStateKeyRef.current = activationStateKey;
   const authoredVisualStates = useMemo(() => new Set<ButtonSkinVisualState>(
     BUTTON_SKIN_VISUAL_STATES.filter((visualState) => (
       visualState === "base" || Boolean(skin[visualState].trim())
@@ -696,7 +700,7 @@ export function ButtonHost({
         const pressPlan = resolveButtonPressEventPlan(button);
         const primaryEventName = pressPlan.runClickOnRelease ? "click" : "pressDown";
         if (!activationCycle && eventName === primaryEventName && activationStateCount > 1) {
-          await advanceButtonActivationState(button.id, activationStateCount);
+          await advanceButtonActivationState(activationStateKey, activationStateCount);
         }
         return;
       }
@@ -713,7 +717,7 @@ export function ButtonHost({
       const pressPlan = resolveButtonPressEventPlan(button);
       const primaryEventName = pressPlan.runClickOnRelease ? "click" : "pressDown";
       if (!activationCycle && eventName === primaryEventName && activationStateCount > 1) {
-        await advanceButtonActivationState(button.id, activationStateCount);
+        await advanceButtonActivationState(activationStateKey, activationStateCount);
       }
     } catch (executionError) {
       console.error(`Button '${button.label}' failed.`, executionError);
@@ -1051,7 +1055,7 @@ export function ButtonHost({
               requestActivationTriggerRef.current("press", interactionId, true);
               requestActivationTriggerRef.current("release", interactionId, true);
             } else if (stateCount > 1) {
-              await advanceButtonActivationState(buttonRef.current.id, stateCount);
+              await advanceButtonActivationState(activationStateKeyRef.current, stateCount);
             }
           }
         } catch (activationError) {

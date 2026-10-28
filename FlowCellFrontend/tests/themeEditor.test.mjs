@@ -25,7 +25,7 @@ function parsedColorFallbacks(source) {
   return fallbacks;
 }
 
-test("Theme Editor is opened from Main and discovers Blender only as a universal target", () => {
+test("Main and installed program contributions use the unified Theme Editor", () => {
   const main = read("src", "pages", "main", "MainPage.tsx");
   const layout = read("src", "pages", "main", "mainLayout.ts");
   const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
@@ -50,14 +50,12 @@ test("Theme Editor is opened from Main and discovers Blender only as a universal
 
   assert.match(layout, /label: "Theme"[\s\S]{0,180}actionId: "open-theme-editor"/);
   assert.match(main, /openThemeEditorWindow\(\{ target: "FlowCell", page: "main" \}\)/);
-  assert.match(editor, /listProgramFolders\(\)/);
-  assert.match(editor, /<option value=\{FLOWCELL_TARGET_VALUE\}>FlowCell<\/option>/);
-  assert.match(editor, /<option value=\{ALL_PANELS_VALUE\}>All Panels and Pop-outs<\/option>/);
-  assert.match(editor, /<option value=\{POPOUTS_ONLY_VALUE\}>Pop-outs Only<\/option>/);
+  assert.match(editor, /registeredPanels\.map/);
+  assert.match(editor, /<option value=\{FLOWCELL_TARGET_VALUE\}>Main<\/option>/);
   assert.match(editor, /panelValue === POPOUTS_ONLY_VALUE/);
   assert.match(editor, /popoutsOnly \? \{ area: "popouts" as const \} : \{\}/);
   assert.match(editor, /current === POPOUTS_ONLY_VALUE/);
-  assert.match(editor, /loadedTarget\.area === "popouts"[\s\S]{0,120}POPOUTS_ONLY_VALUE/);
+  assert.doesNotMatch(editor, /setTargetValue\(loadedTarget/);
   assert.match(editor, /target\.area === "popouts"[\s\S]{0,100}Pop-outs Theme/);
   assert.match(editor, /programNames\.map\(\(programName\)/);
   assert.match(editor, /FLOWCELL_THEME_PAGE_REGISTRY/);
@@ -69,12 +67,9 @@ test("Theme Editor is opened from Main and discovers Blender only as a universal
   assert.match(editor, /subscribeButtonCommits/);
   assert.match(editor, /THEME_EDITOR_CONTEXT_EVENT/);
   assert.doesNotMatch(editor, /["'`]Blender["'`]/);
-  for (const blenderSource of [blenderScript, blenderPage, blenderManifest]) {
-    assert.doesNotMatch(
-      blenderSource,
-      /theme-editor|theme\.buttons\.open|openThemeEditorWindow/i
-    );
-  }
+  assert.ok(JSON.parse(blenderScript).page.themeContribution);
+  assert.match(blenderPage, /descriptor\.themeContribution/);
+  assert.equal(JSON.parse(blenderManifest).themeLibrary, "themes/Blender");
 });
 
 test("Theme Editor is a bulk override and saved-skin assignment workflow", () => {
@@ -123,7 +118,7 @@ test("Theme Editor is a bulk override and saved-skin assignment workflow", () =>
   assert.match(editor, /max: BUTTON_GLOW_AMOUNT_MAX/);
   assert.match(editor, /The range reaches \{BUTTON_HIGHLIGHT_AMOUNT_MAX\}%/);
   assert.match(editor, /Defaults are \{DEFAULT_BUTTON_HIGHLIGHT_AMOUNT\}%/);
-  assert.match(editor, /ensureThemeOverride\(document, placementId\)\[field\] = amount/);
+  assert.match(editor, /applyCommonProgramThemeEdit\(document, target, placementIds, \{ kind: "effect", field, amount \}\)/);
   assert.match(editor, /Set \$\{label\.toLocaleLowerCase\("en"\)\} to \$\{amount\}% across all \$\{placementIds\.length\} in-scope Buttons/);
   assert.doesNotMatch(editor, /Highlight color|Enable hover|Enable active/);
   assert.match(
@@ -168,7 +163,7 @@ test("Theme Editor is a bulk override and saved-skin assignment workflow", () =>
   assert.match(applyGradient, /did not resolve the exact/);
   const bakeIndex = applyGradient.indexOf("bakeThemeGradientForDeployedLayout(");
   const gradientDraftIndex = applyGradient.indexOf("updateDraft(", bakeIndex);
-  const gradientColorIndex = applyGradient.indexOf("ensureThemeOverride(", gradientDraftIndex);
+  const gradientColorIndex = applyGradient.indexOf("applyCommonProgramThemeEdit(", gradientDraftIndex);
   assert.equal(
     0 <= bakeIndex && bakeIndex < gradientDraftIndex && gradientDraftIndex < gradientColorIndex,
     true,
@@ -187,9 +182,9 @@ test("Theme Editor is a bulk override and saved-skin assignment workflow", () =>
   assert.equal(
     0 <= applyIndex &&
       applyIndex < authorizeIndex &&
-      authorizeIndex < saveIndex &&
-      saveIndex < publishIndex &&
-      publishIndex < pageIndex,
+      authorizeIndex < pageIndex &&
+      pageIndex < saveIndex &&
+      saveIndex < publishIndex,
     true
   );
   assert.equal(commitTheme.match(/saveButtonStateDocument\(/g)?.length, 1);
@@ -232,15 +227,12 @@ test("Theme Editor is a bulk override and saved-skin assignment workflow", () =>
   const handleApply = editor.slice(handleApplyStart, handleApplyEnd);
   assert.match(
     handleApply,
-    /const committed = await commitTheme\(theme\);[\s\S]*acceptCommittedTheme\(committed\.saved, committed\.page\);/
+    /const committed = await commitCompleteTheme\(theme\)/
   );
   assert.match(file, /isFlowCellThemeFile\(theme\)/);
-  assert.equal(
-    file.match(/initialDirectory: await flowCellThemeDirectory\(\)/g)?.length,
-    2,
-    "Open Theme and Save Theme must start in the saved-theme folder"
-  );
-  assert.match(nativeLayouts, /fn get_flowcell_theme_directory\(\)[\s\S]{0,160}resolve_main_page_layouts_root\(\)/);
+  assert.match(file, /initialDirectory: await flowCellThemeDirectory\(target\)/);
+  assert.match(file, /initialDirectory: await flowCellThemeDirectory\(theme.target\)/);
+  assert.match(nativeLayouts, /fn get_flowcell_theme_directory\(program_name: Option<String>\)[\s\S]{0,200}resolve_theme_directory/);
   assert.match(nativeLayouts, /save_flowcell_theme_file/);
   assert.match(nativeLayouts, /load_flowcell_theme_file/);
   assert.match(nativeLayouts, /\.flowtheme\.json/);
@@ -251,8 +243,8 @@ test("Theme Editor preserves loaded default-highlight resets without exposing le
   const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
   assert.match(editor, /const highlightColorResetPlacementIds = useRef/);
   assert.match(editor, /highlightColorResetPlacementIds: highlightColorResetPlacementIds\.current/);
-  assert.match(editor, /const handleApply[\s\S]*?adoptHighlightColorResetIntents\(theme, committed\.applied\)/);
-  assert.match(editor, /adoptHighlightColorResetIntents\(loaded\.theme, committed\.applied\)/);
+  assert.match(editor, /const handleApply[\s\S]*?commitCompleteTheme\(theme\)/);
+  assert.match(editor, /adoptHighlightColorResetIntents\(scoped, committed\.applied\)/);
   assert.doesNotMatch(editor, /applyHighlightChange|useDefaultHighlightColor|highlightSummary/);
 });
 

@@ -1,7 +1,7 @@
 {
     "schemaVersion": 1,
     "id": "blender.remesh",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "label": "remesh",
     "tooltip": "Remesh with one cycling mode Button, inline-editable value Buttons, SS/RD toggles, Create, and Apply.",
     "kind": "toolset",
@@ -96,68 +96,79 @@
             "mode_cycle": {
                 "x": 8,
                 "y": 8,
-                "width": 144,
-                "height": 42
+                "width": 72,
+                "height": 44,
+                "zIndex": 0
             },
             "set_voxel_size_mm": {
-                "x": 160,
+                "x": 80,
                 "y": 8,
-                "width": 144,
-                "height": 42
+                "width": 72,
+                "height": 44,
+                "zIndex": 1
             },
             "set_adaptivity": {
-                "x": 312,
+                "x": 152,
                 "y": 8,
-                "width": 144,
-                "height": 42
+                "width": 72,
+                "height": 44,
+                "zIndex": 2
             },
             "set_octree_depth": {
-                "x": 464,
+                "x": 224,
                 "y": 8,
-                "width": 144,
-                "height": 42
+                "width": 72,
+                "height": 44,
+                "zIndex": 3
             },
             "set_scale": {
-                "x": 8,
-                "y": 58,
-                "width": 144,
-                "height": 42
+                "x": 224,
+                "y": 52,
+                "width": 72,
+                "height": 44,
+                "zIndex": 7
             },
             "set_threshold": {
-                "x": 160,
-                "y": 58,
-                "width": 144,
-                "height": 42
+                "x": 8,
+                "y": 52,
+                "width": 72,
+                "height": 44,
+                "zIndex": 4
             },
             "set_sharpness": {
-                "x": 312,
-                "y": 58,
-                "width": 144,
-                "height": 42
+                "x": 80,
+                "y": 52,
+                "width": 72,
+                "height": 44,
+                "zIndex": 5
             },
             "toggle_smooth_shading": {
-                "x": 464,
-                "y": 58,
-                "width": 144,
-                "height": 42
+                "x": 8,
+                "y": 96,
+                "width": 72,
+                "height": 44,
+                "zIndex": 8
             },
             "toggle_remove_disconnected": {
-                "x": 8,
-                "y": 108,
-                "width": 144,
-                "height": 42
+                "x": 152,
+                "y": 52,
+                "width": 72,
+                "height": 44,
+                "zIndex": 6
             },
             "create_update_remesh": {
-                "x": 160,
-                "y": 108,
-                "width": 144,
-                "height": 42
+                "x": 80,
+                "y": 96,
+                "width": 97,
+                "height": 45,
+                "zIndex": 9
             },
             "apply_remesh": {
-                "x": 312,
-                "y": 108,
-                "width": 144,
-                "height": 42
+                "x": 177,
+                "y": 96,
+                "width": 117,
+                "height": 46,
+                "zIndex": 10
             }
         },
         "fields": [

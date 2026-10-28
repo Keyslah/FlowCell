@@ -23,7 +23,7 @@ interface InstalledPageAssetResource {
   base64: string;
 }
 
-interface InstalledPageDescriptor {
+export interface InstalledPageDescriptor {
   ownerButtonId: string;
   programId: string;
   programName: string;
@@ -54,6 +54,17 @@ interface InstalledPageDescriptor {
   supportedDataFormats: string[];
   config: unknown;
   refreshEvents: string[];
+  themeContribution?: { version: 1; persistentFieldIds: string[]; assetFieldIds: string[] } | null;
+  sourceId?: string | null;
+  sourceVersion?: string | null;
+  embeddedTheme?: boolean;
+  /** Internal Core-owned shipped page; never resolved as an installed source. */
+  coreOwned?: boolean;
+}
+
+export interface TrustedBuiltinPage {
+  descriptor: InstalledPageDescriptor;
+  runAction(actionId: string, payload: unknown): Promise<unknown>;
 }
 
 interface PageRequestMessage {
@@ -188,6 +199,7 @@ function sanitizeEntryHtml(source: string): string {
 function buildBridgeSource(descriptor: InstalledPageDescriptor, nonce: string): string {
   const publicDescriptor = {
     pageId: descriptor.pageId,
+    programName: descriptor.programName,
     label: descriptor.label,
     tooltip: descriptor.tooltip,
     config: descriptor.config,
@@ -195,7 +207,10 @@ function buildBridgeSource(descriptor: InstalledPageDescriptor, nonce: string): 
       asset.path,
       `data:${asset.mimeType};base64,${asset.base64}`
     ])),
-    refreshEvents: descriptor.refreshEvents
+    refreshEvents: descriptor.refreshEvents,
+    themeContribution: descriptor.themeContribution,
+    embeddedTheme: descriptor.embeddedTheme === true,
+    coreOwned: descriptor.coreOwned === true
   };
   return escapeInlineScript(`(() => {
     "use strict";
@@ -229,6 +244,7 @@ function buildBridgeSource(descriptor: InstalledPageDescriptor, nonce: string): 
     }
     const pending = new Map();
     let sequence = 0;
+    let themeHandler = null;
     const descriptor = Object.freeze(${JSON.stringify(publicDescriptor)});
     const request = (actionId, payload = {}) => new Promise((resolve, reject) => {
       if (typeof actionId !== "string" || !actionId.trim()) {
@@ -239,7 +255,7 @@ function buildBridgeSource(descriptor: InstalledPageDescriptor, nonce: string): 
       pending.set(requestId, { resolve, reject });
       sendNative({ channel, type: "request", nonce, requestId, actionId, payload });
     });
-    (${installProgramUndoKeys.toString()})(window, (shortcut) => new Promise((resolve, reject) => {
+    if (!descriptor.coreOwned) (${installProgramUndoKeys.toString()})(window, (shortcut) => new Promise((resolve, reject) => {
       const requestId = "undo-" + String(Date.now()) + "-" + String(++sequence);
       pending.set(requestId, { resolve, reject });
       sendNative({ channel, type: "undo", nonce, requestId, shortcut });
@@ -252,7 +268,14 @@ function buildBridgeSource(descriptor: InstalledPageDescriptor, nonce: string): 
       setTimeout(() => notice.remove(), 5000);
     });
     Object.defineProperty(window, "flowcellPage", {
-      value: Object.freeze({ descriptor, request }),
+      value: Object.freeze({ descriptor, request,
+        setThemeHandler: (handler) => { themeHandler = typeof handler === "function" ? handler : null; },
+        themeReady: () => { if (descriptor.embeddedTheme) sendNative({ channel, type: "theme-ready", nonce }); },
+        themeLibrary: (action) => {
+          if (!descriptor.embeddedTheme || !["save", "open", "previous", "next"].includes(action)) return;
+          sendNative({ channel, type: "theme-library", nonce, action });
+        }
+      }),
       writable: false,
       configurable: false
     });
@@ -260,7 +283,17 @@ function buildBridgeSource(descriptor: InstalledPageDescriptor, nonce: string): 
     addEventListener("message", (event) => {
       if (event.source !== window || !event.data || event.data.channel !== channel ||
           event.data.nonce !== nonce) return;
-      if (event.data.type === "response") {
+      if (event.data.type === "theme-request" && descriptor.embeddedTheme) {
+        const message = event.data;
+        Promise.resolve().then(() => {
+          if (!themeHandler) throw new Error("The program Theme controls are still loading.");
+          return themeHandler(message.operation, message.value);
+        }).then((result) => sendNative({ channel, type: "theme-response", nonce,
+          requestId: message.requestId, ok: true, result: result ?? null, error: null
+        }), (error) => sendNative({ channel, type: "theme-response", nonce,
+          requestId: message.requestId, ok: false, result: null, error: String(error && error.message || error)
+        }));
+      } else if (event.data.type === "response") {
         const entry = pending.get(event.data.requestId);
         if (!entry) return;
         pending.delete(event.data.requestId);
@@ -345,15 +378,39 @@ async function revealInstalledPageError(
   if (!isDisposed()) reveal(message);
 }
 
+export interface InstalledPageThemeBridge {
+  request(operation: "capture" | "validate" | "stage" | "apply" | "refresh" | "policy" | "set-active", value?: unknown): Promise<unknown>;
+}
+
 export default function InstalledPageWindowPage({
-  context
+  context, embedded = false, embeddedVisible = true, onThemeBridge, onThemeLibrary, builtinPage
 }: {
   context: InstalledPageWindowContext;
+  embedded?: boolean;
+  embeddedVisible?: boolean;
+  onThemeBridge?: (bridge: InstalledPageThemeBridge | null) => void;
+  onThemeLibrary?: (action: "save" | "open" | "previous" | "next") => void;
+  /** Only trusted bundled Core callers can supply this renderer/action adapter. */
+  builtinPage?: TrustedBuiltinPage;
 }) {
   const [descriptor, setDescriptor] = useState<InstalledPageDescriptor | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isolationVerified, setIsolationVerified] = useState(false);
+  const [themeReady, setThemeReady] = useState(false);
   const closeInProgressRef = useRef(false);
+  const hostRef = useRef<HTMLElement | null>(null);
+  const visibleRef = useRef(embeddedVisible);
+  visibleRef.current = embeddedVisible;
+  const callbacksRef = useRef({ onThemeBridge, onThemeLibrary });
+  callbacksRef.current = { onThemeBridge, onThemeLibrary };
+  const themeRequests = useRef(new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>());
+  const readBounds = () => {
+    const rect = hostRef.current?.getBoundingClientRect();
+    if (!embedded || !rect) return undefined;
+    const ratio = window.devicePixelRatio || 1;
+    return { visible: visibleRef.current && rect.width > 0 && rect.height > 0, x: Math.max(0, Math.round(rect.left * ratio)), y: Math.max(0, Math.round(rect.top * ratio)),
+      width: Math.max(1, Math.round(rect.width * ratio)), height: Math.max(1, Math.round(rect.height * ratio)) };
+  };
   const nonce = useMemo(() => {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
       return crypto.randomUUID();
@@ -370,6 +427,11 @@ export default function InstalledPageWindowPage({
     setDescriptor(null);
     setError(null);
     setIsolationVerified(false);
+    setThemeReady(false);
+    if (builtinPage) {
+      setDescriptor({ ...builtinPage.descriptor, embeddedTheme: embedded, coreOwned: true });
+      return () => { disposed = true; };
+    }
     void invoke<InstalledPageDescriptor>("resolve_installed_page", {
       ownerButtonId: context.ownerButtonId,
       programName: context.programName,
@@ -378,15 +440,15 @@ export default function InstalledPageWindowPage({
       pageId: context.pageId
     }).then(async (resolved) => {
       if (disposed) return;
-      setDescriptor(resolved);
-      await getCurrentWindow().setTitle(`FlowCell - ${resolved.window.title}`).catch(() => {});
+      setDescriptor({ ...resolved, embeddedTheme: embedded });
+      if (!embedded) await getCurrentWindow().setTitle(`FlowCell - ${resolved.window.title}`).catch(() => {});
     }).catch((reason) => {
       if (!disposed) setError(formatError(reason));
     });
     return () => {
       disposed = true;
     };
-  }, [context]);
+  }, [context, embedded, builtinPage]);
 
   useEffect(() => {
     if (!descriptor) return;
@@ -394,6 +456,8 @@ export default function InstalledPageWindowPage({
     let unlistenNative: UnlistenFn | null = null;
     let unlistenClose: UnlistenFn | null = null;
     let unlistenResize: UnlistenFn | null = null;
+    let boundsObserver: ResizeObserver | null = null;
+    let updateBounds: (() => void) | null = null;
     let isolationProofReceived = false;
     let isolationProofTimeout: ReturnType<typeof setTimeout> | null = null;
     const currentWindow = getCurrentWindow();
@@ -431,7 +495,9 @@ export default function InstalledPageWindowPage({
         fileName: context.fileName,
         pageId: context.pageId
       };
-      void trackProgramAction(context.programName, () => invoke<CompletedPageActionResult | unknown>("run_installed_page_action", {
+      const runAction = builtinPage
+        ? () => builtinPage.runAction(message.actionId, message.payload)
+        : () => trackProgramAction(context.programName, () => invoke<CompletedPageActionResult | unknown>("run_installed_page_action", {
         ...identity,
         actionId: message.actionId,
         payloadJson
@@ -452,7 +518,8 @@ export default function InstalledPageWindowPage({
           throw new Error("Installed page action returned an invalid broker result.");
         }
         return (runResult as unknown as CompletedPageActionResult).value;
-      })).then((result) => postToPage({
+      }));
+      void runAction().then((result) => postToPage({
         channel: "flowcell-installed-page",
         type: "response",
         nonce,
@@ -483,6 +550,23 @@ export default function InstalledPageWindowPage({
           } catch {
             return;
           }
+          if (isRecord(message) && message.channel === "flowcell-installed-page" && message.nonce === nonce) {
+            if (message.type === "theme-ready") { setThemeReady(true); return; }
+            if (message.type === "theme-response" && typeof message.requestId === "string") {
+              const pending = themeRequests.current.get(message.requestId);
+              if (pending) {
+                clearTimeout(pending.timer);
+                themeRequests.current.delete(message.requestId);
+                if (message.ok === true) pending.resolve(message.result);
+                else pending.reject(new Error(String(message.error || "Program Theme operation failed.")));
+              }
+              return;
+            }
+            if (message.type === "theme-library" && ["save", "open", "previous", "next"].includes(String(message.action))) {
+              callbacksRef.current.onThemeLibrary?.(message.action as "save" | "open" | "previous" | "next");
+              return;
+            }
+          }
           if (isPageSecurityProbeMessage(message, nonce)) {
             isolationProofReceived = true;
             if (isolationProofTimeout !== null) {
@@ -503,6 +587,7 @@ export default function InstalledPageWindowPage({
             return;
           }
           if (isPageUndoMessage(message, nonce)) {
+            if (builtinPage) return;
             const request = message;
             void forwardProgramUndo(request.shortcut, context.programName).then(() => postToPage({
               channel: "flowcell-installed-page", type: "response", nonce,
@@ -550,7 +635,8 @@ export default function InstalledPageWindowPage({
       unlistenClose = disposeClose;
       await invoke("mount_installed_page_webview", {
         html: pageDocument,
-        nonce
+        nonce,
+        bounds: readBounds()
       });
       if (disposed) {
         await invoke("unmount_installed_page_webview").catch(() => {});
@@ -566,12 +652,24 @@ export default function InstalledPageWindowPage({
       const disposeResize = await currentWindow.onResized(({ payload }) => {
         void invoke("resize_installed_page_webview", {
           width: payload.width,
-          height: payload.height
+          height: payload.height,
+          bounds: readBounds()
         }).catch((reason) => {
           if (!disposed) failPage(reason);
         });
       });
       if (disposed) disposeResize(); else unlistenResize = disposeResize;
+      if (embedded && hostRef.current) {
+        updateBounds = () => {
+          const bounds = readBounds();
+          if (bounds && !disposed) void invoke("resize_installed_page_webview", {
+            width: bounds.width, height: bounds.height, bounds
+          }).catch((reason) => { if (!disposed) failPage(reason); });
+        };
+        boundsObserver = new ResizeObserver(updateBounds);
+        boundsObserver.observe(hostRef.current);
+        window.addEventListener("scroll", updateBounds, true);
+      }
     })().catch((reason) => {
       if (!disposed) failPage(reason);
     });
@@ -581,9 +679,17 @@ export default function InstalledPageWindowPage({
       unlistenNative?.();
       unlistenClose?.();
       unlistenResize?.();
+      boundsObserver?.disconnect();
+      if (updateBounds) window.removeEventListener("scroll", updateBounds, true);
+      for (const pending of themeRequests.current.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error("The selected program Theme changed before the operation completed."));
+      }
+      themeRequests.current.clear();
+      callbacksRef.current.onThemeBridge?.(null);
       void invoke("unmount_installed_page_webview").catch(() => {});
     };
-  }, [context, descriptor, nonce, pageDocument]);
+  }, [context, descriptor, nonce, pageDocument, embedded, builtinPage]);
 
   useEffect(() => {
     if (!descriptor || !isolationVerified || descriptor.refreshEvents.length === 0) return;
@@ -620,16 +726,41 @@ export default function InstalledPageWindowPage({
     };
   }, [descriptor, isolationVerified, nonce]);
 
+  useEffect(() => {
+    if (!embedded || !isolationVerified) return;
+    const bounds = readBounds();
+    if (bounds) void invoke("resize_installed_page_webview", { width: bounds.width, height: bounds.height, bounds }).catch(() => {});
+  }, [embedded, embeddedVisible, isolationVerified]);
+
+  useEffect(() => {
+    if (!embedded || !isolationVerified) return;
+    if (!themeReady) return;
+    callbacksRef.current.onThemeBridge?.({ request: (operation, value) => new Promise((resolve, reject) => {
+      const requestId = crypto.randomUUID();
+      const timer = setTimeout(() => {
+        themeRequests.current.delete(requestId);
+        reject(new Error("The program Theme operation timed out after 30 seconds."));
+      }, 30_000);
+      themeRequests.current.set(requestId, { resolve, reject, timer });
+      void invoke("post_installed_page_webview_message", { messageJson: JSON.stringify({
+        channel: "flowcell-installed-page", type: "theme-request", nonce, requestId, operation, value
+      }) }).catch((reason) => {
+        clearTimeout(timer); themeRequests.current.delete(requestId); reject(reason);
+      });
+    }) });
+    return () => callbacksRef.current.onThemeBridge?.(null);
+  }, [embedded, isolationVerified, nonce, themeReady]);
+
   if (error) {
     return (
-      <main className="installed-page-host installed-page-host--error">
+      <main ref={hostRef} className="installed-page-host installed-page-host--error">
         <h1>Installed page unavailable</h1>
         <p>{error}</p>
       </main>
     );
   }
   if (!descriptor || !isolationVerified) {
-    return <main className="installed-page-host installed-page-host--loading">Loading installed page…</main>;
+    return <main ref={hostRef} className="installed-page-host installed-page-host--loading">Loading installed page…</main>;
   }
-  return <main className="installed-page-host" aria-label={descriptor.window.title} />;
+  return <main ref={hostRef} className="installed-page-host" aria-label={descriptor.window.title} />;
 }

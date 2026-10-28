@@ -80,6 +80,7 @@ export function ensureRegularPopout(
   const eligible = [...new Map(
     buttons
       .filter((button) => button.role === "single-script" && Boolean(button.sourceIdentity))
+      .filter((button) => button.metadata.themeContributionOnly !== true)
       .map((button) => [button.id.trim(), button] as const)
   ).values()];
   if (eligible.length === 0) throw new Error("A regular popout needs at least one script Button.");
@@ -187,7 +188,8 @@ export function ensureFanSetup(args: {
   buttons: readonly ButtonRecord[];
 }): ButtonFanSetup {
   const uniqueButtons = [...new Map(
-    args.buttons.map((button) => [button.id.trim(), button] as const)
+    args.buttons.filter((button) => button.metadata.themeContributionOnly !== true)
+      .map((button) => [button.id.trim(), button] as const)
   ).values()];
   const members = uniqueButtons.filter((button) => button.role === "single-script");
   const owners = uniqueButtons.filter((button) => button.role === "tool-set-owner");
@@ -302,6 +304,45 @@ function removeSurface(document: ButtonStateDocument, surfaceId: string): void {
   if (!surface) return;
   [...surface.placementIds].forEach((placementId) => removePlacement(document, placementId));
   delete document.surfaces[surfaceId];
+}
+
+/** Keep the installed page owner and its settings, while removing its ordinary Button entry points. */
+export function hideThemeContributionOwner(document: ButtonStateDocument, ownerButtonId: string): void {
+  const owner = document.buttons[ownerButtonId];
+  if (!owner || owner.role !== "single-script") {
+    throw new Error("A Theme contribution must be an installed page owner.");
+  }
+  owner.metadata = { ...owner.metadata, themeContributionOnly: true };
+  const removedPlacements = new Set(Object.values(document.placements)
+    .filter((placement) => placement.buttonId === ownerButtonId).map((placement) => placement.id));
+  for (const id of removedPlacements) removePlacement(document, id);
+  for (const [id, unit] of Object.entries(document.popoutUnits)) {
+    if (unit.kind !== "regular" || !unit.memberPlacementIds.some((placementId) => removedPlacements.has(placementId))) continue;
+    if (unit.ownerButtonId === ownerButtonId) {
+      unit.interactionMode = "pop";
+      unit.ownerButtonId = null;
+      unit.ownerPlacementId = null;
+    }
+    unit.memberPlacementIds = unit.memberPlacementIds.filter((placementId) => !removedPlacements.has(placementId));
+    unit.memberSourceIdentities = unit.memberPlacementIds.map((placementId) =>
+      document.buttons[document.placements[placementId].buttonId].sourceIdentity!
+    );
+    if (unit.memberPlacementIds.length === 0) {
+      removeSurface(document, unit.surfaceId);
+      delete document.popoutUnits[id];
+    } else {
+      unit.selectionKey = deriveRegularPopoutSelectionKey(unit.memberSourceIdentities);
+    }
+  }
+  for (const [id, setup] of Object.entries(document.fanSetups)) {
+    if (!setup.fanMemberButtonIds.includes(ownerButtonId)) continue;
+    setup.fanMemberButtonIds = setup.fanMemberButtonIds.filter((buttonId) => buttonId !== ownerButtonId);
+    setup.fanMemberPlacementIds = setup.fanMemberPlacementIds.filter((placementId) => !removedPlacements.has(placementId));
+    if (setup.fanMemberButtonIds.length === 0 && setup.selectedToolSetOwnerButtonIds.length === 0) {
+      removeSurface(document, setup.fanSurfaceId);
+      delete document.fanSetups[id];
+    }
+  }
 }
 
 export function removeOwnedButtonGraph(

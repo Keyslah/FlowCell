@@ -33,6 +33,13 @@ function Resolve-BlenderThemePackageLibrary([string]$LibraryPath) {
     $source = Join-Path $RepoRoot $source
   }
   $source = [System.IO.Path]::GetFullPath($source)
+  if ([System.IO.Path]::GetFileName($source.TrimEnd('\', '/')) -ieq 'blender_themes') {
+    $canonical = Join-Path ([System.IO.Path]::GetDirectoryName($source.TrimEnd('\', '/'))) 'themes/Blender'
+    $migration = Join-Path ([System.IO.Path]::GetDirectoryName($canonical)) '.migration-v1.json'
+    if ((Test-Path -LiteralPath $canonical -PathType Container) -and (Test-Path -LiteralPath $migration -PathType Leaf)) {
+      $source = [System.IO.Path]::GetFullPath($canonical)
+    }
+  }
   Assert-NoReparsePathComponents ([System.IO.Path]::GetPathRoot($source)) $source 'Blender theme library'
   if (-not (Test-Path -LiteralPath $source -PathType Container)) {
     Stop-Package "Blender theme library was not found: $source"
@@ -66,6 +73,48 @@ function Copy-BlenderThemePackages([string]$SourceLibrary, [string]$Destination)
 
   $packages = New-Object System.Collections.Generic.List[object]
   $assetCount = 0
+  $flatThemes = New-Object System.Collections.Generic.List[object]
+  foreach ($file in @(Get-ChildItem -LiteralPath $sourceRoot -File -Force | Where-Object {
+    -not $_.Name.StartsWith('.') -and ($_.Name.EndsWith('.flowtheme.json') -or $_.Name.EndsWith('.flowcell-theme-pack.json'))
+  })) {
+    Assert-NoReparsePathComponents $sourceRoot $file.FullName 'Unified Blender theme'
+    try { $theme = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json }
+    catch { Stop-Package "Invalid unified Blender theme: $($file.FullName)" }
+    if ($null -eq $theme -or $theme -isnot [pscustomobject] -or -not $theme.PSObject.Properties['kind'] -or
+        $theme.kind -notin @('FlowCellPortableTheme', 'FlowCellTheme') -or -not $theme.PSObject.Properties['version'] -or
+        ($theme.kind -eq 'FlowCellPortableTheme' -and $theme.version -ne 1) -or
+        ($theme.kind -eq 'FlowCellTheme' -and $theme.version -notin @(1, 2)) -or
+        -not $theme.PSObject.Properties['target'] -or $theme.target.kind -ne 'program' -or $theme.target.programName -ine 'Blender') {
+      Stop-Package "Unsupported format or wrong target in unified Blender theme: $($file.FullName)"
+    }
+    if ($theme.kind -eq 'FlowCellPortableTheme') {
+      if (-not $theme.PSObject.Properties['theme'] -or $theme.theme.target.kind -ne 'program' -or $theme.theme.target.programName -ine 'Blender') {
+        Stop-Package "Portable theme inner target does not match Blender: $($file.FullName)"
+      }
+      $assetPaths = @{}
+      if ($theme.PSObject.Properties['assets']) {
+        foreach ($asset in $theme.assets) {
+          $relative = [string]$asset.path
+          if ([IO.Path]::IsPathRooted($relative) -or $relative.Contains(':') -or -not $relative.StartsWith('assets/') -or
+              @($relative -split '[\\/]' | Where-Object { $_ -eq '' -or $_ -eq '.' -or $_ -eq '..' }).Count -gt 0 -or $assetPaths.ContainsKey($relative)) {
+            Stop-Package "Unsafe or duplicate embedded theme asset: $relative"
+          }
+          try { $bytes = [Convert]::FromBase64String([string]$asset.base64) }
+          catch { Stop-Package "Invalid embedded theme image: $relative" }
+          $sha = [Security.Cryptography.SHA256]::Create()
+          try { $hash = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+          if ($hash -cne [string]$asset.sha256) { Stop-Package "Embedded theme image checksum differs: $relative" }
+          $assetPaths[$relative] = $true
+        }
+      }
+      $serialized = $theme | ConvertTo-Json -Depth 100 -Compress
+      foreach ($match in [regex]::Matches($serialized, 'theme-asset:([^"\s]+)')) {
+        if (-not $assetPaths.ContainsKey($match.Groups[1].Value)) { Stop-Package "Portable theme is missing embedded asset $($match.Groups[1].Value)" }
+      }
+      $assetCount += $assetPaths.Count
+    }
+    $flatThemes.Add($file) | Out-Null
+  }
   $directories = @(Get-ChildItem -LiteralPath $sourceRoot -Directory -Force | Where-Object {
     -not $_.Name.StartsWith('.') -and ($_.Attributes -band [System.IO.FileAttributes]::Hidden) -eq 0
   } | Sort-Object Name)
@@ -132,11 +181,15 @@ function Copy-BlenderThemePackages([string]$SourceLibrary, [string]$Destination)
       Assets = $assets
     }) | Out-Null
   }
-  if ($packages.Count -eq 0) {
+  if ($packages.Count -eq 0 -and $flatThemes.Count -eq 0) {
     Stop-Package "Blender theme library contains no saved packages: $sourceRoot"
   }
 
   # Validate the complete library before writing anything to staging.
+  if ($flatThemes.Count -gt 0) {
+    New-Item -ItemType Directory -Path $destinationRoot -Force | Out-Null
+    foreach ($file in $flatThemes) { Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $destinationRoot $file.Name) }
+  }
   foreach ($package in $packages) {
     $packageRoot = Join-Path $destinationRoot $package.Name
     New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
@@ -148,5 +201,5 @@ function Copy-BlenderThemePackages([string]$SourceLibrary, [string]$Destination)
     $json = $package.Manifest | ConvertTo-Json -Depth 100
     [System.IO.File]::WriteAllText((Join-Path $packageRoot $package.ManifestName), $json, (New-Object System.Text.UTF8Encoding($false)))
   }
-  return [pscustomobject]@{ PackageCount = $packages.Count; AssetCount = $assetCount }
+  return [pscustomobject]@{ PackageCount = $packages.Count + $flatThemes.Count; AssetCount = $assetCount }
 }

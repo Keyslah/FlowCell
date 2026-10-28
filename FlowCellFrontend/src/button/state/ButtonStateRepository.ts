@@ -53,7 +53,7 @@ export interface InstalledButtonChildResult {
 export interface InstalledButtonLayout {
   width?: number;
   height?: number;
-  placements?: Record<string, ButtonRect>;
+  placements?: Record<string, ButtonRect & { zIndex?: number }>;
   fields?: ButtonToolField[];
   childBehaviors?: Record<string, ButtonToolSetChildBehavior>;
   updatePolicy?: {
@@ -63,6 +63,7 @@ export interface InstalledButtonLayout {
 
 export interface InstallButtonSourceResult {
   ownerButtonId: string;
+  themeContributionOnly?: boolean;
   sourceIdentity: ButtonSourceIdentity;
   executionTarget: ButtonExecutionTarget | null;
   label: string;
@@ -629,6 +630,7 @@ function normalizeInstallResult(
   const ownerTarget = (owner.executionTarget ?? null) as ButtonExecutionTarget | null;
   return {
     ownerButtonId: String(response.ownerButtonId ?? request.ownerButtonId),
+    themeContributionOnly: response.themeContributionOnly === true,
     sourceIdentity: identity,
     executionTarget: ownerTarget && sharedEvents
       ? { ...ownerTarget, events: { ...(ownerTarget.events ?? {}), ...sharedEvents } }
@@ -754,7 +756,8 @@ function addMigratedPlacement(
   surface: ButtonSurface,
   buttonId: string,
   id: string,
-  rect: ButtonRect
+  rect: ButtonRect & { zIndex?: number },
+  growSurface = true
 ): ButtonPlacement {
   if (document.placements[id]) {
     throw new Error(`Migration placement '${id}' already exists.`);
@@ -764,7 +767,7 @@ function addMigratedPlacement(
     buttonId,
     surfaceId: surface.id,
     ...rect,
-    zIndex: surface.placementIds.length,
+    zIndex: rect.zIndex ?? surface.placementIds.length,
     skinOverrideId: null,
     textFitMode: document.buttons[buttonId]?.defaultTextFitMode ?? "shrink",
     textAlignment: "skin",
@@ -782,8 +785,10 @@ function addMigratedPlacement(
   };
   document.placements[id] = placement;
   surface.placementIds.push(id);
-  surface.width = Math.max(surface.width, rect.x + rect.width + document.settings.defaultSurfacePadding);
-  surface.height = Math.max(surface.height, rect.y + rect.height + document.settings.defaultSurfacePadding);
+  if (growSurface) {
+    surface.width = Math.max(surface.width, rect.x + rect.width + document.settings.defaultSurfacePadding);
+    surface.height = Math.max(surface.height, rect.y + rect.height + document.settings.defaultSurfacePadding);
+  }
   return placement;
 }
 
@@ -802,8 +807,10 @@ function addMigratedSingle(
     label: install.label,
     tooltip: install.tooltip,
     sourceIdentity: install.sourceIdentity,
-    executionTarget: install.executionTarget
+    executionTarget: install.executionTarget,
+    metadata: install.themeContributionOnly ? { themeContributionOnly: true } : undefined
   });
+  if (install.themeContributionOnly) return;
   const rect = nextMigrationPanelRect(document, panelSurface);
   addMigratedPlacement(
     document,
@@ -884,8 +891,8 @@ function addMigratedToolSet(
     id: surfaceId,
     name: `${install.label} Tool Set`,
     kind: "tool-set-popout",
-    width: Math.max(240, layout?.width ?? 0, starter.requiredWidth, childWidth + 8, fieldWidth + 8),
-    height: Math.max(120, layout?.height ?? 0, starter.requiredHeight, childHeight + 8, fieldHeight + 8),
+    width: layout?.width ?? Math.max(240, starter.requiredWidth, childWidth + document.settings.defaultSurfacePadding, fieldWidth + document.settings.defaultSurfacePadding),
+    height: layout?.height ?? Math.max(120, starter.requiredHeight, childHeight + document.settings.defaultSurfacePadding, fieldHeight + document.settings.defaultSurfacePadding),
     placementIds: [],
     visualOverflowAllowance: 24,
     uniformButtonSize: null
@@ -915,7 +922,8 @@ function addMigratedToolSet(
       surface,
       childId,
       `placement-${childId}`,
-      childRects[index]
+      childRects[index],
+      false
     );
   });
   const unitId = `popout-${install.ownerButtonId}`;

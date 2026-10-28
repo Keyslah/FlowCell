@@ -8,5 +8,7 @@ pub(crate) mod macros;
 pub(crate) mod program_rename;
 pub(crate) mod programs;
 pub(crate) mod screen_color;
+pub(crate) mod theme_archive;
 pub(crate) mod tool_packages;
+pub(crate) mod themes;
 pub(crate) mod windows;

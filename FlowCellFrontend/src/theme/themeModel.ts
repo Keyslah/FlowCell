@@ -8,6 +8,7 @@ import type {
 } from "../button/types.js";
 import { cloneButtonDocument } from "../button/state/buttonDefaults.js";
 import { validateButtonStateDocument } from "../button/state/buttonStateValidation.js";
+import { resolveButtonPlacementPresentation } from "../button/state/buttonPresentation.js";
 import { areButtonSourceIdentitiesEqual } from "../button/state/sourceIdentity.js";
 import {
   alignButtonPlacementSelectionToTopLeftButton,
@@ -223,7 +224,8 @@ const BUTTON_SURFACE_KINDS = new Set<ButtonSurfaceKind>([
 
 const PROGRAM_POPOUT_SURFACE_KINDS = new Set<ButtonSurfaceKind>([
   "regular-popout",
-  "tool-set-popout"
+  "tool-set-popout",
+  "fan"
 ]);
 
 const TEXT_FIT_MODES = new Set<ButtonPlacement["textFitMode"]>([
@@ -413,9 +415,11 @@ export function placementMatchesThemeTarget(
 ): boolean {
   const surface = document.surfaces[placement.surfaceId];
   if (!surface) return false;
+  if (document.buttons[placement.buttonId]?.metadata.themeContributionOnly === true) return false;
 
   if (target.kind === "flowcell") {
-    return themePageSupportsButtonSurface(target.page, surface);
+    return themePageSupportsButtonSurface(target.page, surface) &&
+      placementProgramPanel(document, placement) === null;
   }
 
   const identity = placementProgramPanel(document, placement);
@@ -646,7 +650,7 @@ export function captureThemeFile(args: {
       surfaceKind: surface.kind,
       sourceIdentity: button.sourceIdentity ? structuredClone(button.sourceIdentity) : null,
       panelOwnerIdentity: panelOwnerIdentity(args.document, button.id),
-      label: button.label,
+      label: resolveButtonPlacementPresentation(button, placement).label,
       skin,
       width: placement.width,
       height: placement.height,
@@ -754,7 +758,8 @@ function findThemePlacement(
         (sameSourceIdentity(rightButton?.sourceIdentity ?? null, appearance.sourceIdentity) ? 1 : 0);
       return rightScore - leftScore || left.id.localeCompare(right.id);
     });
-  return candidates[0] ?? null;
+  // A portable or older file must never choose an arbitrary duplicate source.
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 function sameButtonSkinSource(left: ButtonSkin, right: ButtonSkin): boolean {
@@ -830,6 +835,17 @@ function applyAppearanceToPlacement(
   placement: ButtonPlacement,
   appearance: ButtonThemeAppearance
 ): void {
+  // Older files contain size and text policy but no x/y or complete arrangements.
+  // Restore only their authored fields; never infer positions or reflow siblings.
+  for (const field of ["width", "height", "textFitMode", "textAlignment", "textOffsetX", "textOffsetY",
+    "minimumFontSize", "textSizeOverride", "allowLabelResize", "matchHitboxToSkin", "allowStretching", "highlightOnHover"] as const) {
+    Object.assign(placement, { [field]: appearance[field] });
+  }
+  const button = document.buttons[placement.buttonId];
+  if (button && resolveButtonPlacementPresentation(button, placement).label !== appearance.label) {
+    placement.presentationOverride ??= {};
+    placement.presentationOverride.label = appearance.label;
+  }
   if (appearance.assignSkin) {
     const skinId = assignedThemeSkinId(document, appearance);
     const button = document.buttons[placement.buttonId];

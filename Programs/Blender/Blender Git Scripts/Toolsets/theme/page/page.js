@@ -23,6 +23,10 @@
 
   const descriptor = objectRecord(pageApi.descriptor) || {};
   const config = objectRecord(descriptor.config) || {};
+  const embeddedTheme = descriptor.embeddedTheme === true;
+  const buttonsOnly = config.buttonsOnly === true;
+  const programName = typeof descriptor.programName === "string" && descriptor.programName.trim() ? descriptor.programName : "Blender";
+  const themeDeclaration = objectRecord(descriptor.themeContribution) || {};
   const copy = objectRecord(config.copy) || {};
   const actions = objectRecord(config.actions) || {};
   const buttonThemeActions = objectRecord(actions.buttonTheme) || {};
@@ -736,7 +740,7 @@
         placementId, bucketId, color,
         enabled: placement.enabled !== false,
         label: typeof placement.label === "string" && placement.label.trim() ? placement.label.trim() : "Button",
-        groupLabel: typeof placement.groupLabel === "string" ? placement.groupLabel : "Blender",
+        groupLabel: typeof placement.groupLabel === "string" ? placement.groupLabel : programName,
         textColor: normalizeEffectColor(placement.textColor) || model.buttonTheme.textColor
       });
     });
@@ -993,11 +997,11 @@
   async function readPoppedButtonSettings(
     withinOperation = false, adoptGradient = false, adoptSettings = true, adoptText = adoptGradient
   ) {
-    const response = await requestAction(buttonThemeActions.settings, {}, "Reading Blender popped Button settings…", withinOperation);
+    const response = await requestAction(buttonThemeActions.settings, {}, `Reading ${programName} popped Button settings…`, withinOperation);
     const settings = adoptSettings
       ? adoptPoppedButtonSettings(response?.settings, adoptGradient, adoptText)
       : normalizePoppedButtonSettings(response?.settings);
-    if (response && !settings) setStatus("Blender returned invalid popped Button settings.", "error");
+    if (response && !settings) setStatus(`${programName} returned invalid popped Button settings.`, "error");
     return settings;
   }
 
@@ -1007,11 +1011,11 @@
     try {
       const response = await requestAction(buttonThemeActions.settings, {
         settings, ...(resetOverrides ? { resetOverrides: true } : {}), ...(buttonAppearance ? { buttonAppearance } : {})
-      }, "Applying Blender popped Button settings…", true);
+      }, `Applying ${programName} popped Button settings…`, true);
       if (!response) return null;
       const applied = adoptPoppedButtonSettings(response.settings, adoptGradient);
       if (!applied) {
-        setStatus("Blender returned invalid popped Button settings after applying them.", "error");
+        setStatus(`${programName} returned invalid popped Button settings after applying them.`, "error");
         return null;
       }
       // Keep the named list visible while its current colors refresh separately.
@@ -1166,7 +1170,7 @@
         enabled: placement.enabled !== false,
         color: normalizeHex(placement.color) || bucketById.get(bucketId).color,
         label: typeof placement.label === "string" && placement.label.trim() ? placement.label.trim() : "Button",
-        groupLabel: typeof placement.groupLabel === "string" ? placement.groupLabel : "Blender",
+        groupLabel: typeof placement.groupLabel === "string" ? placement.groupLabel : programName,
         textColor: normalizeEffectColor(placement.textColor) || model.buttonTheme.textColor
       });
     });
@@ -1200,9 +1204,7 @@
   function applySavedFields(response) {
     const patch = objectRecord(response.fieldPatch) || objectRecord(response.values);
     if (!patch) return;
-    const gridDefaults = Object.fromEntries([...config.picture.gridFieldIds, config.picture.enabledFieldId].map((fieldId) =>
-      [fieldId, cloneValue(fieldById.get(fieldId).defaultValue)]));
-    patchFields({ ...gridDefaults, ...patch });
+    patchFields(patch);
   }
 
   async function applyTheme(withinOperation = false) {
@@ -1240,31 +1242,41 @@
     }
   }
 
-  async function browseTheme() {
-    const imageFieldId = config.palette.imageFieldId;
-    const selection = await requestAction(
-      actions.theme.select,
-      {},
-      copy.samplingPalette
-    );
-    if (!selection?.selected) return;
-    const imagePath = String(selection.path || "");
-    const response = await requestAction(
-      actions.theme.sample,
-      { imagePath },
-      copy.samplingPalette
-    );
-    if (!response || response.selected === false) return;
-    const path = String(response.imagePath || response.path || "");
-    const patch = objectRecord(response.fieldPatch) || {};
-    patch[imageFieldId] = path;
-    patch[config.palette.fieldId] = response.paletteHexes || [];
-    if (config.palette.copyImagePathToFieldId) patch[config.palette.copyImagePathToFieldId] = path;
-    patchFields(patch, false);
-    model.tone.level = 0;
-    model.tone.activeProfileId = "";
-    patchFields(tonePatch({ mode: "dark", level: 0 }), true);
-    if (path && config.palette.applyPictureAfterSample) await applyPicture();
+  // Find Picture: one operation that samples the chosen image into the theme
+  // buckets and then places that same image as the background picture.
+  async function findPicture() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const imageFieldId = config.palette.imageFieldId;
+      const selection = await requestAction(
+        actions.theme.select,
+        {},
+        copy.samplingPalette,
+        true
+      );
+      if (!selection?.selected) return;
+      const imagePath = String(selection.path || "");
+      const response = await requestAction(
+        actions.theme.sample,
+        { imagePath },
+        copy.samplingPalette,
+        true
+      );
+      if (!response || response.selected === false) return;
+      const path = String(response.imagePath || response.path || "");
+      const patch = objectRecord(response.fieldPatch) || {};
+      patch[imageFieldId] = path;
+      patch[config.palette.fieldId] = response.paletteHexes || [];
+      if (config.palette.copyImagePathToFieldId) patch[config.palette.copyImagePathToFieldId] = path;
+      patchFields(patch, false);
+      model.tone.level = 0;
+      model.tone.activeProfileId = "";
+      patchFields(tonePatch({ mode: "dark", level: 0 }), true);
+      if (path && config.palette.applyPictureAfterSample) await applyPicture(true);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function absorbTheme() {
@@ -1404,7 +1416,13 @@
 
   async function refillButtonTheme() {
     const imageFieldId = config.palette?.imageFieldId;
-    const imagePath = String(model.fields[imageFieldId] || "").trim();
+    let imagePath = String(model.fields[imageFieldId] || "").trim();
+    if (!imagePath && buttonsOnly) {
+      const selection = await requestAction(actions.theme.select, {}, "Choosing a theme image…");
+      if (!selection?.selected || typeof selection.path !== "string" || !selection.path.trim()) return;
+      imagePath = selection.path.trim();
+      patchFields({ [imageFieldId]: imagePath }, false);
+    }
     if (!imagePath) {
       setStatus(copy.buttonThemeNeedsImage || "Choose a theme image before refilling the popped Button gradient.", "error");
       return;
@@ -1539,7 +1557,7 @@
 
   function packageButtonAppearance(response) {
     const appearance = normalizePoppedButtonAppearance(response?.buttonAppearance);
-    if (!appearance || !Array.isArray(response.placementLinks)) throw new Error("Button appearances could not be captured. The package was not saved.");
+    if (!appearance || !Array.isArray(response.placementLinks)) throw new Error("Button appearances could not be captured. The theme was not saved.");
     const links = new Map(response.placementLinks.map((entry) => [entry.paletteId, entry]));
     const records = new Map(appearance.placements.map((entry) => [JSON.stringify([entry.placementId, entry.buttonId]), entry]));
     const buckets = new Map(model.buttonTheme.buckets.map((bucket) => [bucket.id, bucket]));
@@ -1547,7 +1565,7 @@
       const bucket = buckets.get(placement.bucketId);
       if (bucket?.kind !== "surface" || bucket.color === placement.color) continue;
       const link = links.get(placement.placementId);
-      if (!link) throw new Error("A changed Button is no longer open. Reopen it and rescan before saving the package.");
+      if (!link) throw new Error("A changed Button is no longer open. Reopen it and rescan before saving the theme.");
       const key = JSON.stringify([link.placementId, link.buttonId]);
       const previous = records.get(key);
       records.set(key, { ...previous, placementId: link.placementId, buttonId: link.buttonId, color: bucket.color,
@@ -1559,6 +1577,7 @@
   }
 
   async function savePackage() {
+    if (embeddedTheme) { pageApi.themeLibrary("save"); return; }
     if (busy) return;
     setBusy(true);
     try {
@@ -1589,6 +1608,10 @@
   }
 
   async function loadPackage(actionId) {
+    if (embeddedTheme) {
+      pageApi.themeLibrary(actionId === actions.theme.previousPackage ? "previous" : actionId === actions.theme.nextPackage ? "next" : "open");
+      return;
+    }
     if (busy) return;
     setBusy(true);
     invalidateButtonThemeScan();
@@ -1605,11 +1628,11 @@
       const savedSettings = normalizePoppedButtonSettings(patch.popped_button_settings);
       const savedAppearance = normalizePoppedButtonAppearance(patch.popped_button_appearance);
       if (Object.prototype.hasOwnProperty.call(patch, "popped_button_appearance") && !savedAppearance) {
-        setStatus("This package contains invalid Button appearances. The package was not applied.", "error");
+        setStatus("This theme contains invalid Button appearances. The theme was not applied.", "error");
         return;
       }
       if (Object.prototype.hasOwnProperty.call(patch, "popped_button_settings") && !savedSettings) {
-        setStatus("This package contains invalid popped Button settings. The package was not applied.", "error");
+        setStatus("This theme contains invalid popped Button settings. The theme was not applied.", "error");
         return;
       }
       const previousSettings = savedSettings || await readPoppedButtonSettings(true, true, !model.buttonTheme.lockSettings);
@@ -1797,7 +1820,7 @@
     renderPalette(heading);
     const imageRow = element("div", "theme-row theme-reference-row");
     imageRow.append(
-      actionButton(actions.theme.select, browseTheme),
+      actionButton(actions.theme.select, findPicture),
       element("span", "theme-package-name", model.activePackage.name),
       actionButton(actions.theme.absorb, absorbTheme),
       actionButton(localActions.refill, refillTheme),
@@ -2737,8 +2760,8 @@
     ));
     section.append(element("p", "button-theme-effects__help",
       model.buttonTheme.lockSettings
-        ? "Locked: fill and text gradients, curves, angles, Spread, Scatter, highlights and glow stay as they are when switching packages. Unlock to restore the selected package's saved appearance."
-        : "Lock the entire popped Button appearance: fill and text gradients, curves, angles, Spread, Scatter, highlights and glow. The lock is temporary and does not change saved packages."
+        ? "Locked: fill and text gradients, curves, angles, Spread, Scatter, highlights and glow stay as they are when switching themes. Unlock to restore the selected theme's saved appearance."
+        : "Lock the entire popped Button appearance: fill and text gradients, curves, angles, Spread, Scatter, highlights and glow. The lock is temporary and does not change saved themes."
     ));
     if (buttonThemeScanNote) section.append(element("p", "button-theme-effects__help button-theme-scan-note", buttonThemeScanNote));
 
@@ -2970,11 +2993,8 @@
     gradientRedraws.clear();
     buttonThemeBucketsNode = null;
     root.replaceChildren();
-    root.append(
-      renderThemeCard(),
-      renderButtonThemeCard(),
-      renderEnvironmentCard()
-    );
+    if (buttonsOnly) root.append(renderButtonThemeCard());
+    else root.append(renderThemeCard(), renderButtonThemeCard(), renderEnvironmentCard());
     setBusy(busy);
   }
 
@@ -3021,8 +3041,8 @@
         : null;
       const settingsResponse = await pageApi.request(buttonThemeActions.settings, {});
       const settings = normalizePoppedButtonSettings(settingsResponse?.settings);
-      if (!settings) throw new Error("Blender returned invalid popped Button settings.");
-      if (settingsResponse.configured === false) {
+      if (!settings) throw new Error(`${programName} returned invalid popped Button settings.`);
+      if (settingsResponse.configured === false && !embeddedTheme) {
         const applied = await applyPoppedButtonSettings({ ...settings, ...(previousGradient || {}) }, true);
         if (!applied || statusNode.dataset.kind === "error") {
           render();
@@ -3033,6 +3053,7 @@
       }
       render();
       setStatus(copy.ready || "Ready.", "success");
+      if (embeddedTheme && typeof pageApi.themeReady === "function") pageApi.themeReady();
     } catch (error) {
       render();
       setStatus(error instanceof Error ? error.message : String(error), "error");
@@ -3040,6 +3061,114 @@
       queueButtonThemeScan();
       setBusy(false);
     }
+  }
+
+  if (embeddedTheme && typeof pageApi.setThemeHandler === "function") {
+    pageApi.setThemeHandler(async (operation, value) => {
+      if (busy) throw new Error("Finish the current program Theme operation before continuing.");
+      await buttonThemeUpdates;
+      if (operation === "policy") return { preservePoppedAppearance: model.buttonTheme.lockSettings === true };
+      if (operation === "set-active") {
+        const selected = objectRecord(value);
+        if (!selected || typeof selected.name !== "string" || typeof selected.path !== "string") throw new Error("The selected theme identity is invalid.");
+        const settings = selected.buttonSettings == null ? null : normalizePoppedButtonSettings(selected.buttonSettings);
+        const appearance = selected.buttonAppearance == null ? null : normalizePoppedButtonAppearance(selected.buttonAppearance);
+        if ((selected.buttonSettings != null && !settings) || (selected.buttonAppearance != null && !appearance)) throw new Error("The selected theme's popped Button appearance is invalid.");
+        model.activePackage = { name: selected.name, path: selected.path, poppedButtonSettings: settings, poppedButtonAppearance: appearance };
+        schedulePersistence(); render(); return null;
+      }
+      if (operation === "capture") {
+        return { fields: pickFields(themeDeclaration.persistentFieldIds),
+          tone: { level: model.tone.level, profiles: cloneValue(model.tone.profiles), activeProfileId: model.tone.activeProfileId } };
+      }
+      if (operation === "refresh") {
+        const response = await pageApi.request(buttonThemeActions.settings, {});
+        adoptPoppedButtonSettings(response?.settings);
+        queueButtonThemeScan();
+        render();
+        return null;
+      }
+      if (buttonsOnly) throw new Error("The common Popped Button Colors page supports only Button appearance operations.");
+      const state = objectRecord(value);
+      const fields = objectRecord(state?.fields);
+      if (!fields) throw new Error("The program Theme has no declared field settings.");
+      const allowed = new Set(themeDeclaration.persistentFieldIds || []);
+      for (const [key, value] of Object.entries(fields)) {
+        if (!allowed.has(key) || !fieldById.has(key)) throw new Error(`Unsupported program Theme field: ${key}`);
+        const field = fieldById.get(key);
+        const valid = field.kind === "number" ? typeof value === "number" && Number.isFinite(value) &&
+          (!field.integer || Number.isInteger(value)) && value >= finiteNumber(field.minimum, -Number.MAX_VALUE) && value <= finiteNumber(field.maximum, Number.MAX_VALUE)
+          : field.kind === "boolean" ? typeof value === "boolean"
+          : field.kind === "color" ? Boolean(normalizeHex(value))
+          : field.kind === "palette" ? Array.isArray(value) && value.every((entry) => Boolean(normalizeHex(entry)))
+          : field.kind === "select" ? field.options.some((option) => option.value === value)
+          : typeof value === "string";
+        if (!valid) throw new Error(`Invalid program Theme value: ${key}`);
+      }
+      if (operation === "validate") return null;
+      if (operation !== "stage" && operation !== "apply") throw new Error("Unsupported program Theme operation.");
+      const previousFields = cloneValue(model.fields);
+      const previousTone = cloneValue(model.tone);
+      window.clearTimeout(persistenceTimer);
+      for (const [key, value] of Object.entries(fields)) model.fields[key] = normalizeFieldValue(fieldById.get(key), value);
+      if (objectRecord(state.tone)) {
+        const tone = state.tone;
+        if (Object.hasOwn(tone, "level")) model.tone.level = bounded(tone.level);
+        if (Array.isArray(tone.profiles)) model.tone.profiles = normalizeProfiles(tone.profiles);
+        if (typeof tone.activeProfileId === "string") model.tone.activeProfileId = tone.activeProfileId;
+      }
+      render();
+      if (operation === "stage") return null;
+      setBusy(true);
+      const desiredTheme = themePayload();
+      const desiredPicture = pickFields(Object.values(config.payloadMaps.picture));
+      const desiredEnvironmentValues = pickFields(config.environment.valueFields.map((item) => item.fieldId));
+      try {
+        const hasEnvironmentPath = Object.hasOwn(fields, config.environment.pathFieldId);
+        const environmentPath = String(model.fields[config.environment.pathFieldId] || "").trim();
+        const clearsEnvironment = hasEnvironmentPath && !environmentPath;
+        // Clearing Blender's world also removes its picture overlay. Restore the
+        // selected picture/grid afterwards, before Theme Apply records startup state.
+        if (hasEnvironmentPath) {
+          applyResponsePatch(await pageApi.request(environmentPath ? actions.environment.apply : actions.environment.clear,
+            environmentPath ? { hdri_path: environmentPath } : {}));
+        }
+        for (const item of config.environment.valueFields) {
+          // With an explicitly empty HDRI, these integration commands would load
+          // Blender's default image. Retain their staged values without doing that.
+          if (!clearsEnvironment && Object.hasOwn(fields, item.fieldId)) {
+            applyResponsePatch(await pageApi.request(item.actionId, { [item.payloadKey]: desiredEnvironmentValues[item.fieldId] }));
+          }
+          model.fields[item.fieldId] = desiredEnvironmentValues[item.fieldId];
+        }
+        if (Object.hasOwn(fields, config.picture.pathFieldId) || clearsEnvironment) {
+          patchFields(desiredPicture, false);
+          if (model.fields[config.picture.pathFieldId]) {
+            applyResponsePatch(await pageApi.request(actions.picture.apply, picturePayload()));
+          } else {
+            applyResponsePatch(await pageApi.request(actions.picture.clear, {}));
+            patchFields(desiredPicture, false);
+            const gridEnabled = model.fields[config.picture.enabledFieldId];
+            applyResponsePatch(await pageApi.request(gridEnabled ? actions.picture.grid : actions.picture.removeGrid,
+              gridEnabled ? picturePayload() : {}));
+          }
+        } else if ([...config.picture.gridFieldIds, config.picture.enabledFieldId].some((id) => Object.hasOwn(fields, id))) {
+          applyResponsePatch(await pageApi.request(model.fields[config.picture.enabledFieldId] ? actions.picture.grid : actions.picture.removeGrid,
+            model.fields[config.picture.enabledFieldId] ? picturePayload() : {}));
+        }
+        if (Object.values(config.payloadMaps.theme).some((id) => Object.hasOwn(fields, id))) {
+          applyResponsePatch(await pageApi.request(actions.theme.apply, desiredTheme));
+        }
+        schedulePersistence();
+        return null;
+      } catch (error) {
+        window.clearTimeout(persistenceTimer);
+        model.fields = previousFields;
+        model.tone = previousTone;
+        render();
+        throw error;
+      } finally { setBusy(false); }
+    });
   }
 
   void initialize();

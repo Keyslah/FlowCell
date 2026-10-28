@@ -75,6 +75,32 @@ try {
     Put-Json $configPath @{ blenderThemeLibrary = $active }
     Assert ((Resolve-BlenderThemePackageLibrary) -eq $active) 'configured active library takes precedence over snapshot'
     Assert ((Resolve-BlenderThemePackageLibrary -LibraryPath $snapshot) -eq $snapshot) 'explicit library overrides local configuration'
+    $migratedLocal = Join-Path $fixtureRoot 'Migrated local'
+    $legacyLibrary = Join-Path $migratedLocal 'blender_themes'
+    $canonicalLibrary = Join-Path $migratedLocal 'themes/Blender'
+    New-Item -ItemType Directory -Path $legacyLibrary, $canonicalLibrary -Force | Out-Null
+    Put-Json (Join-Path $migratedLocal 'themes/.migration-v1.json') @{ version = 1; entries = @(); mappings = @() }
+    Assert ((Resolve-BlenderThemePackageLibrary -LibraryPath $legacyLibrary) -eq $canonicalLibrary) 'legacy release-library references resolve to migrated canonical storage'
+    $portableLibrary = Join-Path $fixtureRoot 'Portable themes'
+    $portableBytes = [Text.Encoding]::UTF8.GetBytes('portable image')
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $portableHash = ([BitConverter]::ToString($sha.ComputeHash($portableBytes))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+    $portableTheme = @{
+      kind = 'FlowCellPortableTheme'; version = 1; name = 'Shared theme'; id = 'test-theme'
+      target = @{ kind = 'program'; programName = 'Blender' }
+      theme = @{ kind = 'FlowCellTheme'; version = 2; target = @{ kind = 'program'; programName = 'Blender' }; buttons = @() }
+      contributions = @{ theme = @{ image = "theme-asset:assets/$portableHash.png" } }
+      assets = @(@{ path = "assets/$portableHash.png"; sha256 = $portableHash; base64 = [Convert]::ToBase64String($portableBytes) })
+    }
+    Put-Json (Join-Path $portableLibrary 'Shared.flowcell-theme-pack.json') $portableTheme
+    Put-Json (Join-Path $portableLibrary 'Classic.flowtheme.json') @{ kind = 'FlowCellTheme'; version = 2; target = @{ kind = 'program'; programName = 'Blender' }; buttons = @() }
+    $portableStage = Join-Path $fixtureRoot 'portable-stage'
+    $portableResult = Copy-BlenderThemePackages -SourceLibrary $portableLibrary -Destination $portableStage
+    Assert ($portableResult.PackageCount -eq 2 -and $portableResult.AssetCount -eq 1) 'flat complete themes and classic program themes are delivered with embedded images'
+    Assert ((Get-FileHash -LiteralPath (Join-Path $portableLibrary 'Shared.flowcell-theme-pack.json')).Hash -eq (Get-FileHash -LiteralPath (Join-Path $portableStage 'Shared.flowcell-theme-pack.json')).Hash) 'portable archive bytes remain unchanged'
+    $portableTheme.assets[0].sha256 = 'bad-checksum'
+    Put-Json (Join-Path $portableLibrary 'Shared.flowcell-theme-pack.json') $portableTheme
+    Assert-Rejected { Copy-BlenderThemePackages -SourceLibrary $portableLibrary -Destination (Join-Path $fixtureRoot 'invalid-portable-stage') } 'corrupt embedded images are rejected before release'
 
     $manifestBefore = (Get-FileHash -LiteralPath $activeManifest -Algorithm SHA256).Hash
     $firstStage = Join-Path $fixtureRoot 'first-stage'

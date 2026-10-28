@@ -248,6 +248,9 @@ export interface ButtonPlacement extends ButtonRect {
   resizeAnchor: ButtonResizeAnchor;
   activationCycle: ButtonPlacementActivationCycle | null;
   visualStateMap: ButtonVisualStateMap | null;
+  /** Private presentation for this occurrence; execution and ownership stay on the Button. */
+  presentationOverride?: Partial<Pick<ButtonRecord,
+    "label" | "tooltip" | "defaultTextFitMode" | "activationAnimation" | "activationBehavior">>;
 }
 
 /**

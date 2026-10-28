@@ -58,7 +58,7 @@
   "bundledSources": [
     {
       "id": "illustrator.ill-align",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "panelName": "Toolsets",
       "sourcePath": "Illustrator Git Scripts/Toolsets/ill-align/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -71,7 +71,7 @@
     },
     {
       "id": "illustrator.rotate",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "panelName": "Toolsets",
       "sourcePath": "Illustrator Git Scripts/Toolsets/rotate/flowcell.toolset.json",
       "importKind": "tool-set",

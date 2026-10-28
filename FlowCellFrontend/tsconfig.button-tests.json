@@ -83,6 +83,9 @@
     "src/lib/shortcutProfiles.ts",
     "src/theme/themeEditorState.ts",
     "src/theme/themeModel.ts",
+    "src/theme/portableTheme.ts",
+    "src/theme/portableThemeService.ts",
+    "src/theme/commonProgramTheme.ts",
     "src/theme/programPopoutPalette.ts",
     "src/theme/programPopoutTheme.ts",
     "src/theme/themePageRegistry.ts"

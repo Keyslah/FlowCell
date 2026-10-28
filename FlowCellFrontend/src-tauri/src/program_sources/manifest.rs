@@ -38,6 +38,8 @@ pub(crate) struct ProgramManifest {
     pub addon_reload_notes: String,
     #[serde(default)]
     pub app_restart_notes: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme_library: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -348,6 +350,9 @@ pub(crate) fn validate_manifest(
             "Program manifest label '{}' does not match program folder '{}'.",
             manifest.label, requested_program
         ));
+    }
+    if let Some(library) = manifest.theme_library.as_mut() {
+        *library = normalize_relative_manifest_path(library, "themeLibrary", false)?;
     }
     manifest.git_scripts_folder =
         normalize_relative_manifest_path(&manifest.git_scripts_folder, "gitScriptsFolder", false)?;

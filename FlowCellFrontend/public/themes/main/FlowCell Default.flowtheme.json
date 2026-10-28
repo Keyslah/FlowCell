@@ -1,0 +1,57 @@
+{
+  "kind": "FlowCellTheme",
+  "version": 2,
+  "savedAt": "2026-10-25T00:00:00Z",
+  "target": {
+    "kind": "flowcell",
+    "page": "main"
+  },
+  "page": {
+    "pageId": "main",
+    "tokens": {
+      "background-color": "#9db678",
+      "chrome-background": "rgba(12, 16, 18, 0.96)",
+      "context-menu-background": "rgba(12, 16, 18, 0.94)",
+      "poptype-background": "rgba(16, 23, 28, 0.84)",
+      "chrome-border": "rgba(255, 255, 255, 0.12)",
+      "poptype-border": "rgba(226, 234, 236, 0.36)",
+      "chrome-text": "rgba(241, 246, 248, 0.96)",
+      "poptype-text": "rgba(241, 246, 248, 0.94)",
+      "fan-menu-text": "rgba(244, 247, 241, 0.96)",
+      "chrome-muted-text": "rgba(224, 231, 232, 0.76)",
+      "chrome-control-background": "rgba(255, 255, 255, 0.08)",
+      "chrome-control-hover-background": "rgba(255, 255, 255, 0.16)",
+      "chrome-gradient-top": "rgba(255, 255, 255, 0.14)",
+      "chrome-gradient-bottom": "rgba(255, 255, 255, 0.05)",
+      "chrome-shadow": "rgba(0, 0, 0, 0.34)",
+      "chrome-inset-highlight": "rgba(255, 255, 255, 0.08)",
+      "settings-gradient-top": "rgba(255, 255, 255, 0.12)",
+      "settings-gradient-bottom": "rgba(255, 255, 255, 0.04)",
+      "settings-shadow": "rgba(0, 0, 0, 0.42)",
+      "overlay-background": "rgba(0, 0, 0, 0.42)",
+      "error-background": "rgba(24, 25, 26, 0.96)",
+      "error-border": "rgba(255, 134, 120, 0.44)",
+      "error-text": "rgba(255, 247, 244, 0.96)",
+      "error-detail-text": "rgba(255, 232, 227, 0.9)",
+      "error-control-background": "rgba(255, 255, 255, 0.08)",
+      "error-control-hover-background": "rgba(255, 255, 255, 0.16)",
+      "error-shadow": "rgba(0, 0, 0, 0.32)",
+      "rail-program-rail-background": "transparent",
+      "rail-program-rail-border": "transparent",
+      "rail-panel-rail-background": "transparent",
+      "rail-panel-rail-border": "transparent",
+      "rail-buttons-rail-background": "transparent",
+      "rail-buttons-rail-border": "transparent",
+      "rail-info-rail-background": "transparent",
+      "rail-info-rail-border": "transparent"
+    },
+    "assets": {
+      "background-image": {
+        "mode": "default",
+        "path": null
+      }
+    }
+  },
+  "buttons": [],
+  "gradient": null
+}

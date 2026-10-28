@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
     "id":  "blender.xyz-dimensions",
-    "version":  "1.0.0",
+    "version":  "1.0.1",
     "label":  "xyz dimensions",
     "tooltip":  "Show live X, Y, and Z dimensions for the active selected object in inches.",
     "kind":  "toolset",
@@ -40,9 +40,34 @@
                      }
                  ],
     "layout":  {
-                   "mode":  "grid",
-                   "columns":  3,
-                   "gap":  8,
-                   "padding":  8
-               }
+        "mode": "grid",
+        "columns": 3,
+        "gap": 8,
+        "padding": 8,
+        "width": 464,
+        "height": 120,
+        "placements": {
+            "dimension_x": {
+                "x": 8,
+                "y": 8,
+                "width": 144,
+                "height": 42,
+                "zIndex": 0
+            },
+            "dimension_y": {
+                "x": 160,
+                "y": 8,
+                "width": 144,
+                "height": 42,
+                "zIndex": 1
+            },
+            "dimension_z": {
+                "x": 312,
+                "y": 8,
+                "width": 144,
+                "height": 42,
+                "zIndex": 2
+            }
+        }
+    }
 }

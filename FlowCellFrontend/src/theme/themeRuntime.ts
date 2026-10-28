@@ -21,6 +21,37 @@ import {
 
 export const ACTIVE_PAGE_THEMES_STORAGE_KEY = "flowcell.active-page-themes.v1";
 export const PAGE_THEME_CHANGED_EVENT = "flowcell:page-theme-changed";
+const SELECTED_THEME_STORAGE_KEY = "flowcell.selected-themes.v1";
+let themePathMigration: Promise<void> | null = null;
+
+export function migrateStoredThemePaths(): Promise<void> {
+  if (themePathMigration) return themePathMigration;
+  themePathMigration = (async () => {
+    if (!canUseStorage()) return;
+    const mappings = await invoke<{ from: string; to: string }[]>("get_theme_migration_path_map");
+    const normalized = (value: string) => value.replaceAll("\\", "/").toLowerCase();
+    const remap = (value: unknown): unknown => {
+      if (typeof value === "string") {
+        const path = normalized(value);
+        const match = mappings.filter((entry) => path === normalized(entry.from) || path.startsWith(`${normalized(entry.from)}/`))
+          .sort((a, b) => b.from.length - a.from.length)[0];
+        return match ? match.to + value.slice(match.from.length) : value;
+      }
+      if (Array.isArray(value)) return value.map(remap);
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, remap(item)]));
+      return value;
+    };
+    for (const key of [ACTIVE_PAGE_THEMES_STORAGE_KEY, ACTIVE_MAIN_THEME_STORAGE_KEY, SELECTED_THEME_STORAGE_KEY]) {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const updated = JSON.stringify(remap(JSON.parse(raw)));
+        if (updated !== raw) window.localStorage.setItem(key, updated);
+      } catch { /* Preserve unreadable previous state for recovery. */ }
+    }
+  })().catch((error) => { themePathMigration = null; throw error; });
+  return themePathMigration;
+}
 
 /** @deprecated Kept only while callers migrate to the page-theme API. */
 export const ACTIVE_MAIN_THEME_STORAGE_KEY = "flowcell.active-main-theme.v1";
@@ -274,7 +305,7 @@ export function installThemeRuntime(): () => void {
       if (appearance) void applyThemePageAppearance(appearance).catch(() => {});
     }
   };
-  applyStored();
+  void migrateStoredThemePaths().then(() => { if (!disposed) applyStored(); }).catch(() => { if (!disposed) applyStored(); });
 
   const handleStorage = (event: StorageEvent) => {
     if (event.key === ACTIVE_PAGE_THEMES_STORAGE_KEY ||

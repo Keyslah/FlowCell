@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
     "id":  "blender.rotate",
-    "version":  "1.1.0",
+    "version":  "1.1.1",
     "label":  "rotate",
     "tooltip":  "rotate objects with, transform, and distribute(evenly spaced copies around pivot)",
     "kind":  "toolset",
@@ -171,113 +171,499 @@
                      }
                  ],
     "layout":  {
-                   "mode":  "grid",
-                   "columns":  4,
-                   "gap":  8,
-                   "padding":  8,
-                   "width":  640,
-                   "height":  300,
-                   "updatePolicy":  {
-                                         "appendMissingChildSlots":  true
-                                     },
-                   "placements":  {
-                                      "value_input":  {
-                                                            "x":  160,
-                                                            "y":  208,
-                                                            "width":  144,
-                                                            "height":  42
-                                                        }
-                                  },
-                   "fields":  [
-                                  {
-                                      "id":  "axis",
-                                      "kind":  "select",
-                                      "label":  "Axis",
-                                      "payloadKey":  "axis",
-                                      "defaultValue":  "Z",
-                                      "options":  [
-                                                      { "id": "axis-x", "label": "X", "value": "X" },
-                                                      { "id": "axis-y", "label": "Y", "value": "Y" },
-                                                      { "id": "axis-z", "label": "Z", "value": "Z" }
-                                                  ],
-                                      "x":  8,
-                                      "y":  8,
-                                      "width":  120,
-                                      "height":  36,
-                                      "zIndex":  1,
-                                      "hidden":  true
-                                  },
-                                  {
-                                      "id":  "value",
-                                      "kind":  "number",
-                                      "label":  "Value",
-                                      "payloadKey":  "value",
-                                      "defaultValue":  15,
-                                      "step":  1,
-                                      "x":  8,
-                                      "y":  8,
-                                      "width":  120,
-                                      "height":  36,
-                                      "zIndex":  1,
-                                      "hidden":  true
-                                  },
-                                  {
-                                      "id":  "center_mode",
-                                      "kind":  "select",
-                                      "label":  "Center",
-                                      "payloadKey":  "center_mode",
-                                      "defaultValue":  "WORLD",
-                                      "options":  [
-                                                      { "id": "geometry", "label": "Geometry", "value": "GEOMETRY" },
-                                                      { "id": "origin", "label": "Origin", "value": "ORIGIN" },
-                                                      { "id": "world", "label": "World", "value": "WORLD" },
-                                                      { "id": "cursor", "label": "Cursor", "value": "CURSOR" },
-                                                      { "id": "object", "label": "Object", "value": "OBJECT" }
-                                                  ],
-                                      "x":  148,
-                                      "y":  248,
-                                      "width":  132,
-                                      "height":  36,
-                                      "zIndex":  1,
-                                      "hidden":  true
-                                  },
-                                  {
-                                      "id":  "operation_mode",
-                                      "kind":  "select",
-                                      "label":  "Mode",
-                                      "payloadKey":  "operation_mode",
-                                      "defaultValue":  "TRANSFORM",
-                                      "options":  [
-                                                      { "id": "transform", "label": "Transform", "value": "TRANSFORM" },
-                                                      { "id": "distribute", "label": "Distribute", "value": "DISTRIBUTE" }
-                                                  ],
-                                      "x":  288,
-                                      "y":  248,
-                                      "width":  132,
-                                      "height":  36,
-                                      "zIndex":  1,
-                                      "hidden":  true
-                                  }
-                              ],
-                   "childBehaviors":  {
-                                          "axis_x":  { "fieldPatch": { "axis": "X" }, "execute": false },
-                                          "axis_y":  { "fieldPatch": { "axis": "Y" }, "execute": false },
-                                          "axis_z":  { "fieldPatch": { "axis": "Z" }, "execute": false },
-                                          "center_geometry":  { "fieldPatch": { "center_mode": "GEOMETRY" }, "execute": false },
-                                          "center_origin":  { "fieldPatch": { "center_mode": "ORIGIN" }, "execute": false },
-                                          "center_world":  { "fieldPatch": { "center_mode": "WORLD" }, "execute": false },
-                                          "center_cursor":  { "fieldPatch": { "center_mode": "CURSOR" }, "execute": false },
-                                          "center_object":  { "fieldPatch": { "center_mode": "OBJECT" }, "execute": false },
-                                          "mode_transform":  { "fieldPatch": { "operation_mode": "TRANSFORM" }, "activationPatch": { "value": 15 }, "execute": false },
-                                          "mode_distribute":  { "fieldPatch": { "operation_mode": "DISTRIBUTE" }, "activationPatch": { "value": 3 }, "execute": false },
-                                          "preset_30":  { "fieldPatch": { "value": 30, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
-                                          "preset_45":  { "fieldPatch": { "value": 45, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
-                                          "preset_90":  { "fieldPatch": { "value": 90, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
-                                          "preset_180":  { "fieldPatch": { "value": 180, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
-                                          "preset_270":  { "fieldPatch": { "value": 270, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
-                                          "apply_negative":  { "execute": true, "payloadTemplate": { "command": "apply", "direction": "negative", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
-                                          "apply_positive":  { "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
-                                          "value_input":  { "inlineEditField": "value", "execute": false }
-                                      }
-               }
+        "mode": "grid",
+        "columns": 4,
+        "gap": 8,
+        "padding": 8,
+        "width": 640,
+        "height": 300,
+        "updatePolicy": {
+            "appendMissingChildSlots": true
+        },
+        "placements": {
+            "axis_z": {
+                "x": 104,
+                "y": 64,
+                "width": 49,
+                "height": 41,
+                "zIndex": 0
+            },
+            "axis_y": {
+                "x": 202,
+                "y": 64,
+                "width": 49,
+                "height": 41,
+                "zIndex": 2
+            },
+            "axis_x": {
+                "x": 153,
+                "y": 64,
+                "width": 49,
+                "height": 41,
+                "zIndex": 1
+            },
+            "preset_30": {
+                "x": 251,
+                "y": 64,
+                "width": 49,
+                "height": 41,
+                "zIndex": 3
+            },
+            "preset_45": {
+                "x": 300,
+                "y": 64,
+                "width": 49,
+                "height": 41,
+                "zIndex": 4
+            },
+            "preset_90": {
+                "x": 349,
+                "y": 64,
+                "width": 49,
+                "height": 41,
+                "zIndex": 5
+            },
+            "preset_180": {
+                "x": 398,
+                "y": 64,
+                "width": 49,
+                "height": 41,
+                "zIndex": 6
+            },
+            "preset_270": {
+                "x": 447,
+                "y": 64,
+                "width": 49,
+                "height": 41,
+                "zIndex": 7
+            },
+            "center_geometry": {
+                "x": 104,
+                "y": 105,
+                "width": 89,
+                "height": 45,
+                "zIndex": 8
+            },
+            "center_origin": {
+                "x": 193,
+                "y": 105,
+                "width": 89,
+                "height": 45,
+                "zIndex": 9
+            },
+            "center_world": {
+                "x": 282,
+                "y": 105,
+                "width": 89,
+                "height": 45,
+                "zIndex": 10
+            },
+            "center_cursor": {
+                "x": 371,
+                "y": 105,
+                "width": 89,
+                "height": 45,
+                "zIndex": 11
+            },
+            "center_object": {
+                "x": 460,
+                "y": 105,
+                "width": 82,
+                "height": 44,
+                "zIndex": 12
+            },
+            "mode_transform": {
+                "x": 104,
+                "y": 150,
+                "width": 210,
+                "height": 43,
+                "zIndex": 13
+            },
+            "mode_distribute": {
+                "x": 314,
+                "y": 150,
+                "width": 210,
+                "height": 43,
+                "zIndex": 14
+            },
+            "apply_negative": {
+                "x": 392,
+                "y": 193,
+                "width": 144,
+                "height": 42,
+                "zIndex": 17
+            },
+            "apply_positive": {
+                "x": 104,
+                "y": 193,
+                "width": 144,
+                "height": 42,
+                "zIndex": 15
+            },
+            "value_input": {
+                "x": 248,
+                "y": 193,
+                "width": 144,
+                "height": 42,
+                "zIndex": 16
+            }
+        },
+        "fields": [
+            {
+                "id": "axis",
+                "kind": "select",
+                "label": "Axis",
+                "payloadKey": "axis",
+                "defaultValue": "Z",
+                "options": [
+                    {
+                        "id": "axis-x",
+                        "label": "X",
+                        "value": "X"
+                    },
+                    {
+                        "id": "axis-y",
+                        "label": "Y",
+                        "value": "Y"
+                    },
+                    {
+                        "id": "axis-z",
+                        "label": "Z",
+                        "value": "Z"
+                    }
+                ],
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true
+            },
+            {
+                "id": "value",
+                "kind": "number",
+                "label": "Value",
+                "payloadKey": "value",
+                "defaultValue": 15,
+                "step": 1,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true
+            },
+            {
+                "id": "center_mode",
+                "kind": "select",
+                "label": "Center",
+                "payloadKey": "center_mode",
+                "defaultValue": "WORLD",
+                "options": [
+                    {
+                        "id": "geometry",
+                        "label": "Geometry",
+                        "value": "GEOMETRY"
+                    },
+                    {
+                        "id": "origin",
+                        "label": "Origin",
+                        "value": "ORIGIN"
+                    },
+                    {
+                        "id": "world",
+                        "label": "World",
+                        "value": "WORLD"
+                    },
+                    {
+                        "id": "cursor",
+                        "label": "Cursor",
+                        "value": "CURSOR"
+                    },
+                    {
+                        "id": "object",
+                        "label": "Object",
+                        "value": "OBJECT"
+                    }
+                ],
+                "x": 148,
+                "y": 248,
+                "width": 132,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true
+            },
+            {
+                "id": "operation_mode",
+                "kind": "select",
+                "label": "Mode",
+                "payloadKey": "operation_mode",
+                "defaultValue": "TRANSFORM",
+                "options": [
+                    {
+                        "id": "transform",
+                        "label": "Transform",
+                        "value": "TRANSFORM"
+                    },
+                    {
+                        "id": "distribute",
+                        "label": "Distribute",
+                        "value": "DISTRIBUTE"
+                    }
+                ],
+                "x": 288,
+                "y": 248,
+                "width": 132,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true
+            }
+        ],
+        "childBehaviors": {
+            "axis_x": {
+                "fieldPatch": {
+                    "axis": "X"
+                },
+                "execute": false
+            },
+            "axis_y": {
+                "fieldPatch": {
+                    "axis": "Y"
+                },
+                "execute": false
+            },
+            "axis_z": {
+                "fieldPatch": {
+                    "axis": "Z"
+                },
+                "execute": false
+            },
+            "center_geometry": {
+                "fieldPatch": {
+                    "center_mode": "GEOMETRY"
+                },
+                "execute": false
+            },
+            "center_origin": {
+                "fieldPatch": {
+                    "center_mode": "ORIGIN"
+                },
+                "execute": false
+            },
+            "center_world": {
+                "fieldPatch": {
+                    "center_mode": "WORLD"
+                },
+                "execute": false
+            },
+            "center_cursor": {
+                "fieldPatch": {
+                    "center_mode": "CURSOR"
+                },
+                "execute": false
+            },
+            "center_object": {
+                "fieldPatch": {
+                    "center_mode": "OBJECT"
+                },
+                "execute": false
+            },
+            "mode_transform": {
+                "fieldPatch": {
+                    "operation_mode": "TRANSFORM"
+                },
+                "activationPatch": {
+                    "value": 15
+                },
+                "execute": false
+            },
+            "mode_distribute": {
+                "fieldPatch": {
+                    "operation_mode": "DISTRIBUTE"
+                },
+                "activationPatch": {
+                    "value": 3
+                },
+                "execute": false
+            },
+            "preset_30": {
+                "fieldPatch": {
+                    "value": 30,
+                    "operation_mode": "TRANSFORM"
+                },
+                "execute": true,
+                "payloadTemplate": {
+                    "command": "apply",
+                    "direction": "positive",
+                    "axis": {
+                        "$field": "axis"
+                    },
+                    "angle_deg": {
+                        "$field": "value"
+                    },
+                    "center_mode": {
+                        "$field": "center_mode"
+                    },
+                    "operation_mode": {
+                        "$field": "operation_mode"
+                    },
+                    "distribute_count": {
+                        "$field": "value"
+                    }
+                }
+            },
+            "preset_45": {
+                "fieldPatch": {
+                    "value": 45,
+                    "operation_mode": "TRANSFORM"
+                },
+                "execute": true,
+                "payloadTemplate": {
+                    "command": "apply",
+                    "direction": "positive",
+                    "axis": {
+                        "$field": "axis"
+                    },
+                    "angle_deg": {
+                        "$field": "value"
+                    },
+                    "center_mode": {
+                        "$field": "center_mode"
+                    },
+                    "operation_mode": {
+                        "$field": "operation_mode"
+                    },
+                    "distribute_count": {
+                        "$field": "value"
+                    }
+                }
+            },
+            "preset_90": {
+                "fieldPatch": {
+                    "value": 90,
+                    "operation_mode": "TRANSFORM"
+                },
+                "execute": true,
+                "payloadTemplate": {
+                    "command": "apply",
+                    "direction": "positive",
+                    "axis": {
+                        "$field": "axis"
+                    },
+                    "angle_deg": {
+                        "$field": "value"
+                    },
+                    "center_mode": {
+                        "$field": "center_mode"
+                    },
+                    "operation_mode": {
+                        "$field": "operation_mode"
+                    },
+                    "distribute_count": {
+                        "$field": "value"
+                    }
+                }
+            },
+            "preset_180": {
+                "fieldPatch": {
+                    "value": 180,
+                    "operation_mode": "TRANSFORM"
+                },
+                "execute": true,
+                "payloadTemplate": {
+                    "command": "apply",
+                    "direction": "positive",
+                    "axis": {
+                        "$field": "axis"
+                    },
+                    "angle_deg": {
+                        "$field": "value"
+                    },
+                    "center_mode": {
+                        "$field": "center_mode"
+                    },
+                    "operation_mode": {
+                        "$field": "operation_mode"
+                    },
+                    "distribute_count": {
+                        "$field": "value"
+                    }
+                }
+            },
+            "preset_270": {
+                "fieldPatch": {
+                    "value": 270,
+                    "operation_mode": "TRANSFORM"
+                },
+                "execute": true,
+                "payloadTemplate": {
+                    "command": "apply",
+                    "direction": "positive",
+                    "axis": {
+                        "$field": "axis"
+                    },
+                    "angle_deg": {
+                        "$field": "value"
+                    },
+                    "center_mode": {
+                        "$field": "center_mode"
+                    },
+                    "operation_mode": {
+                        "$field": "operation_mode"
+                    },
+                    "distribute_count": {
+                        "$field": "value"
+                    }
+                }
+            },
+            "apply_negative": {
+                "execute": true,
+                "payloadTemplate": {
+                    "command": "apply",
+                    "direction": "negative",
+                    "axis": {
+                        "$field": "axis"
+                    },
+                    "angle_deg": {
+                        "$field": "value"
+                    },
+                    "center_mode": {
+                        "$field": "center_mode"
+                    },
+                    "operation_mode": {
+                        "$field": "operation_mode"
+                    },
+                    "distribute_count": {
+                        "$field": "value"
+                    }
+                }
+            },
+            "apply_positive": {
+                "execute": true,
+                "payloadTemplate": {
+                    "command": "apply",
+                    "direction": "positive",
+                    "axis": {
+                        "$field": "axis"
+                    },
+                    "angle_deg": {
+                        "$field": "value"
+                    },
+                    "center_mode": {
+                        "$field": "center_mode"
+                    },
+                    "operation_mode": {
+                        "$field": "operation_mode"
+                    },
+                    "distribute_count": {
+                        "$field": "value"
+                    }
+                }
+            },
+            "value_input": {
+                "inlineEditField": "value",
+                "execute": false
+            }
+        }
+    }
 }
