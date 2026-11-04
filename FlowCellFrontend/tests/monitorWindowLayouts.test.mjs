@@ -23,23 +23,196 @@ const pop = (Left, Top = 50, Width = 300, Height = 150) => ({
   kind: "button-popout", bounds: { Left, Top, Width, Height }, collapsedOrigin: { x: Left + 20, y: Top + 10 }
 });
 
-function loadMonitorModule() {
-  const storage = new Map();
-  const runtime = { monitors: [monitor("A")], listener: null };
+function loadMonitorModule(options = {}) {
+  const storage = options.storage ?? new Map();
+  const runtime = {
+    monitors: [monitor("A")], listener: null, windows: [], timers: new Map(), emitted: [], error: null, errors: [], now: 0,
+    status: { namespace: options.namespace ?? "installed:fixture", processId: options.processId ?? 101, busy: false, transition: null }
+  };
   const sandbox = {
-    exports: {}, structuredClone, console,
-    window: { localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) } },
+    exports: {}, structuredClone, console: { error: (...args) => runtime.errors.push(args) },
+    Date: class extends Date { static now() { return runtime.now; } },
+    window: {
+      localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+      setTimeout: (callback) => { const id = runtime.timers.size + 1; runtime.timers.set(id, callback); return id; },
+      clearTimeout: (id) => runtime.timers.delete(id)
+    },
     require: (name) => {
       if (name.includes("buttonWindowGeometry")) return geometry.exports;
-      if (name.endsWith("/event")) return { listen: async (_name, callback) => { runtime.listener = callback; return () => {}; }, emitTo: async () => {} };
-      if (name.endsWith("/webviewWindow")) return { WebviewWindow: { getAll: async () => [] } };
-      if (name.endsWith("/window")) return { availableMonitors: async () => runtime.monitors, getCurrentWindow: () => ({ label: "pop" }) };
+      if (name.endsWith("/core")) return { invoke: async () => {
+        if (runtime.nextStatusWait) { const wait = runtime.nextStatusWait; runtime.nextStatusWait = null; await wait; }
+        if (runtime.error) throw runtime.error;
+        return runtime.status;
+      } };
+      if (name.endsWith("/event")) return { listen: async (_name, callback) => { runtime.listener = callback; return () => {}; }, emitTo: async (...args) => runtime.emitted.push(args) };
+      if (name.endsWith("/webviewWindow")) return { WebviewWindow: { getAll: async () => runtime.windows } };
+      if (name.endsWith("/window")) return { availableMonitors: async () => {
+        if (runtime.nextMonitorWait) { const wait = runtime.nextMonitorWait; runtime.nextMonitorWait = null; await wait; }
+        return runtime.monitors;
+      }, getCurrentWindow: () => ({ label: "pop" }) };
       throw new Error(`Unexpected import: ${name}`);
     }
   };
   vm.runInNewContext(compile(source("lib/monitorWindowLayouts.ts")), sandbox);
-  return { ...sandbox.exports, storage, runtime };
+  return { ...sandbox.exports, storage, runtime, tick: async (now) => {
+    runtime.now = now;
+    const timers = [...runtime.timers.values()];
+    runtime.timers.clear();
+    for (const callback of timers) callback();
+    await new Promise(setImmediate);
+  } };
 }
+
+const expectedDisplays = (monitors) => monitors.map(({ position, size }) => ({
+  left: position.x, top: position.y, width: size.width, height: size.height
+}));
+const status = (id = null, phase = "complete", monitors = [], busy = false) => ({
+  namespace: "installed:fixture", processId: 101, busy,
+  transition: id ? { schemaVersion: 1, id, phase, updatedAtMs: 0, expectedDisplays: expectedDisplays(monitors) } : null
+});
+
+test("coordinated 0 -> 3 -> 4 monitor arrival never learns intermediate geometry", () => {
+  for (const cachedTarget of [false, true]) {
+    const { MonitorButtonLayoutMemory } = loadMonitorModule();
+    const four = [0, 1920, 3840, 5760].map((x, index) => monitor(String(index), x));
+    const three = four.slice(0, 3);
+    const target = pop(cachedTarget ? 6200 : 6500);
+    const memory = new MonitorButtonLayoutMemory(cachedTarget ? { final: { pop: target } } : {});
+    const areas = four.map((item) => ({ Left: item.position.x, Top: 0, Width: 1920, Height: 1040 }));
+    memory.sample("source", { pop: pop(6500) }, areas, 0, status(), four);
+    const switching = status("switch", "switching", [], true);
+    assert.equal(memory.sample("zero", { pop: pop(100) }, [], 300, switching, []), null);
+    assert.equal(memory.sample("three", { pop: pop(100) }, areas.slice(0, 3), 1800, switching, three), null);
+    const completed = status("switch", "complete", four);
+    assert.equal(memory.sample("three", { pop: pop(100) }, areas.slice(0, 3), 3000, completed, three), null);
+    assert.equal(memory.sample("final", { pop: pop(100) }, areas, 4200, completed, four), null);
+    const restored = memory.sample("final", { pop: pop(100) }, areas, 5100, completed, four);
+    assert.deepEqual(plain(restored.pop), target);
+    assert.equal(memory.layouts.zero, undefined);
+    assert.equal(memory.layouts.three, undefined);
+    assert.equal(memory.layouts.source.pop.bounds.Left, 6500);
+  }
+});
+
+test("successful rollback restores outgoing geometry even when the topology key never changed", () => {
+  const { MonitorButtonLayoutMemory } = loadMonitorModule();
+  const memory = new MonitorButtonLayoutMemory();
+  const monitors = [monitor("A")];
+  memory.sample("source", { pop: pop(500) }, [area], 0, status(), monitors);
+  memory.sample("source", { pop: pop(100) }, [area], 300, status("rollback", "switching", [], true), monitors);
+  memory.sample("source", { pop: pop(100) }, [area], 600, status("rollback", "complete", monitors), monitors);
+  const restored = memory.sample("source", { pop: pop(100) }, [area], 1500, status("rollback", "complete", monitors), monitors);
+  assert.equal(restored.pop.bounds.Left, 500);
+  assert.equal(memory.layouts.source.pop.bounds.Left, 500);
+});
+
+test("a new completed marker gates the target even when its busy phase was missed", () => {
+  const { MonitorButtonLayoutMemory } = loadMonitorModule();
+  const memory = new MonitorButtonLayoutMemory({ final: { pop: pop(2300) } });
+  const one = [monitor("A")];
+  const two = [...one, monitor("B", 1920)];
+  memory.sample("source", { pop: pop(500) }, [area], 0, status(), one);
+  const completed = status("quick", "complete", two);
+  assert.equal(memory.sample("intermediate", { pop: pop(100) }, [area], 300, completed, one), null);
+  assert.equal(memory.sample("intermediate", { pop: pop(100) }, [area], 2400, completed, one), null);
+  memory.sample("final", { pop: pop(100) }, [area], 2700, completed, two);
+  assert.equal(memory.sample("final", { pop: pop(100) }, [area], 3600, completed, two).pop.bounds.Left, 2300);
+  assert.equal(memory.layouts.intermediate, undefined);
+});
+
+test("startup during a switch preserves target cache; idle completed markers do not constrain later manual changes", () => {
+  const { MonitorButtonLayoutMemory } = loadMonitorModule();
+  const one = [monitor("A")];
+  const two = [...one, monitor("B", 1920)];
+  const memory = new MonitorButtonLayoutMemory({ final: { pop: pop(2300) } });
+  memory.sample("intermediate", { pop: pop(100) }, [area], 0, status("start", "switching", [], true), one);
+  memory.sample("final", { pop: pop(100) }, [area], 1200, status("start", "complete", two), two);
+  assert.equal(memory.sample("final", { pop: pop(100) }, [area], 2100, status("start", "complete", two), two).pop.bounds.Left, 2300);
+  assert.equal(memory.layouts.intermediate, undefined);
+  const idle = new MonitorButtonLayoutMemory();
+  const oldComplete = status("old", "complete", one);
+  idle.sample("one", { pop: pop(500) }, [area], 0, oldComplete, one);
+  idle.sample("manual", { pop: pop(100) }, [area], 300, oldComplete, two);
+  assert.ok(idle.sample("manual", { pop: pop(100) }, [area], 1200, oldComplete, two));
+  assert.equal(idle.restorationBlocked, false);
+});
+
+test("failed or abandoned switching markers cannot overwrite saved layouts, regardless of age", () => {
+  const { MonitorButtonLayoutMemory } = loadMonitorModule();
+  const monitors = [monitor("A")];
+  for (const phase of ["failed", "switching"]) {
+    const memory = new MonitorButtonLayoutMemory({ source: { pop: pop(500) } });
+    const failed = status("failed", phase, [], false);
+    assert.equal(memory.sample("source", { pop: pop(100) }, [area], 0, failed, monitors), null);
+    assert.equal(memory.sample("source", { pop: pop(100) }, [area], 60000, failed, monitors), null);
+    assert.equal(memory.restorationBlocked, true);
+    assert.equal(memory.layouts.source.pop.bounds.Left, 500);
+    memory.sample("source", { pop: pop(100) }, [area], 60300, status("recovered", "complete", monitors), monitors);
+    assert.equal(memory.sample("source", { pop: pop(100) }, [area], 61200, status("recovered", "complete", monitors), monitors).pop.bounds.Left, 500);
+  }
+});
+
+test("saved layouts isolate runtimes and live/ACK keys additionally isolate process generations", async () => {
+  const storage = new Map();
+  const installed = loadMonitorModule({ storage, namespace: "installed:owner", processId: 101 });
+  const development = loadMonitorModule({ storage, namespace: "development:repo", processId: 202 });
+  const restarted = loadMonitorModule({ storage, namespace: "installed:owner", processId: 303 });
+  const installedKeys = installed.monitorLayoutStorageKeys(installed.runtime.status);
+  const developmentKeys = development.monitorLayoutStorageKeys(development.runtime.status);
+  const restartKeys = restarted.monitorLayoutStorageKeys(restarted.runtime.status);
+  installed.publishMonitorButtonGeometry(pop(500));
+  development.publishMonitorButtonGeometry(pop(900));
+  await new Promise(setImmediate);
+  assert.equal(JSON.parse(storage.get(installedKeys.live + "pop")).bounds.Left, 500);
+  assert.equal(JSON.parse(storage.get(developmentKeys.live + "pop")).bounds.Left, 900);
+  assert.notEqual(installedKeys.saved, developmentKeys.saved);
+  assert.equal(installedKeys.saved, restartKeys.saved);
+  assert.notEqual(installedKeys.ack, restartKeys.ack);
+  restarted.runtime.windows = [{ label: "pop" }];
+  const stop = restarted.startMonitorButtonLayoutObserver();
+  await new Promise(setImmediate);
+  const key = restarted.monitorTopologyKey(restarted.runtime.monitors);
+  assert.deepEqual(JSON.parse(storage.get(restartKeys.saved))[key], {}, "stale prior-process publications must not seed the new session");
+  stop();
+});
+
+test("legacy saved cache copies once into scoped storage without changing the legacy value", async () => {
+  const legacyKey = "flowcell.monitor-button-layouts.v1";
+  const legacy = JSON.stringify({ final: { pop: pop(2300) } });
+  const api = loadMonitorModule({ storage: new Map([[legacyKey, legacy]]) });
+  const keys = api.monitorLayoutStorageKeys(api.runtime.status);
+  const stop = api.startMonitorButtonLayoutObserver();
+  await new Promise(setImmediate);
+  assert.equal(JSON.parse(api.storage.get(keys.saved)).final.pop.bounds.Left, 2300);
+  assert.equal(api.storage.get(legacyKey), legacy);
+  stop();
+  api.storage.set(legacyKey, JSON.stringify({ final: { pop: pop(999) } }));
+  assert.equal(api.readSavedLayouts(keys.saved).final.pop.bounds.Left, 2300);
+});
+
+test("busy transitions and native read errors freeze pending retries and cached geometry", async () => {
+  const api = loadMonitorModule();
+  const keys = api.monitorLayoutStorageKeys(api.runtime.status);
+  api.runtime.windows = [{ label: "pop" }];
+  api.storage.set(keys.live + "pop", JSON.stringify(pop(2300)));
+  const stop = api.startMonitorButtonLayoutObserver();
+  await new Promise(setImmediate);
+  api.runtime.monitors = [monitor("B")];
+  await api.tick(300);
+  await api.tick(1200);
+  assert.equal(api.runtime.emitted.length, 1);
+  api.runtime.status = status("next", "switching", [], true);
+  await api.tick(2100);
+  assert.equal(api.runtime.emitted.length, 1);
+  const protectedCache = api.storage.get(keys.saved);
+  api.storage.set(keys.live + "pop", JSON.stringify(pop(100)));
+  api.runtime.error = new Error("Malformed transition marker");
+  await api.tick(3000);
+  assert.equal(api.storage.get(keys.saved), protectedCache);
+  assert.equal(api.runtime.emitted.length, 1);
+  assert.equal(api.runtime.errors.length, 1);
+  stop();
+});
 
 test("topology includes monitor name, physical work area and DPI, independent of enumeration order", () => {
   const { monitorTopologyKey } = loadMonitorModule();
@@ -119,7 +292,7 @@ test("restore events deduplicate retries, reject old topologies and guard delaye
     await gate;
     completed.push([value.bounds.Left, await isCurrent()]);
   });
-  const event = (requestId, Left, topologyKey = key) => ({ payload: { requestId, topologyKey, geometry: pop(Left) } });
+  const event = (requestId, Left, topologyKey = key) => ({ payload: { requestId, topologyKey, transitionId: null, geometry: pop(Left) } });
   api.runtime.listener(event("100:1", 100));
   api.runtime.listener(event("100:1", 100));
   await new Promise(setImmediate);
@@ -129,11 +302,70 @@ test("restore events deduplicate retries, reject old topologies and guard delaye
   release();
   await new Promise(setImmediate);
   assert.deepEqual(completed, [[100, false], [200, true]]);
-  assert.equal(api.storage.get("flowcell.monitor-button-ack.v1:pop"), "200:2");
+  assert.equal(api.storage.get(api.monitorLayoutStorageKeys(api.runtime.status).ack + "pop"), "200:2");
   api.runtime.listener(event("100:1", 100));
   api.runtime.listener(event("300:3", 300, "old-topology"));
   await new Promise(setImmediate);
   assert.equal(calls, 2);
+});
+
+test("a queued restore checks the native busy gate again before applying and acknowledging", async () => {
+  const api = loadMonitorModule();
+  const key = api.monitorTopologyKey(api.runtime.monitors);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let applied = 0;
+  await api.listenForMonitorButtonGeometry(async (_value, isCurrent) => {
+    await gate;
+    if (await isCurrent()) applied++;
+  });
+  const payload = { requestId: "100:1", topologyKey: key, transitionId: null, geometry: pop(500) };
+  api.runtime.listener({ payload });
+  await new Promise(setImmediate);
+  api.runtime.status = status("next", "switching", [], true);
+  release();
+  await new Promise(setImmediate);
+  assert.equal(applied, 0);
+  assert.equal(api.storage.has(api.monitorLayoutStorageKeys(api.runtime.status).ack + "pop"), false);
+  api.runtime.listener({ payload });
+  await new Promise(setImmediate);
+  assert.equal(applied, 0);
+});
+
+test("a newer request invalidates an older guard while its native status read is pending", async () => {
+  const api = loadMonitorModule();
+  const key = api.monitorTopologyKey(api.runtime.monitors);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const guards = [];
+  await api.listenForMonitorButtonGeometry(async (value, isCurrent) => {
+    if (value.bounds.Left === 100) api.runtime.nextStatusWait = gate;
+    guards.push([value.bounds.Left, await isCurrent()]);
+  });
+  const event = (requestId, left) => ({ payload: { requestId, topologyKey: key, transitionId: null, geometry: pop(left) } });
+  api.runtime.listener(event("100:1", 100));
+  await new Promise(setImmediate);
+  api.runtime.listener(event("200:2", 200));
+  await new Promise(setImmediate);
+  release();
+  await new Promise(setImmediate);
+  assert.deepEqual(guards.sort((a, b) => a[0] - b[0]), [[100, false], [200, true]]);
+  assert.equal(api.storage.get(api.monitorLayoutStorageKeys(api.runtime.status).ack + "pop"), "200:2");
+});
+
+test("listener reads native busy state after delayed monitor enumeration", async () => {
+  const api = loadMonitorModule();
+  const key = api.monitorTopologyKey(api.runtime.monitors);
+  let release;
+  api.runtime.nextMonitorWait = new Promise((resolve) => { release = resolve; });
+  let calls = 0;
+  await api.listenForMonitorButtonGeometry(async () => { calls++; });
+  api.runtime.listener({ payload: { requestId: "100:1", topologyKey: key, transitionId: null, geometry: pop(100) } });
+  await new Promise(setImmediate);
+  api.runtime.status = status("next", "switching", [], true);
+  release();
+  await new Promise(setImmediate);
+  assert.equal(calls, 0);
 });
 
 function loadRestoreHandler(kind, { expanded = true, scaleFactor = 1.05 } = {}) {

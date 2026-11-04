@@ -16,6 +16,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -127,6 +128,9 @@ SWP_NOACTIVATE = 0x0010
 SWP_NOOWNERZORDER = 0x0200
 SWP_ASYNCWINDOWPOS = 0x4000
 WINDOW_LIFETIME_PROPERTY = "FlowCell.ToggleMonitors.WindowLifetime"
+TOPOLOGY_POLL_MS = 300
+TOPOLOGY_STABLE_MS = 900
+TOPOLOGY_TIMEOUT_MS = 10000
 
 
 class LUID(ctypes.Structure):
@@ -3107,6 +3111,43 @@ def topology_fingerprint(path_array, mode_array, path_count: int) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def readiness_geometry(path_array, mode_array, path_count: int) -> tuple:
+    records = []
+    seen = set()
+    for path in path_array[:path_count]:
+        key = target_identity_key(path)
+        rect = source_rect_for_path(path, mode_array)
+        if (
+            key in seen or not path.targetInfo.targetAvailable
+            or not (path.flags & DISPLAYCONFIG_PATH_ACTIVE)
+            or rect is None or rect.width <= 0 or rect.height <= 0
+        ):
+            raise DisplayConfigError(f"Display {key} has no usable active geometry.")
+        seen.add(key)
+        records.append((key, rect.left, rect.top, rect.width, rect.height, int(path.targetInfo.rotation)))
+    if not records:
+        raise DisplayConfigError("The active display set is empty.")
+    return tuple(sorted(records))
+
+
+def write_transition_status(transition_id: str, phase: str, snapshot: Optional[DisplayConfigSnapshot] = None) -> None:
+    displays = []
+    if snapshot is not None:
+        rectangles = sorted({
+            (rect.left, rect.top, rect.width, rect.height)
+            for rect in snapshot_source_rects(snapshot).values()
+            if rect.width > 0 and rect.height > 0
+        })
+        displays = [dict(zip(("left", "top", "width", "height"), rect)) for rect in rectangles]
+    write_json_object(config_root() / "transition.json", {
+        "schemaVersion": 1,
+        "id": transition_id,
+        "phase": phase,
+        "updatedAtMs": time.time_ns() // 1_000_000,
+        "expectedDisplays": displays,
+    })
+
+
 def clear_active_owner_after_startup_safety(physical_keys: set[str], topology_signature: str) -> None:
     write_json_object(
         active_owner_path(),
@@ -3607,8 +3648,7 @@ class ButtonMonitorToggle:
         placements = saved.get("windows")
         if not isinstance(placements, list) or not placements:
             return
-        # Let the display-change/DPI messages reach applications before restoring.
-        time.sleep(0.4)
+        # The caller supplies the fresh snapshot from the topology readiness wait.
         restore_window_placements(placements, snapshot_source_rects(snapshot).values(), self.logger)
 
     def load_matching_side_snapshot(self, side: int, path: Path) -> DisplayConfigSnapshot:
@@ -3645,15 +3685,86 @@ class ButtonMonitorToggle:
             raise DisplayConfigError(f"Windows did not activate exactly the configured Group {side} monitor set.")
         return physical, wireless
 
-    def apply_saved_side(self, side: int) -> None:
+    def wait_for_ready_layout(self, expected_keys: Iterable[str], *, expected_geometry: Optional[tuple] = None):
+        expected = frozenset(expected_keys)
+        started = time.monotonic_ns()
+        stable_since = None
+        stable_geometry = None
+        last_report = None
+        while True:
+            observed = None
+            ready = None
+            geometry = None
+            reason = "monitor identities do not match"
+            try:
+                snapshot, paths, modes = self.query_active()
+                observed, wireless = target_key_sets(paths, snapshot.path_count)
+                if observed == expected:
+                    geometry = readiness_geometry(paths, modes, snapshot.path_count)
+                    if expected_geometry is None or geometry == expected_geometry:
+                        ready = (snapshot, paths, modes, observed, wireless)
+                        reason = "waiting for stable geometry"
+                    else:
+                        reason = "expected geometry has not returned"
+            except (DisplayConfigError, OSError) as error:
+                reason = str(error)
+
+            now = time.monotonic_ns()
+            elapsed_ns = now - started
+            elapsed_ms = round(elapsed_ns / 1_000_000)
+            if ready is None:
+                stable_since = None
+                stable_geometry = None
+            elif geometry != stable_geometry:
+                stable_geometry = geometry
+                stable_since = now
+            stable_ns = 0 if stable_since is None else now - stable_since
+            stable_ms = round(stable_ns / 1_000_000)
+            timed_out = elapsed_ns >= TOPOLOGY_TIMEOUT_MS * 1_000_000
+            complete = (
+                ready is not None and stable_ns >= TOPOLOGY_STABLE_MS * 1_000_000
+                and elapsed_ns <= TOPOLOGY_TIMEOUT_MS * 1_000_000
+            )
+            if observed is None:
+                observation = "observed=unknown missing=unknown extra=unknown"
+            else:
+                missing, extra = expected - observed, observed - expected
+                observation = (
+                    f"observed={len(observed)} {sorted(observed)} "
+                    f"missing={len(missing)} {sorted(missing)} extra={len(extra)} {sorted(extra)}"
+                )
+            report = (observation, reason, geometry)
+            if report != last_report or complete or timed_out:
+                self.logger.info(
+                    "Monitor readiness elapsed=%d ms stable=%d ms expected=%d %s %s; %s",
+                    elapsed_ms, stable_ms, len(expected), sorted(expected), observation,
+                    "ready" if complete else reason,
+                )
+                last_report = report
+            if complete:
+                return ready
+            if timed_out:
+                raise DisplayConfigError(
+                    f"Monitor readiness timed out after {elapsed_ms} ms: expected={len(expected)} "
+                    f"{sorted(expected)} {observation}; {reason}."
+                )
+            time.sleep(min(TOPOLOGY_POLL_MS * 1_000_000, TOPOLOGY_TIMEOUT_MS * 1_000_000 - elapsed_ns) / 1_000_000_000)
+
+    def apply_saved_side(self, side: int) -> tuple[DisplayConfigSnapshot, tuple]:
         normal_path, no_wireless_path = self.side_paths(side)
         snapshot = self.load_matching_side_snapshot(side, normal_path)
+        geometry = readiness_geometry(snapshot.path_array(), snapshot.mode_array(), snapshot.path_count)
         no_wireless_snapshot: Optional[DisplayConfigSnapshot] = None
+        no_wireless_geometry = None
         if no_wireless_path.exists():
             try:
                 no_wireless_snapshot = self.load_matching_side_snapshot(side, no_wireless_path)
+                no_wireless_geometry = readiness_geometry(
+                    no_wireless_snapshot.path_array(), no_wireless_snapshot.mode_array(), no_wireless_snapshot.path_count,
+                )
             except (OSError, KeyError, TypeError, ValueError, binascii.Error, DisplayConfigError) as error:
                 self.logger.warning("Ignoring invalid no-wireless Group %d layout: %s", side, error)
+                no_wireless_snapshot = None
         try:
             apply_snapshot_exact(snapshot, save_to_database=False)
         except DisplayConfigError as exact_error:
@@ -3661,6 +3772,8 @@ class ButtonMonitorToggle:
                 raise
             self.logger.warning("Exact Group %d restore failed; trying its no-wireless copy: %s", side, exact_error)
             apply_snapshot_exact(no_wireless_snapshot, save_to_database=False)
+            return no_wireless_snapshot, no_wireless_geometry
+        return snapshot, geometry
 
     def activate_side(
         self,
@@ -3670,10 +3783,12 @@ class ButtonMonitorToggle:
     ):
         target_keys = set(self.group_keys[side])
         current_physical, _ = target_key_sets(current_paths, current_snapshot.path_count)
+        expected_geometry = None
         if self.saved_side_matches_configuration(side):
-            self.apply_saved_side(side)
+            _, expected_geometry = self.apply_saved_side(side)
         elif target_keys.issubset(current_physical):
             selected = build_selected_snapshot(current_snapshot, self.group_keys[side], preserve_wireless=True)
+            expected_geometry = readiness_geometry(selected.path_array(), selected.mode_array(), selected.path_count)
             apply_snapshot_exact(selected, save_to_database=False)
         else:
             all_snapshot, all_paths, _ = query_display_config(awareness_query_flags(QDC_ALL_PATHS))
@@ -3683,8 +3798,9 @@ class ButtonMonitorToggle:
                     chosen.append(duplicate_path(path))
             validate_and_apply_topology(chosen)
 
-        active_snapshot, active_paths, active_modes = self.query_active()
-        physical, wireless = self.verify_group_state(side, active_paths, active_snapshot.path_count)
+        active_snapshot, active_paths, active_modes, physical, wireless = self.wait_for_ready_layout(
+            target_keys, expected_geometry=expected_geometry,
+        )
         self.capture_side_layout(side, active_snapshot, active_paths)
         return active_snapshot, active_paths, active_modes, physical, wireless
 
@@ -3721,6 +3837,7 @@ class ButtonMonitorToggle:
     ) -> None:
         current_physical, _ = target_key_sets(active_paths, active_snapshot.path_count)
         current_signature = topology_fingerprint(active_paths, active_modes, active_snapshot.path_count)
+        source_geometry = readiness_geometry(active_paths, active_modes, active_snapshot.path_count)
         source_windows = []
         if source_side is not None:
             self.capture_side_layout(source_side, active_snapshot, active_paths)
@@ -3730,6 +3847,8 @@ class ButtonMonitorToggle:
 
         source_label = f"group_{source_side}" if source_side is not None else "unmatched"
         self.write_metadata(transition=f"{source_label}_to_group_{target_side}")
+        transition_id = str(uuid.uuid4())
+        write_transition_status(transition_id, "switching")
         try:
             target_snapshot, target_paths, target_modes, physical, wireless = self.activate_side(
                 target_side,
@@ -3748,21 +3867,30 @@ class ButtonMonitorToggle:
                 self.restore_side_windows(target_side, target_snapshot)
             except Exception as error:
                 self.logger.warning("Program window restoration failed after successful monitor switch: %s", error)
+            write_transition_status(transition_id, "complete", target_snapshot)
         except Exception:
             try:
                 # A failed SetDisplayConfig can retain the same monitor set and
                 # desktop geometry while changing rotation, refresh, or target
                 # modes. Restore the complete pre-switch snapshot unconditionally.
                 apply_snapshot_exact(active_snapshot, save_to_database=False)
+                restored_snapshot, _, _, _, _ = self.wait_for_ready_layout(
+                    current_physical, expected_geometry=source_geometry,
+                )
                 if source_windows:
-                    restore_window_placements(source_windows, snapshot_source_rects(active_snapshot).values(), self.logger)
+                    restore_window_placements(source_windows, snapshot_source_rects(restored_snapshot).values(), self.logger)
                 if source_side == 2:
                     self.mark_group_2_owner(current_physical, current_signature)
                 elif source_side == 1:
                     self.clear_group_2_owner()
                 self.write_metadata(transition=source_label)
+                write_transition_status(transition_id, "complete", restored_snapshot)
             except Exception:
                 self.logger.exception("Emergency rollback after monitor-group switch failure also failed")
+                try:
+                    write_transition_status(transition_id, "failed")
+                except OSError:
+                    self.logger.exception("Could not publish failed monitor transition status")
             raise
 
     def restore_full(self) -> None:

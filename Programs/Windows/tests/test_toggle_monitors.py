@@ -27,6 +27,7 @@ assert SPEC is not None and SPEC.loader is not None
 tm = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = tm
 SPEC.loader.exec_module(tm)
+WRITE_TRANSITION_STATUS = tm.write_transition_status
 
 
 def make_path(
@@ -106,8 +107,21 @@ class ToggleMonitorEngineTests(unittest.TestCase):
         self.source_patch.start()
         self.capture_windows_patch = mock.patch.object(tm, "capture_window_placements", return_value=[])
         self.capture_windows = self.capture_windows_patch.start()
+        self.transition_patch = mock.patch.object(tm, "write_transition_status")
+        self.transitions = self.transition_patch.start()
+        self.clock_ms = 0
+        self.clock_patch = mock.patch.object(tm.time, "monotonic_ns", side_effect=lambda: self.clock_ms * 1_000_000)
+        self.sleep_patch = mock.patch.object(tm.time, "sleep", side_effect=self.advance_clock)
+        self.clock_patch.start()
+        self.sleep_patch.start()
+
+    def advance_clock(self, seconds):
+        self.clock_ms += round(seconds * 1000)
 
     def tearDown(self):
+        self.sleep_patch.stop()
+        self.clock_patch.stop()
+        self.transition_patch.stop()
         self.capture_windows_patch.stop()
         self.source_patch.stop()
         self.details_patch.stop()
@@ -189,6 +203,7 @@ class ToggleMonitorEngineTests(unittest.TestCase):
         before, before_paths, before_modes = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 1920, 1080)])
         after, after_paths, after_modes = make_snapshot([make_path(2, 2, 0)], [make_source_mode(2, 0, 0, 1920, 1080)])
         events = []
+        self.transitions.side_effect = lambda _id, phase, *_args: events.append(phase)
         with tempfile.TemporaryDirectory() as temporary:
             toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], Path(temporary))
             toggle.group_keys = {1: [self.descriptor(1).identity_key()], 2: [self.descriptor(2).identity_key()]}
@@ -203,7 +218,7 @@ class ToggleMonitorEngineTests(unittest.TestCase):
                 mock.patch.object(toggle, "restore_side_windows", side_effect=lambda *_args: events.append("restore")),
             ):
                 toggle.switch_to_side(2, before, before_paths, before_modes, 1)
-            self.assertEqual(events, ["capture", "activate", "restore"])
+            self.assertEqual(events, ["capture", "switching", "activate", "restore", "complete"])
 
     def test_failed_switch_restores_source_windows_after_exact_topology_rollback(self):
         before, paths, modes = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 1920, 1080)])
@@ -216,6 +231,7 @@ class ToggleMonitorEngineTests(unittest.TestCase):
             with (
                 mock.patch.object(toggle, "capture_side_layout"),
                 mock.patch.object(toggle, "activate_side", side_effect=OSError("failed")),
+                mock.patch.object(toggle, "query_active", return_value=(before, paths, modes)),
                 mock.patch.object(toggle, "clear_group_2_owner"),
                 mock.patch.object(tm, "apply_snapshot_exact", side_effect=lambda *_args, **_kwargs: events.append("topology")),
                 mock.patch.object(tm, "restore_window_placements", side_effect=lambda *_args: events.append("windows")) as restore,
@@ -224,6 +240,238 @@ class ToggleMonitorEngineTests(unittest.TestCase):
                     toggle.switch_to_side(2, before, paths, modes, 1)
             self.assertEqual(events, ["topology", "windows"])
             self.assertEqual(restore.call_args.args[0], windows)
+            self.assertEqual([call.args[1] for call in self.transitions.call_args_list], ["switching", "complete"])
+            self.assertIs(self.transitions.call_args.args[2], before)
+
+    def test_readiness_waits_for_fourth_monitor_and_resets_when_geometry_changes(self):
+        empty = make_snapshot([], [])
+        partial = make_snapshot([make_path(n, n, n - 1) for n in range(1, 4)],
+                                [make_source_mode(n, (n - 1) * 1920, 0, 1920, 1080) for n in range(1, 4)])
+        complete = make_snapshot([make_path(n, n, n - 1) for n in range(1, 5)],
+                                 [make_source_mode(n, (n - 1) * 1920, 0, 1920, 1080) for n in range(1, 5)])
+        final_modes = [make_source_mode(n, (n - 1) * 1920, 100, 1920, 1080) for n in range(1, 5)]
+        final = make_snapshot([make_path(n, n, n - 1) for n in range(1, 5)], final_modes)
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], Path(temporary))
+            expected = [self.descriptor(n).identity_key() for n in range(1, 5)]
+            with mock.patch.object(toggle, "query_active", side_effect=[empty, partial, complete, complete, final, final, final, final]) as query:
+                result = toggle.wait_for_ready_layout(expected)
+            self.assertIs(result[0], final[0])
+            self.assertEqual(query.call_count, 8)
+            self.assertEqual(self.clock_ms, 2100)
+
+    def test_switch_does_not_restore_at_400_ms_with_three_monitors_and_waits_for_final_geometry(self):
+        before = make_snapshot([make_path(9, 9, 0)], [make_source_mode(9, 0, 0, 1920, 1080)])
+        partial = make_snapshot([make_path(n, n, n - 1) for n in range(1, 4)],
+                                [make_source_mode(n, (n - 1) * 1920, 0, 1920, 1080) for n in range(1, 4)])
+        complete = make_snapshot([make_path(n, n, n - 1) for n in range(1, 5)],
+                                 [make_source_mode(n, (n - 1) * 1920, 0, 1920, 1080) for n in range(1, 5)])
+        final = make_snapshot([make_path(n, n, n - 1) for n in range(1, 5)],
+                             [make_source_mode(n, (n - 1) * 1920, 100, 1920, 1080) for n in range(1, 5)])
+        samples = iter([partial, partial, partial, complete, complete, final, final, final, final])
+        restored_at = []
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], Path(temporary))
+            toggle.group_keys = {
+                1: [self.descriptor(n).identity_key() for n in range(1, 5)],
+                2: [self.descriptor(9).identity_key()],
+            }
+            def query():
+                if self.clock_ms <= 600:
+                    restore.assert_not_called()
+                    self.assertFalse(any(call.args[0] == 1 for call in capture.call_args_list))
+                return next(samples)
+            with (
+                mock.patch.object(toggle, "saved_side_matches_configuration", return_value=True),
+                mock.patch.object(toggle, "apply_saved_side", return_value=(final[0], tm.readiness_geometry(final[1], final[2], final[0].path_count))),
+                mock.patch.object(toggle, "query_active", side_effect=query),
+                mock.patch.object(toggle, "capture_side_layout") as capture,
+                mock.patch.object(toggle, "clear_group_2_owner"),
+                mock.patch.object(toggle, "restore_side_windows", side_effect=lambda *_args: restored_at.append(self.clock_ms)) as restore,
+            ):
+                toggle.switch_to_side(1, *before, 2)
+            self.assertEqual(restored_at, [2400])
+            capture.assert_any_call(1, final[0], final[1])
+            restore.assert_called_once_with(1, final[0])
+            self.assertEqual([call.args[1] for call in self.transitions.call_args_list], ["switching", "complete"])
+            self.assertIs(self.transitions.call_args.args[2], final[0])
+
+    def test_readiness_resets_for_query_error_extra_monitor_and_unusable_mode(self):
+        complete = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 1920, 1080)])
+        extra = make_snapshot([make_path(1, 1, 0), make_path(2, 2, 1)],
+                              [make_source_mode(1, 0, 0, 1920, 1080), make_source_mode(2, 1920, 0, 1920, 1080)])
+        unusable = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 0, 1080)])
+        for transient in (tm.DisplayConfigError("QueryDisplayConfig failed with 87"), extra, unusable):
+            with self.subTest(transient=type(transient).__name__), tempfile.TemporaryDirectory() as temporary:
+                self.clock_ms = 0
+                toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], Path(temporary))
+                with mock.patch.object(toggle, "query_active", side_effect=[complete, complete, transient, complete, complete, complete, complete]):
+                    toggle.wait_for_ready_layout([self.descriptor(1).identity_key()])
+                self.assertEqual(self.clock_ms, 1800)
+
+    def test_readiness_ignores_enumeration_order_and_retains_resolved_disconnected_subset(self):
+        modes = [make_source_mode(1, 0, 0, 1920, 1080), make_source_mode(2, 1920, 0, 1920, 1080)]
+        first = make_snapshot([make_path(1, 1, 0), make_path(2, 2, 1)], modes)
+        reordered = make_snapshot([make_path(2, 2, 1), make_path(1, 1, 0)], modes)
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one", "two", "disconnected"], ["three"], Path(temporary))
+            toggle.group_keys[1] = [self.descriptor(n).identity_key() for n in (1, 2)]
+            toggle.group_unavailable_labels[1] = ["disconnected"]
+            with mock.patch.object(toggle, "query_active", side_effect=[first, reordered, first, reordered]):
+                result = toggle.wait_for_ready_layout(toggle.group_keys[1])
+            self.assertEqual(result[3], set(toggle.group_keys[1]))
+            self.assertEqual(self.clock_ms, 900)
+
+    def test_readiness_timeout_does_not_capture_or_overwrite_target_snapshot(self):
+        partial = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 1920, 1080)])
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one", "missing"], ["three"], Path(temporary))
+            toggle.group_keys[1] = [self.descriptor(n).identity_key() for n in (1, 2)]
+            target_path, _ = toggle.side_paths(1)
+            target_path.write_text("protected saved target", encoding="utf-8")
+            with (
+                mock.patch.object(toggle, "saved_side_matches_configuration", return_value=True),
+                mock.patch.object(toggle, "apply_saved_side", return_value=(partial[0], tm.readiness_geometry(partial[1], partial[2], partial[0].path_count))),
+                mock.patch.object(toggle, "query_active", return_value=partial),
+                mock.patch.object(toggle, "capture_side_layout") as capture,
+            ):
+                with self.assertRaisesRegex(tm.DisplayConfigError, "after 10000 ms: expected=2 .*observed=1 .*missing=1"):
+                    toggle.activate_side(1, partial[0], partial[1])
+            capture.assert_not_called()
+            self.assertEqual(target_path.read_text(encoding="utf-8"), "protected saved target")
+            self.assertEqual(self.clock_ms, 10000)
+
+    def test_saved_target_same_ids_with_wrong_stable_geometry_cannot_overwrite_cache(self):
+        desired = make_snapshot([make_path(n, n, n - 1) for n in range(1, 5)],
+                                [make_source_mode(n, (n - 1) * 1920, 0, 1920, 1080) for n in range(1, 5)])
+        wrong = make_snapshot([make_path(n, n, n - 1) for n in range(1, 5)],
+                              [make_source_mode(n, (n - 1) * 1920, 100, 1920, 1080) for n in range(1, 5)])
+        before = make_snapshot([make_path(9, 9, 0)], [make_source_mode(9, 0, 0, 1920, 1080)])
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], Path(temporary))
+            toggle.group_keys[1] = [self.descriptor(n).identity_key() for n in range(1, 5)]
+            toggle.capture_side_layout(1, desired[0], desired[1])
+            protected = {path: path.read_bytes() for path in toggle.side_paths(1)}
+            with (
+                mock.patch.object(tm, "apply_snapshot_exact") as apply,
+                mock.patch.object(toggle, "query_active", return_value=wrong),
+                mock.patch.object(toggle, "capture_side_layout") as capture,
+            ):
+                with self.assertRaisesRegex(tm.DisplayConfigError, "expected geometry has not returned"):
+                    toggle.activate_side(1, before[0], before[1])
+            apply.assert_called_once()
+            capture.assert_not_called()
+            self.assertEqual(self.clock_ms, 10000)
+            self.assertTrue(all(path.read_bytes() == content for path, content in protected.items()))
+
+    def test_readiness_uses_exact_900_ms_stability_and_10000_ms_deadline(self):
+        complete = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 1920, 1080)])
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], Path(temporary))
+            expected = [self.descriptor(1).identity_key()]
+            with (
+                mock.patch.object(tm.time, "monotonic_ns", side_effect=[0, 0, 300_000_000, 600_000_000, 899_600_000, 900_000_000]),
+                mock.patch.object(tm.time, "sleep"),
+                mock.patch.object(toggle, "query_active", return_value=complete) as query,
+            ):
+                toggle.wait_for_ready_layout(expected)
+            self.assertEqual(query.call_count, 5)
+            with (
+                mock.patch.object(tm.time, "monotonic_ns", side_effect=[0, 0, 300_000_000, 600_000_000, 10_000_400_000]),
+                mock.patch.object(tm.time, "sleep"),
+                mock.patch.object(toggle, "query_active", return_value=complete),
+            ):
+                with self.assertRaisesRegex(tm.DisplayConfigError, "timed out"):
+                    toggle.wait_for_ready_layout(expected)
+
+    def test_rollback_requires_original_geometry_before_restoring_source_windows(self):
+        original = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 1920, 1080)])
+        shifted = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 1920, 0, 1920, 1080)])
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], Path(temporary))
+            toggle.group_keys[1] = [self.descriptor(1).identity_key()]
+            self.capture_windows.return_value = [{"hwnd": 100}]
+            restored_at = []
+            with (
+                mock.patch.object(toggle, "capture_side_layout"),
+                mock.patch.object(toggle, "activate_side", side_effect=OSError("apply failed")),
+                mock.patch.object(tm, "apply_snapshot_exact"),
+                mock.patch.object(toggle, "query_active", side_effect=[shifted, original, original, original, original]),
+                mock.patch.object(toggle, "clear_group_2_owner"),
+                mock.patch.object(tm, "restore_window_placements", side_effect=lambda *_args: restored_at.append(self.clock_ms)),
+            ):
+                with self.assertRaisesRegex(OSError, "apply failed"):
+                    toggle.switch_to_side(2, *original, 1)
+            self.assertEqual(restored_at, [1200])
+            self.assertEqual([call.args[1] for call in self.transitions.call_args_list], ["switching", "complete"])
+
+    def test_rollback_timeout_publishes_failed_without_moving_windows(self):
+        original = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 1920, 1080)])
+        empty = make_snapshot([], [])
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], Path(temporary))
+            toggle.group_keys[1] = [self.descriptor(1).identity_key()]
+            self.capture_windows.return_value = [{"hwnd": 100}]
+            with (
+                mock.patch.object(toggle, "capture_side_layout"),
+                mock.patch.object(toggle, "activate_side", side_effect=OSError("apply failed")),
+                mock.patch.object(tm, "apply_snapshot_exact"),
+                mock.patch.object(toggle, "query_active", return_value=empty),
+                mock.patch.object(tm, "restore_window_placements") as restore,
+            ):
+                with self.assertRaisesRegex(OSError, "apply failed"):
+                    toggle.switch_to_side(2, *original, 1)
+            restore.assert_not_called()
+            self.assertEqual([call.args[1] for call in self.transitions.call_args_list], ["switching", "failed"])
+            self.assertEqual(self.clock_ms, 10000)
+
+    def test_transition_status_is_atomic_and_contains_unique_active_source_rectangles(self):
+        snapshot, _, _ = make_snapshot(
+            [make_path(1, 1, 0), make_path(1, 2, 0), make_path(9, 9, 1, wireless=True)],
+            [make_source_mode(1, 0, 0, 1920, 1080), make_source_mode(9, -1920, 0, 1920, 1080)],
+        )
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(tm, "config_root", return_value=Path(temporary)):
+            transition_id = str(tm.uuid.uuid4())
+            with mock.patch.object(tm.time, "time_ns", return_value=1_234_567_890_000_000):
+                WRITE_TRANSITION_STATUS(transition_id, "switching")
+                self.assertEqual(tm.read_json_object(Path(temporary) / "transition.json")["expectedDisplays"], [])
+                WRITE_TRANSITION_STATUS(transition_id, "complete", snapshot)
+            payload = tm.read_json_object(Path(temporary) / "transition.json")
+            self.assertEqual(payload, {
+                "schemaVersion": 1, "id": transition_id, "phase": "complete", "updatedAtMs": 1234567890,
+                "expectedDisplays": [
+                    {"left": -1920, "top": 0, "width": 1920, "height": 1080},
+                    {"left": 0, "top": 0, "width": 1920, "height": 1080},
+                ],
+            })
+            self.assertFalse((Path(temporary) / "transition.json.tmp").exists())
+
+    def test_topology_mutex_remains_held_until_complete_status_is_published(self):
+        before = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 0, 0, 1920, 1080)])
+        after = make_snapshot([make_path(2, 2, 0)], [make_source_mode(2, 0, 0, 1920, 1080)])
+        lock = mock.Mock()
+        lock.acquire.return_value = True
+        phases = []
+        def publish(_id, phase, *_args):
+            lock.release.assert_not_called()
+            phases.append(phase)
+        self.transitions.side_effect = publish
+        with tempfile.TemporaryDirectory() as temporary:
+            toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], Path(temporary))
+            toggle.group_keys = {side: [self.descriptor(side).identity_key()] for side in (1, 2)}
+            with (
+                mock.patch.object(tm, "SingleInstance", return_value=lock),
+                mock.patch.object(toggle, "resolve_groups"),
+                mock.patch.object(toggle, "reject_foreign_group_2_owner"),
+                mock.patch.object(toggle, "query_active", return_value=before),
+                mock.patch.object(toggle, "capture_side_layout"),
+                mock.patch.object(toggle, "activate_side", return_value=(*after, set(toggle.group_keys[2]), set())),
+                mock.patch.object(toggle, "mark_group_2_owner"),
+                mock.patch.object(toggle, "restore_side_windows"),
+            ):
+                toggle.toggle_once()
+        self.assertEqual(phases, ["switching", "complete"])
+        lock.release.assert_called_once_with()
 
     def test_startup_installer_is_current_user_only_and_has_required_triggers(self):
         installer = STARTUP_INSTALLER_PATH.read_text(encoding="utf-8")
@@ -796,7 +1044,7 @@ class ToggleMonitorEngineTests(unittest.TestCase):
                 mock.patch.object(
                     toggle,
                     "query_active",
-                    return_value=(group_2_snapshot, group_2_paths, group_2_modes),
+                    return_value=(group_1_snapshot, group_1_paths, group_1_modes),
                 ) as query_after_failure,
                 mock.patch.object(toggle, "clear_group_2_owner") as clear_owner,
                 mock.patch.object(toggle, "write_metadata"),
@@ -806,7 +1054,7 @@ class ToggleMonitorEngineTests(unittest.TestCase):
                     toggle.switch_to_side(2, group_1_snapshot, group_1_paths, group_1_modes, 1)
             capture.assert_called_once_with(1, group_1_snapshot, group_1_paths)
             mark_owner.assert_called_once()
-            query_after_failure.assert_not_called()
+            self.assertEqual(query_after_failure.call_count, 4)
             apply_exact.assert_called_once_with(group_1_snapshot, save_to_database=False)
             self.assertIs(apply_exact.call_args.args[0], group_1_snapshot)
             clear_owner.assert_called_once_with()
@@ -842,7 +1090,7 @@ class ToggleMonitorEngineTests(unittest.TestCase):
                 mock.patch.object(
                     toggle,
                     "query_active",
-                    return_value=(after_snapshot, after_paths, after_modes),
+                    return_value=(before_snapshot, before_paths, before_modes),
                 ) as query_after_failure,
                 mock.patch.object(toggle, "clear_group_2_owner"),
                 mock.patch.object(toggle, "write_metadata"),
@@ -851,7 +1099,7 @@ class ToggleMonitorEngineTests(unittest.TestCase):
                 with self.assertRaisesRegex(OSError, "switch failed"):
                     toggle.switch_to_side(2, before_snapshot, before_paths, before_modes, 1)
 
-            query_after_failure.assert_not_called()
+            self.assertEqual(query_after_failure.call_count, 4)
             apply_exact.assert_called_once_with(before_snapshot, save_to_database=False)
             self.assertIs(apply_exact.call_args.args[0], before_snapshot)
             self.assertEqual(before_snapshot.to_json(), serialized_before)
@@ -909,7 +1157,11 @@ class ToggleMonitorEngineTests(unittest.TestCase):
             )
             apply_exact = mock.Mock(side_effect=[tm.DisplayConfigError("wireless unavailable"), None])
             with mock.patch.object(tm, "apply_snapshot_exact", apply_exact):
-                toggle.apply_saved_side(1)
+                applied, geometry = toggle.apply_saved_side(1)
+            self.assertEqual(applied.to_json(), fallback_snapshot.to_json())
+            self.assertEqual(geometry, tm.readiness_geometry(
+                fallback_snapshot.path_array(), fallback_snapshot.mode_array(), fallback_snapshot.path_count,
+            ))
             self.assertTrue(toggle.saved_side_matches_configuration(1))
             self.assertEqual(apply_exact.call_count, 2)
             self.assertEqual(apply_exact.call_args_list[0].args[0].to_json(), exact_snapshot.to_json())

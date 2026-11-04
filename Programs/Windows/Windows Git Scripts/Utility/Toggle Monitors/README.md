@@ -7,6 +7,8 @@
 
 Each Button keeps its own monitor groups and regular-window arrangements. A different connected subset of the monitors gets its own saved arrangement. FlowCell Pops and Fans remember their visible positions and sizes for each display setup. Windows that have closed or whose process has restarted are left alone; arrange newly opened windows and toggle away to remember them. Minimized windows stay minimized, and restoration does not activate or raise windows.
 
+After switching, the Button checks the expected connected monitors every 300 ms and restores windows only after their geometry stays unchanged for 900 ms. Saved arrangements must also match their saved monitor positions, sizes, and rotations. It waits up to 10,000 ms for a delayed display. If that check times out, it attempts to return to the previous monitor arrangement and verifies that arrangement before restoring windows. If rollback cannot be verified, the script skips program-window restoration and records the failure in `toggle_monitors.log`.
+
 To reopen the monitor checklist, run the owned **Toggle Monitors.vbs** launcher with `--configure`. The picker PowerShell file is a package helper; do not run it directly. Do not run the Python engine directly without its Button configuration.
 
 Startup and wake recovery enable every available display, independently of the two Button groups.

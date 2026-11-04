@@ -174,6 +174,7 @@ fn main() {
             get_foreground_process_info,
             forward_program_undo,
             get_native_input_snapshot,
+            commands::monitor_transition::get_monitor_layout_transition,
             show_save_layout_dialog,
             show_open_layout_dialog,
             show_open_file_dialog,

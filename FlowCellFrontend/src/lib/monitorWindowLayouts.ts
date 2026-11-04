@@ -1,4 +1,5 @@
 import { emitTo, listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { availableMonitors, getCurrentWindow, type Monitor } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { FlowCellBounds } from "../types.js";
@@ -22,9 +23,65 @@ export interface MonitorButtonGeometry {
 
 type GeometryMap = Record<string, MonitorButtonGeometry>;
 type SavedLayouts = Record<string, GeometryMap>;
-interface RestoreRequest { requestId: string; topologyKey: string; geometry: MonitorButtonGeometry }
+export interface MonitorLayoutTransition {
+  schemaVersion: 1;
+  id: string;
+  phase: "switching" | "complete" | "failed";
+  updatedAtMs: number;
+  expectedDisplays: { left: number; top: number; width: number; height: number }[];
+}
+export interface MonitorLayoutStatus {
+  namespace: string;
+  processId: number;
+  busy: boolean;
+  transition: MonitorLayoutTransition | null;
+}
+interface RestoreRequest { requestId: string; topologyKey: string; transitionId: string | null; geometry: MonitorButtonGeometry }
 const receivedRestores = new Map<string, Promise<void>>();
 let latestRestore: RestoreRequest | undefined;
+let identityPromise: Promise<Pick<MonitorLayoutStatus, "namespace" | "processId">> | undefined;
+
+export function monitorLayoutStorageKeys(identity: Pick<MonitorLayoutStatus, "namespace" | "processId">) {
+  return {
+    saved: `${SAVED_KEY}:${identity.namespace}`,
+    live: `${LIVE_PREFIX}${identity.namespace}:${identity.processId}:`,
+    ack: `${ACK_PREFIX}${identity.namespace}:${identity.processId}:`
+  };
+}
+
+async function readMonitorLayoutStatus(): Promise<MonitorLayoutStatus> {
+  const status = await invoke<MonitorLayoutStatus>("get_monitor_layout_transition");
+  if (!status || typeof status.namespace !== "string" || !status.namespace ||
+      !Number.isSafeInteger(status.processId) || status.processId <= 0 || typeof status.busy !== "boolean") {
+    throw new Error("Invalid monitor layout runtime identity.");
+  }
+  identityPromise ??= Promise.resolve({ namespace: status.namespace, processId: status.processId });
+  return status;
+}
+
+function runtimeIdentity(): Promise<Pick<MonitorLayoutStatus, "namespace" | "processId">> {
+  if (!identityPromise) {
+    identityPromise = readMonitorLayoutStatus().catch((error) => { identityPromise = undefined; throw error; });
+  }
+  return identityPromise;
+}
+
+export function monitorDisplaysMatch(
+  monitors: readonly Pick<Monitor, "position" | "size">[],
+  expected: MonitorLayoutTransition["expectedDisplays"]
+): boolean {
+  const key = (rects: number[][]) => JSON.stringify([...new Set(rects.map((rect) => JSON.stringify(rect)))].sort());
+  return expected.length > 0 && key(monitors.map((monitor) => [
+    monitor.position.x, monitor.position.y, monitor.size.width, monitor.size.height
+  ])) === key(expected.map((rect) => [rect.left, rect.top, rect.width, rect.height]));
+}
+
+function restoreStatusAllows(status: MonitorLayoutStatus, request: RestoreRequest, monitors: readonly Monitor[]): boolean {
+  const transition = status.transition;
+  return !status.busy && (!transition || transition.phase === "complete") &&
+    (transition?.id ?? null) === request.transitionId &&
+    monitorTopologyKey(monitors) === request.topologyKey;
+}
 
 export function monitorGeometryBounds(bounds: ButtonDesktopBounds): FlowCellBounds {
   return { Left: bounds.left, Top: bounds.top, Width: bounds.width, Height: bounds.height };
@@ -41,19 +98,25 @@ function validGeometry(value: unknown): value is MonitorButtonGeometry {
 
 export function publishMonitorButtonGeometry(geometry: MonitorButtonGeometry): void {
   if (!validGeometry(geometry)) return;
-  const key = LIVE_PREFIX + getCurrentWindow().label;
+  const label = getCurrentWindow().label;
   const serialized = JSON.stringify(geometry);
-  if (window.localStorage.getItem(key) !== serialized) window.localStorage.setItem(key, serialized);
+  void runtimeIdentity().then((identity) => {
+    const key = monitorLayoutStorageKeys(identity).live + label;
+    if (window.localStorage.getItem(key) !== serialized) window.localStorage.setItem(key, serialized);
+  }).catch((error) => console.error("Could not publish Button monitor placement", error));
 }
 
 export function listenForMonitorButtonGeometry(
   handler: (geometry: MonitorButtonGeometry, isCurrent: () => Promise<boolean>) => Promise<void>
 ): Promise<() => void> {
   return listen<RestoreRequest>(RESTORE_EVENT, ({ payload }) => {
-    if (typeof payload?.requestId !== "string" || typeof payload.topologyKey !== "string" || !validGeometry(payload.geometry)) return;
+    if (typeof payload?.requestId !== "string" || typeof payload.topologyKey !== "string" ||
+        !(payload.transitionId === null || typeof payload.transitionId === "string") || !validGeometry(payload.geometry)) return;
     if (receivedRestores.has(payload.requestId)) return;
     const work = (async () => {
-      if (monitorTopologyKey(await availableMonitors()) !== payload.topologyKey) {
+      const monitors = await availableMonitors();
+      const status = await readMonitorLayoutStatus();
+      if (!restoreStatusAllows(status, payload, monitors)) {
         receivedRestores.delete(payload.requestId);
         return;
       }
@@ -62,14 +125,19 @@ export function listenForMonitorButtonGeometry(
       const [latestTime, latestSequence] = latestRestore ? order(latestRestore) : [-1, -1];
       if (time < latestTime || (time === latestTime && sequence < latestSequence)) return;
       latestRestore = payload;
-      const isCurrent = async () => latestRestore?.requestId === payload.requestId &&
-        monitorTopologyKey(await availableMonitors()) === payload.topologyKey;
+      const isCurrent = async () => {
+        if (latestRestore?.requestId !== payload.requestId) return false;
+        const currentMonitors = await availableMonitors();
+        const currentStatus = await readMonitorLayoutStatus();
+        return latestRestore?.requestId === payload.requestId &&
+          restoreStatusAllows(currentStatus, payload, currentMonitors);
+      };
       await handler(payload.geometry, isCurrent);
       if (!await isCurrent()) {
         receivedRestores.delete(payload.requestId);
         return;
       }
-      window.localStorage.setItem(ACK_PREFIX + getCurrentWindow().label, payload.requestId);
+      window.localStorage.setItem(monitorLayoutStorageKeys(status).ack + getCurrentWindow().label, payload.requestId);
     })().catch((error) => {
       receivedRestores.delete(payload.requestId);
       console.error("Could not restore Button monitor placement", error);
@@ -124,35 +192,30 @@ export class MonitorButtonLayoutMemory {
   private pendingSince = 0;
   private restoringUntil = 0;
   private pendingRestores = new Set<string>();
+  private statusInitialized = false;
+  private handledTransitionId: string | null = null;
+  private outgoing: GeometryMap | null = null;
+  restorationBlocked = false;
 
   constructor(readonly layouts: SavedLayouts = {}) {}
 
   acknowledge(label: string): void { this.pendingRestores.delete(label); }
 
-  sample(key: string, current: GeometryMap, workAreas: readonly FlowCellBounds[], now: number): GeometryMap | null {
-    if (!this.activeKey) {
-      this.activeKey = key;
-      this.layouts[key] = structuredClone(current);
-      return null;
-    }
-    if (key === this.activeKey) {
-      this.pendingKey = null;
-      if (now >= this.restoringUntil) {
-        const next = structuredClone(current);
-        for (const label of this.pendingRestores) {
-          if (this.layouts[key]?.[label]) next[label] = this.layouts[key][label];
-        }
-        this.layouts[key] = next;
-      }
-      return null;
-    }
+  private beginTransition(): void {
+    this.outgoing ??= structuredClone(this.activeKey ? this.layouts[this.activeKey] ?? {} : {});
+  }
+
+  private stable(key: string, now: number): boolean {
     if (key !== this.pendingKey) {
       this.pendingKey = key;
       this.pendingSince = now;
-      return null;
+      return false;
     }
-    if (now - this.pendingSince < SETTLE_MS) return null;
-    const previous = this.layouts[this.activeKey] ?? {};
+    return now - this.pendingSince >= SETTLE_MS;
+  }
+
+  private restore(key: string, current: GeometryMap, workAreas: readonly FlowCellBounds[], now: number): GeometryMap {
+    const previous = this.outgoing ?? (this.activeKey ? this.layouts[this.activeKey] ?? {} : {});
     const remembered = this.layouts[key] ?? {};
     const restored: GeometryMap = {};
     // Only live windows participate; closed windows must never be reopened.
@@ -162,16 +225,85 @@ export class MonitorButtonLayoutMemory {
     }
     this.activeKey = key;
     this.pendingKey = null;
-    this.layouts[key] = structuredClone(restored);
+    this.layouts[key] = { ...remembered, ...structuredClone(restored) };
     this.pendingRestores = new Set(Object.keys(restored));
     this.restoringUntil = now + SETTLE_MS;
+    this.outgoing = null;
+    this.restorationBlocked = false;
     return restored;
+  }
+
+  sample(
+    key: string, current: GeometryMap, workAreas: readonly FlowCellBounds[], now: number,
+    status?: MonitorLayoutStatus,
+    monitors: readonly Pick<Monitor, "position" | "size">[] = []
+  ): GeometryMap | null {
+    if (status) {
+      const transition = status.transition;
+      if (!this.statusInitialized) {
+        this.statusInitialized = true;
+        // An idle completed marker predates this observer. Later manual monitor
+        // changes must not remain constrained to that old target indefinitely.
+        if (!status.busy && transition?.phase === "complete") this.handledTransitionId = transition.id;
+      }
+      if (!monitors.length) {
+        this.beginTransition();
+        this.restorationBlocked = true;
+        this.pendingKey = null;
+        return null;
+      }
+      const unhandled = transition && transition.id !== this.handledTransitionId;
+      if (status.busy || (unhandled && transition.phase !== "complete")) {
+        this.beginTransition();
+        this.restorationBlocked = true;
+        this.pendingKey = null;
+        return null;
+      }
+      if (unhandled) {
+        this.beginTransition();
+        this.restorationBlocked = true;
+        if (!monitorDisplaysMatch(monitors, transition.expectedDisplays)) {
+          this.pendingKey = null;
+          return null;
+        }
+        if (!this.stable(key, now)) return null;
+        this.handledTransitionId = transition.id;
+        return this.restore(key, current, workAreas, now);
+      }
+      if (this.outgoing) {
+        // A mutex-only operation may not publish a transition. Keep its original
+        // source snapshot until its resulting topology is stable as well.
+        this.restorationBlocked = true;
+        if (!this.stable(key, now)) return null;
+        return this.restore(key, current, workAreas, now);
+      }
+    }
+    this.restorationBlocked = false;
+    if (!this.activeKey) {
+      this.activeKey = key;
+      this.layouts[key] = { ...this.layouts[key], ...structuredClone(current) };
+      return null;
+    }
+    if (key === this.activeKey) {
+      this.pendingKey = null;
+      if (now >= this.restoringUntil) {
+        const next = { ...this.layouts[key], ...structuredClone(current) };
+        for (const label of this.pendingRestores) {
+          if (this.layouts[key]?.[label]) next[label] = this.layouts[key][label];
+        }
+        this.layouts[key] = next;
+      }
+      return null;
+    }
+    if (!this.stable(key, now)) return null;
+    return this.restore(key, current, workAreas, now);
   }
 }
 
-function readSavedLayouts(): SavedLayouts {
+export function readSavedLayouts(savedKey: string): SavedLayouts {
   try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(SAVED_KEY) ?? "{}");
+    // Copy the legacy cache on first use; never rewrite or remove its shared key.
+    const value: unknown = JSON.parse(window.localStorage.getItem(savedKey) ?? window.localStorage.getItem(SAVED_KEY) ?? "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(Object.entries(value).slice(-16).map(([key, entries]) => [key,
       Object.fromEntries(Object.entries(entries && typeof entries === "object" ? entries : {})
@@ -181,27 +313,31 @@ function readSavedLayouts(): SavedLayouts {
 }
 
 export function startMonitorButtonLayoutObserver(): () => void {
-  const memory = new MonitorButtonLayoutMemory(readSavedLayouts());
+  let memory: MonitorButtonLayoutMemory | undefined;
   let stopped = false;
   let timer: number | undefined;
   let sequence = 0;
   const pending = new Map<string, { request: RestoreRequest; attempts: number; sentAt: number }>();
   const sample = async () => {
     try {
-      const monitors = await availableMonitors();
-      if (stopped || !monitors.length) return;
-      const windows = await WebviewWindow.getAll();
+      const [monitors, windows] = await Promise.all([availableMonitors(), WebviewWindow.getAll()]);
       if (stopped) return;
+      // Read transition status after the asynchronous window/monitor enumeration
+      // so a toggle starting during those queries freezes this sample as well.
+      const status = await readMonitorLayoutStatus();
+      if (stopped) return;
+      const keys = monitorLayoutStorageKeys(status);
+      memory ??= new MonitorButtonLayoutMemory(readSavedLayouts(keys.saved));
       const current: GeometryMap = {};
       for (const target of windows) {
         try {
-          const geometry: unknown = JSON.parse(window.localStorage.getItem(LIVE_PREFIX + target.label) ?? "null");
+          const geometry: unknown = JSON.parse(window.localStorage.getItem(keys.live + target.label) ?? "null");
           if (validGeometry(geometry)) current[target.label] = geometry;
         } catch { /* A newly created window has not published its frame yet. */ }
       }
       for (const [label, restore] of pending) {
         if (!windows.some((target) => target.label === label) ||
-            window.localStorage.getItem(ACK_PREFIX + label) === restore.request.requestId) {
+            window.localStorage.getItem(keys.ack + label) === restore.request.requestId) {
           memory.acknowledge(label);
           pending.delete(label);
         }
@@ -211,15 +347,16 @@ export function startMonitorButtonLayoutObserver(): () => void {
       const restored = memory.sample(topologyKey, current, monitors.map((monitor) => ({
         Left: monitor.workArea.position.x, Top: monitor.workArea.position.y,
         Width: monitor.workArea.size.width, Height: monitor.workArea.size.height
-      })), now);
+      })), now, status, monitors);
       if (stopped) return;
       if (restored) {
         pending.clear();
         for (const [label, geometry] of Object.entries(restored)) {
-          pending.set(label, { request: { requestId: `${now}:${++sequence}`, topologyKey, geometry }, attempts: 0, sentAt: 0 });
+          pending.set(label, { request: { requestId: `${now}:${++sequence}`, topologyKey,
+            transitionId: status.transition?.id ?? null, geometry }, attempts: 0, sentAt: 0 });
         }
       }
-      await Promise.all([...pending].map(async ([label, restore]) => {
+      if (!memory.restorationBlocked) await Promise.all([...pending].map(async ([label, restore]) => {
         if (restore.attempts >= 3 || now - restore.sentAt < SETTLE_MS) return;
         restore.attempts += 1;
         restore.sentAt = now;
@@ -228,7 +365,7 @@ export function startMonitorButtonLayoutObserver(): () => void {
         });
       }));
       const serialized = JSON.stringify(Object.fromEntries(Object.entries(memory.layouts).slice(-16)));
-      if (window.localStorage.getItem(SAVED_KEY) !== serialized) window.localStorage.setItem(SAVED_KEY, serialized);
+      if (window.localStorage.getItem(keys.saved) !== serialized) window.localStorage.setItem(keys.saved, serialized);
     } catch (error) {
       console.error("Could not remember Button monitor placements", error);
     } finally {
