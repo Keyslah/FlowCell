@@ -13,6 +13,7 @@ import {
   Window as TauriWindow
 } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { webviewBrowserOptions } from "../../lib/webviewBrowserOptions";
 import type { FlowCellBounds } from "../../types";
 import {
   registerLayoutWindow,
@@ -703,7 +704,8 @@ export async function openButtonEditorWindow(args: {
         shadow: false,
         visible: false,
         focus: true,
-        alwaysOnTop: false
+        alwaysOnTop: false,
+        ...webviewBrowserOptions
       });
       await waitForWindowCreated(target);
       await bindDestroyedCleanup(target, windowLabel);
@@ -831,7 +833,8 @@ export async function openButtonPopoutWindow(args: {
           shadow: false,
           visible: false,
           focus: false,
-          alwaysOnTop: false
+          alwaysOnTop: false,
+          ...webviewBrowserOptions
         });
         await waitForWindowCreated(target);
         await bindDestroyedCleanup(target, windowLabel);
@@ -982,7 +985,8 @@ export async function openButtonFanWindow(args: {
           shadow: false,
           visible: false,
           focus: false,
-          alwaysOnTop: false
+          alwaysOnTop: false,
+          ...webviewBrowserOptions
         });
         await waitForWindowCreated(target);
         await bindDestroyedCleanup(target, windowLabel);

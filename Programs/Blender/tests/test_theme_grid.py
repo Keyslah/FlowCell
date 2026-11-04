@@ -2,7 +2,10 @@
 
 import ast
 import contextlib
+import json
 import math
+import os
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -461,6 +464,36 @@ class NativeGridControlTests(unittest.TestCase):
         for name in ("first", "last-used"):
             namespace["_write_theme_state"](None, {"theme": {"name": name}})
         self.assertEqual(writes[-1], {"theme": {"name": "last-used"}, "place_picture": {"enabled": False}})
+
+    def test_startup_picture_follows_completed_theme_library_migration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            legacy = root / "blender_themes" / "Jaguar"
+            destination = root / "themes" / "Blender" / "Jaguar-conflict"
+            destination.mkdir(parents=True)
+            picture = destination / "picture.png"
+            picture.touch()
+            journal = root / "themes" / ".migration-v1.json"
+            migration = {"source": str(legacy), "destination": str(destination), "complete": True}
+            journal.write_text(json.dumps({"version": 1, "entries": [migration]}), encoding="utf-8")
+            namespace = load_functions(
+                "_resolve_project_place_picture_path", "_resolve_optional_image_path",
+                "_migrated_place_picture_path",
+                json=json, Path=Path, _repo_root=lambda: root,
+            )
+            resolve = namespace["_resolve_project_place_picture_path"]
+            old_picture = str(legacy / picture.name)
+            if os.name == "nt":
+                old_picture = "\\\\?\\" + old_picture
+            saved = {"enabled": True, "path": old_picture}
+            self.assertEqual(resolve(saved, prefer_absolute=True), (str(picture.resolve()), ""))
+
+            saved["path"] = str(legacy.with_name("Jaguar-other") / picture.name)
+            self.assertEqual(resolve(saved, prefer_absolute=True)[0], "")
+            saved["path"] = old_picture
+            migration["complete"] = False
+            journal.write_text(json.dumps({"version": 1, "entries": [migration]}), encoding="utf-8")
+            self.assertEqual(resolve(saved, prefer_absolute=True)[0], "")
 
     def test_startup_restore_forwards_saved_native_settings_without_overwriting_project(self):
         saved = {"enabled": True, "path": "photo.png", "grid_enabled": True,

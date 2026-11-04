@@ -623,6 +623,47 @@ test("Button behavior save commits state structure and visual mapping without pe
   assert.equal(draft.placements["placement-one"].textOffsetY, 9);
 });
 
+test("Button Text Apply All saves the text glow and keeps it optional", () => {
+  const committed = documentWithButton();
+  const draft = structuredClone(committed);
+  draft.placements["placement-one"].textGlow = "always";
+  const scope = { entries: [{ buttonId: "one", placementId: "placement-one" }] };
+
+  const saved = buildButtonTextScopedDocument(committed, draft, scope);
+  assert.equal(saved.placements["placement-one"].textGlow, "always");
+  assert.equal(validateButtonStateDocument(saved).valid, true);
+
+  const rebased = structuredClone(committed);
+  applyButtonTextSavedScope(rebased, saved, scope);
+  assert.equal(rebased.placements["placement-one"].textGlow, "always");
+
+  const unchanged = buildButtonTextScopedDocument(committed, structuredClone(committed), scope);
+  assert.equal("textGlow" in unchanged.placements["placement-one"], false);
+  assert.equal("textGlowCurve" in unchanged.placements["placement-one"], false);
+
+  const curve = [{ x: 0, y: 1, mode: "corner" }, { x: 0.6, y: 0.5, mode: "auto" }, { x: 1, y: 0, mode: "auto" }];
+  draft.placements["placement-one"].textGlowCurve = curve;
+  const savedCurve = buildButtonTextScopedDocument(committed, draft, scope);
+  assert.deepEqual(savedCurve.placements["placement-one"].textGlowCurve, curve);
+  assert.equal(validateButtonStateDocument(savedCurve).valid, true);
+  const rebasedCurve = structuredClone(committed);
+  applyButtonTextSavedScope(rebasedCurve, savedCurve, scope);
+  assert.deepEqual(rebasedCurve.placements["placement-one"].textGlowCurve, curve);
+  const invalidCurve = structuredClone(savedCurve);
+  invalidCurve.placements["placement-one"].textGlowCurve = [{ x: 0, y: 1, mode: "auto" }];
+  assert.equal(validateButtonStateDocument(invalidCurve).valid, false);
+  delete draft.placements["placement-one"].textGlowCurve;
+
+  draft.placements["placement-one"].textGlow = null;
+  const cleared = buildButtonTextScopedDocument(saved, draft, scope);
+  assert.equal(cleared.placements["placement-one"].textGlow, null);
+  assert.equal(validateButtonStateDocument(cleared).valid, true);
+
+  const invalid = structuredClone(saved);
+  invalid.placements["placement-one"].textGlow = "sometimes";
+  assert.equal(validateButtonStateDocument(invalid).valid, false);
+});
+
 test("Button Text Apply All saves placement-cycle labels without changing the shared Button label", () => {
   const committed = documentWithButton();
   committed.buttons.one.tooltip = "Original tooltip";

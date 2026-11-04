@@ -1,4 +1,5 @@
 import type {
+  ButtonPlacement,
   ButtonRecord,
   ButtonSkin,
   ButtonStateDocument
@@ -28,6 +29,14 @@ export interface ButtonTextSaveScope {
     buttonId: string;
     placementId: string;
   }[];
+}
+
+/** Optional, so a placement that never used them keeps no keys in the saved document. */
+function placementTextGlow(placement: ButtonPlacement): Pick<ButtonPlacement, "textGlow" | "textGlowCurve"> {
+  return {
+    ...(placement.textGlow === undefined ? {} : { textGlow: placement.textGlow }),
+    ...(placement.textGlowCurve === undefined ? {} : { textGlowCurve: structuredClone(placement.textGlowCurve) })
+  };
 }
 
 function copyNewRecords<T>(
@@ -162,6 +171,7 @@ export function buildButtonPlacementScopedDocument(
           textSizeOverride: draftPlacement.textSizeOverride,
           textOffsetX: draftPlacement.textOffsetX,
           textOffsetY: draftPlacement.textOffsetY,
+          ...placementTextGlow(draftPlacement),
           allowLabelResize: draftPlacement.allowLabelResize,
           matchHitboxToSkin: draftPlacement.matchHitboxToSkin,
           allowStretching: draftPlacement.allowStretching,
@@ -297,6 +307,7 @@ export function applyButtonPlacementSavedScope(
           textSizeOverride: savedPlacement.textSizeOverride,
           textOffsetX: savedPlacement.textOffsetX,
           textOffsetY: savedPlacement.textOffsetY,
+          ...placementTextGlow(savedPlacement),
           allowLabelResize: savedPlacement.allowLabelResize,
           matchHitboxToSkin: savedPlacement.matchHitboxToSkin,
           allowStretching: savedPlacement.allowStretching,
@@ -492,6 +503,7 @@ export function buildButtonTextScopedDocument(
       textSizeOverride: draftPlacement.textSizeOverride,
       textOffsetX: draftPlacement.textOffsetX,
       textOffsetY: draftPlacement.textOffsetY,
+      ...placementTextGlow(draftPlacement),
       activationCycle: committedPlacement.activationCycle
         ? {
             ...structuredClone(committedPlacement.activationCycle),
@@ -578,6 +590,7 @@ export function applyButtonTextSavedScope(
       targetPlacement.textSizeOverride = savedPlacement.textSizeOverride;
       targetPlacement.textOffsetX = savedPlacement.textOffsetX;
       targetPlacement.textOffsetY = savedPlacement.textOffsetY;
+      Object.assign(targetPlacement, placementTextGlow(savedPlacement));
       const savedCycleStatesById = new Map(
         (savedPlacement.activationCycle?.states ?? []).map((state) => [state.id, state])
       );

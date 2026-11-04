@@ -26,6 +26,7 @@ import { deriveRegularPopoutSelectionKey } from "./sourceIdentity.js";
 import { resolveButtonWindowEnvelope } from "../windows/buttonWindowGeometry.js";
 import { normalizeProgramPopoutColorOverride, normalizeProgramPopoutThemeLock } from "../../theme/programPopoutTheme.js";
 import { BUTTON_PRESENTATION_OVERRIDE_KEYS } from "./buttonPresentation.js";
+import { isButtonTextGlowCurve, isButtonTextGlowSetting } from "../skins/buttonTextGlow.js";
 
 export const BUTTON_SETTINGS_FILE_FORMAT = "flowcell-button-settings/v1" as const;
 export const BUTTON_SETTINGS_FILE_EXTENSION = ".json" as const;
@@ -370,8 +371,14 @@ function validatePlacement(
     issues.push(`${path}: Expected a placement settings object.`);
     return;
   }
-  const { presentationOverride, ...legacyPlacement } = value;
+  const { presentationOverride, textGlow, textGlowCurve, ...legacyPlacement } = value;
   hasExactKeys(legacyPlacement, BUTTON_SETTINGS_PLACEMENT_KEYS, path, issues);
+  if (!isButtonTextGlowSetting(textGlow)) {
+    issues.push(`${path}.textGlow: Unsupported text glow.`);
+  }
+  if (!isButtonTextGlowCurve(textGlowCurve)) {
+    issues.push(`${path}.textGlowCurve: Unsupported text glow curve.`);
+  }
   if (presentationOverride !== undefined && (!isObject(presentationOverride) || Object.keys(presentationOverride).some((key) =>
     !(BUTTON_PRESENTATION_OVERRIDE_KEYS as readonly string[]).includes(key)))) {
     issues.push(`${path}.presentationOverride: Expected occurrence presentation fields only.`);

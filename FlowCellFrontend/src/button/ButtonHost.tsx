@@ -1263,6 +1263,8 @@ export function ButtonHost({
         textAlignment={placement.textAlignment}
         textOffsetX={placement.textOffsetX}
         textOffsetY={placement.textOffsetY}
+        textGlow={placement.textGlow}
+        textGlowCurve={placement.textGlowCurve}
         minimumFontSize={placement.minimumFontSize}
         textSizeOverride={placement.textSizeOverride ?? undefined}
         hovered={resolvedAppearance.flags.hovered}

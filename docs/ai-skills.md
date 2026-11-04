@@ -253,7 +253,21 @@ uses a wrapping multiline editor that grows to show every selectable character w
 internal clipping or scrolling. Fit mode, horizontal `Use skin`, `Left`,
 `Center`, or `Right` alignment, starting text size, minimum shrink size, and manual
 pixel X/Y movement are independent focused-placement settings. They update the Button
-Text preview immediately. Host-owned X/Y movement uses flow-preserving relative
+Text preview immediately. The Glow Light section is the same kind of placement-owned
+setting: its checkbox and `On hover`, `When active`, or `Always` choice write the optional
+`placement.textGlow`, never skin source. Glow Light is a trail and nothing else: there is no
+halo, and it uses the exact painted color of the text or symbol, with no lightening for dark
+colors. The light covers the object and everything above it, in a host layer outside the
+skin's clip so it can rise above the Button, and above the object's outer top contour its
+strength is measured along its own height, so the fade follows that outline: an arrow fades on
+an angle and a skull on a curve, never along a level line. The section's curve editor is a port
+of the Theme Editor's (X runs from the object's top edge to the trail's end, Y is strength,
+default full to nothing) and writes the optional `placement.textGlowCurve`; the light over the
+object holds the Start strength, and a curve at zero removes the layer. Keep the SVG filter a
+plain chain, because a result used twice per stage doubles paint cost and froze 175% displays.
+`When active` also covers pressed, held, and play. The fade runs on the skin host, never in the
+skin subtree the visual latch inspects, and an unlit glow adds no measured overflow. The Button
+Text preview always shows an enabled glow lit and renders with the placement's resolved theme override, so it matches the real Button's colors. See [buttonTextGlow.ts](../FlowCellFrontend/src/button/skins/buttonTextGlow.ts). Host-owned X/Y movement uses flow-preserving relative
 positioning for static HTML labels, composes with the authored positioning model for
 already-positioned HTML labels, and converts screen-pixel vectors for SVG label lines, so it remains
 effective if authored states switch the core among inline, block, flex, or grid layout.
@@ -401,6 +415,7 @@ New skins, conversions, and complete replacements must include every canonical h
 - Keep decorative wrappers and layers pointer-inert. They may be inside or outside `data-core` when literal source stacking requires it.
 - A complete alternate visual for a logical Button state is a Skin Author-produced composite paste block inside the same stable `data-core`. Reveal faces through canonical state declarations and CSS custom properties. Never create another functional Button, another `data-core`, a per-state hit target, or a runtime skin swap for an alternate appearance; the optional single `data-hit-shape` stays stable across states.
 - No scripts, event-handler attributes, network access, navigation, backend calls, or state mutation.
+- CSS `url()` accepts only fragment references (`url(#id)`) and images embedded as base64 `data:image/png`, `jpeg`, `webp`, or `avif`. Never a file path, web address, or SVG data URL. A rendered skin carries its pictures inside itself, for example as one sprite strip stepped through `background-position`, and the whole skin file stays under 2 MiB.
 - No React skin registry in version one.
 - Put `data-anim="token"` on real animated elements; do not add unconditional animation in structure.
 

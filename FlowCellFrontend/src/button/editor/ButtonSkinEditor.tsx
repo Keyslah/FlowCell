@@ -10,8 +10,10 @@ import {
   type ButtonSkin,
   type ButtonSkinSectionName,
   type ButtonSkinVisualState,
+  type ButtonThemeOverride,
   type ButtonTextAlignment,
-  type ButtonTextFitMode
+  type ButtonTextFitMode,
+  type ButtonTextGlowMode
 } from "../types";
 import {
   BUTTON_SKIN_SECTION_ORDER,
@@ -24,6 +26,7 @@ import {
 } from "../skins/skinPasteParser";
 import { compileButtonSkin, diagnosticsBySkinSection } from "../skins/skinCompiler";
 import { ButtonSkinRenderer } from "../skins/ButtonSkinRenderer";
+import { BUTTON_TEXT_GLOW_DEFAULT_CURVE, buttonSkinHasTextGlowTarget } from "../skins/buttonTextGlow";
 import {
   buttonSkinColorWithPreservedAlpha,
   buttonSkinOpaqueColor,
@@ -50,10 +53,12 @@ import {
   type ButtonSizeAssignment
 } from "./buttonSizeAssignments";
 import { type ButtonSkinFileResult } from "./buttonSkinFiles";
+import { ButtonGradientCurveEditor } from "./ButtonGradientCurveEditor";
 
 export interface ButtonSkinEditorProps {
   skin: ButtonSkin | null;
   skinContextKey: string;
+  themeOverride?: ButtonThemeOverride;
   busy: boolean;
   placement: ButtonPlacement | null;
   surfaceButtonCount: number;
@@ -79,6 +84,8 @@ export interface ButtonSkinEditorProps {
       | "textSizeOverride"
       | "textOffsetX"
       | "textOffsetY"
+      | "textGlow"
+      | "textGlowCurve"
     >>,
     coalesceKey?: string
   ) => void;
@@ -105,6 +112,12 @@ const TEXT_ALIGNMENT_OPTIONS: Array<{ value: ButtonTextAlignment; label: string 
   { value: "left", label: "Left" },
   { value: "center", label: "Center" },
   { value: "right", label: "Right" }
+];
+
+const TEXT_GLOW_OPTIONS: Array<{ value: ButtonTextGlowMode; label: string }> = [
+  { value: "hover", label: "On hover" },
+  { value: "active", label: "When active" },
+  { value: "always", label: "Always" }
 ];
 
 const ADVANCE_TRIGGER_LABELS: Record<ButtonCycleAdvanceTrigger, string> = {
@@ -349,6 +362,7 @@ export function ButtonSkinEditor({
   onButtonTooltipChange,
   onActivationCycleChange,
   onApplyAllButtonText,
+  themeOverride,
   onSizingModePreviewChange,
   onAssignSize,
   onAssignSizeToPanel,
@@ -553,7 +567,8 @@ export function ButtonSkinEditor({
   const previewHeight = workingPreviewUsesNaturalSize ? undefined : activeSize.height;
   const previewConstrained = !workingPreviewUsesNaturalSize;
   const workingSkinHasText = Boolean(compileResult?.ok && compileResult.compiled.hasLabelToken);
-  const workingTextProfile = workingProfileColors.find((color) => color.role === "text") ?? null;
+  const workingSkinCanGlow = buttonSkinHasTextGlowTarget(workingSkin.structure);
+  const workingTextProfile =workingProfileColors.find((color) => color.role === "text") ?? null;
   const workingMaterialProfile = workingProfileColors.filter((color) => color.role !== "text");
   const visibleTextColor = workingTextProfile?.color ?? authoredTextColor ?? detectedTextColor ?? "#FFFFFF";
   const explicitWorkingSkinHighlightOnHover = readButtonSkinHighlightOnHover(workingSkin);
@@ -918,9 +933,59 @@ export function ButtonSkinEditor({
             />
           </label>
         </div>
+        <fieldset
+          className="button-text-glow"
+          title={workingSkinCanGlow
+            ? "Send a trail of light up from the Button's text or symbol, in its exact color."
+            : "This skin has no text or symbol to light."}
+        >
+          <legend>Glow Light</legend>
+          <label
+            className="button-hover-highlight-toggle"
+            title="Turn the glow light on for this Button."
+          >
+            <input
+              type="checkbox"
+              checked={Boolean(placement.textGlow)}
+              disabled={busy || !workingSkinCanGlow}
+              onChange={(event) => onPlacementTextChange(
+                { textGlow: event.currentTarget.checked ? "hover" : null },
+                `text-glow:${placement.id}`
+              )}
+            />
+            <span>Glow text or symbol</span>
+          </label>
+          <label title="Choose when the glow lights up. When active also covers while the Button is pressed or latched on.">
+            <span>Glow</span>
+            <select
+              value={placement.textGlow ?? "hover"}
+              disabled={busy || !workingSkinCanGlow || !placement.textGlow}
+              onChange={(event) => onPlacementTextChange(
+                { textGlow: event.currentTarget.value as ButtonTextGlowMode },
+                `text-glow:${placement.id}`
+              )}
+            >
+              {TEXT_GLOW_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          {placement.textGlow ? (
+            <ButtonGradientCurveEditor
+              title="Glow Light trail"
+              curve={placement.textGlowCurve ?? BUTTON_TEXT_GLOW_DEFAULT_CURVE}
+              color={themeOverride?.colors.text ?? visibleTextColor}
+              disabled={busy || !workingSkinCanGlow}
+              onChange={(curve) => onPlacementTextChange(
+                { textGlowCurve: curve },
+                `text-glow-curve:${placement.id}`
+              )}
+            />
+          ) : null}
+        </fieldset>
         <div
           className="button-text-bench-preview"
-          title="Live preview of every Button Text change, including the selected cycle state when configured."
+          title="Live preview of every Button Text change, including the selected cycle state when configured. An enabled glow stays lit here so its look can be judged whichever condition it is set to."
         >
           <ButtonSkinRenderer
             skin={workingSkin}
@@ -936,6 +1001,9 @@ export function ButtonSkinEditor({
             textSizeOverride={placement.textSizeOverride ?? undefined}
             textOffsetX={placement.textOffsetX}
             textOffsetY={placement.textOffsetY}
+            themeOverride={themeOverride}
+            textGlow={placement.textGlow ? "always" : null}
+            textGlowCurve={placement.textGlowCurve}
             hovered={selectedVisualFlags.hovered}
             pressed={selectedVisualFlags.pressed}
             held={selectedVisualFlags.held}
@@ -964,7 +1032,7 @@ export function ButtonSkinEditor({
           className="button-text-apply-all"
           title={stateTextBlocked
             ? "Save Settings first because the cycle state structure changed. Button Text stays in preview until then."
-            : "Apply every pending Button Text change across the editor: base or cycle labels, Button tooltips, and each placement's fit, alignment, size, and X/Y position."}
+            : "Apply every pending Button Text change across the editor: base or cycle labels, Button tooltips, and each placement's fit, alignment, size, X/Y position, and glow."}
           disabled={busy || stateTextBlocked}
           onClick={onApplyAllButtonText}
         >
@@ -1376,6 +1444,8 @@ export function ButtonSkinEditor({
             textSizeOverride={placement.textSizeOverride ?? undefined}
             textOffsetX={placement.textOffsetX}
             textOffsetY={placement.textOffsetY}
+            textGlow={placement.textGlow}
+            textGlowCurve={placement.textGlowCurve}
             hovered={selectedVisualFlags.hovered}
             pressed={selectedVisualFlags.pressed}
             held={selectedVisualFlags.held}
@@ -1447,6 +1517,8 @@ export function ButtonSkinEditor({
           textSizeOverride={placement.textSizeOverride ?? undefined}
           textOffsetX={placement.textOffsetX}
           textOffsetY={placement.textOffsetY}
+          textGlow={placement.textGlow}
+          textGlowCurve={placement.textGlowCurve}
           hovered={previewVisualFlags.hovered}
           pressed={previewVisualFlags.pressed}
           held={previewVisualFlags.held}

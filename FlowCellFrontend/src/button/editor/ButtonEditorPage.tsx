@@ -126,6 +126,7 @@ import {
 } from "./ButtonWorkspace";
 import { ButtonAnimationPickerPage } from "./ButtonAnimationPickerPage";
 import { ButtonSkinEditor } from "./ButtonSkinEditor";
+import { resolveProgramPopoutThemeOverride } from "../../theme/programPopoutTheme";
 import {
   createButtonSkinFromFile,
   type ButtonSkinFileResult
@@ -3150,6 +3151,7 @@ function ButtonEditorContent({
         <ButtonSkinEditor
           skin={selectedSkin}
           skinContextKey={selectedPlacement?.id ?? ""}
+          themeOverride={selectedPlacement ? resolveProgramPopoutThemeOverride(store.draft, selectedPlacement.id) : undefined}
           busy={busy}
           placement={selectedPlacement}
           surfaceButtonCount={selectedSurfaceButtonCount}

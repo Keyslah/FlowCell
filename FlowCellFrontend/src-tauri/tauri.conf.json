@@ -21,6 +21,7 @@
         "fullscreen": false,
         "decorations": false,
         "transparent": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,msWebView2EnableMinimalWindow --autoplay-policy=no-user-gesture-required",
         "visible": true
       }
     ],

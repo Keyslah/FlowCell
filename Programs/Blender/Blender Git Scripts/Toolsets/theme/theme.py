@@ -4207,6 +4207,39 @@ def _read_project_startup_state(context):
     )
 
 
+def _migrated_place_picture_path(candidate: str) -> str:
+    # The Blender owner snapshot lives outside FlowCell's theme library migration.
+    path = Path(candidate.removeprefix("\\\\?\\"))
+    if not path.is_absolute() or ".." in path.parts:
+        return ""
+    legacy_root = next((parent for parent in path.parents if parent.name.lower() == "blender_themes"), None)
+    if legacy_root is None:
+        return ""
+
+    themes_root = legacy_root.parent / "themes"
+    try:
+        journal = json.loads((themes_root / ".migration-v1.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(journal, dict) or journal.get("version") != 1:
+        return ""
+    entries = journal.get("entries")
+    if not isinstance(entries, list):
+        return ""
+
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("complete") is not True:
+            continue
+        source = Path(str(entry.get("source") or "").removeprefix("\\\\?\\"))
+        if source.parent != legacy_root or not path.is_relative_to(source):
+            continue
+        destination = Path(str(entry.get("destination") or "").removeprefix("\\\\?\\"))
+        if destination.parent != themes_root / "Blender":
+            continue
+        return str(destination / path.relative_to(source))
+    return ""
+
+
 def _resolve_project_place_picture_path(place_picture_state, prefer_absolute=False):
     if not isinstance(place_picture_state, dict) or not bool(place_picture_state.get("enabled")):
         return "", ""
@@ -4228,6 +4261,12 @@ def _resolve_project_place_picture_path(place_picture_state, prefer_absolute=Fal
             return _resolve_optional_image_path(candidate), ""
         except Exception as exc:
             last_error = str(exc)
+        migrated_path = _migrated_place_picture_path(candidate)
+        if migrated_path:
+            try:
+                return _resolve_optional_image_path(migrated_path), ""
+            except Exception as exc:
+                last_error = str(exc)
 
     return "", last_error or "No saved Place Picture path was available."
 

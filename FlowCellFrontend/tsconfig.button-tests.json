@@ -44,6 +44,7 @@
     "src/button/editor/buttonSkinFiles.ts",
     "src/button/editor/buttonActivationStateStructure.ts",
     "src/button/editor/buttonEditorSaveScopes.ts",
+    "src/button/editor/buttonGradientCurve.ts",
     "src/button/editor/buttonSizeAssignments.ts",
     "src/button/editor/buttonFanDisclosure.ts",
     "src/button/editor/buttonMeasurementReconciliation.ts",

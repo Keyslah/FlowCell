@@ -86,6 +86,9 @@ const FORBIDDEN_TAGS = new Set([
   "track"
 ]);
 
+// A raster image may travel inside the skin itself; a skin never reaches a file or the network.
+const EMBEDDED_IMAGE_URL = /^data:image\/(?:png|jpeg|webp|avif);base64,[a-z0-9+/]+={0,2}$/i;
+
 const URL_ATTRIBUTES = new Set([
   "href",
   "xlink:href",
@@ -270,8 +273,8 @@ function unsafeCssMessage(property: string, value: string, inline: boolean): str
   }
   if (/url\s*\(/i.test(value)) {
     const urls = [...value.matchAll(/url\s*\(\s*(['"]?)(.*?)\1\s*\)/gi)];
-    if (urls.length === 0 || urls.some((match) => !/^#[a-z_][a-z0-9_.:-]*$/i.test(match[2]))) {
-      return "Only fragment-local url(#id) references are allowed.";
+    if (urls.length === 0 || urls.some((match) => !/^#[a-z_][a-z0-9_.:-]*$/i.test(match[2]) && !EMBEDDED_IMAGE_URL.test(match[2]))) {
+      return "Only fragment-local url(#id) references and embedded base64 PNG, JPEG, WebP, or AVIF images are allowed.";
     }
   }
   if (inline && (property === "animation" || property.startsWith("animation-"))) {

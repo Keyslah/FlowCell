@@ -708,6 +708,47 @@ test("version 2 schema round-trips strictly with host overrides and participatio
   assert.equal(isFlowCellThemeFile(behaviorLeak), false);
 });
 
+test("text glow persists through themes while older theme files leave it alone", () => {
+  const document = fixture();
+  document.placements["placement-button-a"].textGlow = "always";
+  const theme = JSON.parse(JSON.stringify(captureThemeFile({ document, target: TARGET, savedAt: SAVED_AT })));
+  assert.equal(isFlowCellThemeFile(theme), true);
+  const appearance = (placementId) => theme.buttons.find((button) => button.placementId === placementId);
+  assert.equal(appearance("placement-button-a").textGlow, "always");
+  assert.equal(appearance("placement-button-b").textGlow, null);
+
+  const restored = fixture();
+  restored.placements["placement-button-b"].textGlow = "hover";
+  const applied = applyThemeFile(restored, theme).document;
+  assert.equal(applied.placements["placement-button-a"].textGlow, "always");
+  assert.equal(applied.placements["placement-button-b"].textGlow, null);
+
+  const older = structuredClone(theme);
+  older.buttons.forEach((button) => delete button.textGlow);
+  assert.equal(isFlowCellThemeFile(older), true);
+  const kept = fixture();
+  kept.placements["placement-button-b"].textGlow = "active";
+  assert.equal(applyThemeFile(kept, older).document.placements["placement-button-b"].textGlow, "active");
+
+  const invalid = structuredClone(theme);
+  invalid.buttons[0].textGlow = "sometimes";
+  assert.equal(isFlowCellThemeFile(invalid), false);
+
+  const curve = [{ x: 0, y: 1, mode: "auto" }, { x: 1, y: 0.5, mode: "auto" }];
+  const curved = fixture();
+  curved.placements["placement-button-a"].textGlowCurve = curve;
+  const curvedTheme = JSON.parse(JSON.stringify(captureThemeFile({ document: curved, target: TARGET, savedAt: SAVED_AT })));
+  assert.equal(isFlowCellThemeFile(curvedTheme), true);
+  const reopened = fixture();
+  reopened.placements["placement-button-b"].textGlowCurve = curve;
+  const reapplied = applyThemeFile(reopened, curvedTheme).document;
+  assert.deepEqual(reapplied.placements["placement-button-a"].textGlowCurve, curve);
+  assert.equal(reapplied.placements["placement-button-b"].textGlowCurve, null);
+  const invalidCurve = structuredClone(curvedTheme);
+  invalidCurve.buttons[0].textGlowCurve = "fade";
+  assert.equal(isFlowCellThemeFile(invalidCurve), false);
+});
+
 test("highlight and glow amounts are backward-compatible, persist through themes, and survive skin assignment", () => {
   const document = fixture();
   const legacyShapeTheme = captured(document);

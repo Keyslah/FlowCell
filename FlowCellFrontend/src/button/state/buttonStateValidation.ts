@@ -20,6 +20,7 @@ import {
 } from "./sourceIdentity.js";
 import { BUTTON_SKIN_SECTION_ORDER } from "../skins/buttonSkinFormat.js";
 import { validateButtonSkin } from "../skins/skinValidator.js";
+import { isButtonTextGlowCurve, isButtonTextGlowSetting } from "../skins/buttonTextGlow.js";
 import { DEFAULT_BUTTON_SKIN, LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE } from "../skins/defaultButtonSkin.js";
 import {
   normalizeButtonGlowAmount,
@@ -934,6 +935,12 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     }
     if (!isFiniteNumber(placement.textOffsetY)) {
       addIssue(issues, `${path}.textOffsetY`, "Vertical text offset must be finite.");
+    }
+    if (!isButtonTextGlowSetting(placement.textGlow)) {
+      addIssue(issues, `${path}.textGlow`, "Placement text glow is invalid.");
+    }
+    if (!isButtonTextGlowCurve(placement.textGlowCurve)) {
+      addIssue(issues, `${path}.textGlowCurve`, "Placement text glow curve is invalid.");
     }
     if (!isFiniteNumber(placement.minimumFontSize) || placement.minimumFontSize <= 0) {
       addIssue(issues, `${path}.minimumFontSize`, "Minimum font size must be finite and positive.");

@@ -132,6 +132,31 @@ import {
   applyButtonLabelTextOffset
 } from "./.compiled-button-system/button/skins/buttonTextOffset.js";
 import {
+  BUTTON_CURVE_PRESETS,
+  buttonCurveFade,
+  buttonCurveFlipped,
+  buttonCurveInsertionIndex,
+  buttonCurveMirrored,
+  buttonCurvePathData,
+  buttonCurveWithInsertedPoint,
+  buttonCurveWithMovedHandle,
+  buttonCurveWithMovedPoint,
+  buttonCurveWithoutPoint,
+  buttonCurveWithPointMode
+} from "./.compiled-button-system/button/editor/buttonGradientCurve.js";
+import {
+  buttonSkinHasTextGlowTarget,
+  BUTTON_TEXT_GLOW_DEFAULT_CURVE,
+  buttonTextGlowCurveHasStrength,
+  buttonTextGlowHostStyle,
+  buttonTextGlowStrengthTable,
+  buttonTextGlowTrailPrimitives,
+  isButtonTextGlowCurve,
+  isButtonTextGlowSetting,
+  resolveButtonTextGlowLit,
+  visibleButtonPaint
+} from "./.compiled-button-system/button/skins/buttonTextGlow.js";
+import {
   alignButtonPlacementSelectionToTopLeftButton,
   buttonSpacingPixelsFromMillimeters,
   buttonRectsOverlap,
@@ -2081,6 +2106,23 @@ test("semantic skin validation enforces data-core, label ownership, and safe ani
   assert.equal(validateButtonSkin({ ...valid, structure: "<div data-core>{{label}}{{label}}</div>" }).valid, false);
   assert.equal(validateButtonSkin({ ...valid, structure: "<div data-core></div>{{label}}" }).valid, false);
   assert.equal(validateButtonSkin({ ...valid, play: "--anim-pulse: pulse 1s infinite;" }).valid, false);
+});
+
+test("skins may embed raster images but never reach a file or the network", () => {
+  const withImage = (url) => ({
+    ...createEmptyButtonSkinSections(),
+    structure: `<div data-core style="width:72px;height:72px"><span style="position:absolute;inset:0;background-image:url(${url})"></span><span style="background:url('${url}')"></span></div>`,
+    base: `--sheet: url("${url}");`
+  });
+  for (const url of ["data:image/webp;base64,UklGRhIAAABXRUJQ", "data:image/png;base64,iVBORw0KGgo=", "data:image/jpeg;base64,/9j/4AAQ", "data:image/avif;base64,AAAAIGZ0eXA="]) {
+    assert.equal(validateButtonSkin(withImage(url)).valid, true, url);
+  }
+  for (const url of ["https://example.com/a.png", "file:///C:/a.png", "data:image/svg+xml;base64,PHN2Zz4=", "data:text/html;base64,PGI+", "data:image/png,raw", "C:/a.png", "data:image/png;base64,AA)A"]) {
+    const result = validateButtonSkin(withImage(url));
+    assert.equal(result.valid, false, url);
+  }
+  const compiled = compileButtonSkin({ id: "skin-embedded-image", name: "Embedded Image", ...withImage("data:image/webp;base64,UklGRhIAAABXRUJQ"), metadata: {}, compileCache: null });
+  assert.equal(compiled.ok, true);
 });
 
 test("textless animation skins compile without synthesizing a visible label", () => {
@@ -8567,4 +8609,154 @@ test("idle highlight and glow use independent amounts and never stack on interac
     assert.equal(buttonHighlightFilter({ ...idle, [state]: true }),
       buttonHighlightFilter({ ...idle, idleHighlighted: false, [state]: true }));
   }
+});
+
+test("text glow reads the exact painted color, including pure black", () => {
+  for (const paint of ["rgb(0, 0, 0)", "rgb(255, 32, 0)", "rgba(0, 0, 0, 0.5)", "color(srgb 0 0 0)"]) {
+    assert.equal(visibleButtonPaint(paint), paint);
+  }
+  for (const clear of ["rgba(0, 0, 0, 0)", "color(srgb 1 1 1 / 0)", "transparent", "none", "url(#paint)", undefined]) {
+    assert.equal(visibleButtonPaint(clear), null);
+  }
+});
+
+test("text glow lights only under its chosen condition and never while disabled", () => {
+  const idle = { hovered: false, active: false, pressed: false, held: false, play: false, disabled: false };
+  assert.equal(resolveButtonTextGlowLit(null, { ...idle, hovered: true }), false);
+  assert.equal(resolveButtonTextGlowLit("hover", idle), false);
+  assert.equal(resolveButtonTextGlowLit("hover", { ...idle, hovered: true }), true);
+  assert.equal(resolveButtonTextGlowLit("hover", { ...idle, active: true }), false);
+  assert.equal(resolveButtonTextGlowLit("active", { ...idle, hovered: true }), false);
+  for (const state of ["active", "pressed", "held", "play"]) {
+    assert.equal(resolveButtonTextGlowLit("active", { ...idle, [state]: true }), true);
+  }
+  assert.equal(resolveButtonTextGlowLit("always", idle), true);
+  assert.equal(resolveButtonTextGlowLit("always", { ...idle, disabled: true }), false);
+  assert.deepEqual(buttonTextGlowHostStyle(true)["--flowcell-text-glow-amount"], 1);
+  assert.deepEqual(buttonTextGlowHostStyle(false)["--flowcell-text-glow-amount"], 0);
+});
+
+test("text glow trail filter is a straight chain whose cost cannot grow with display scale", () => {
+  const markup = buttonTextGlowTrailPrimitives({
+    sweep: 40, softness: 0.6, curve: BUTTON_TEXT_GLOW_DEFAULT_CURVE
+  });
+  const primitives = markup.match(/<fe(?!Func|MergeNode)[A-Za-z]+/g);
+  assert.ok(primitives.length <= 12);
+  assert.doesNotMatch(markup, /feMerge|SourceGraphic/);
+  // A result consumed twice doubles the work at each stage, which froze 175% displays.
+  const results = Array.from(markup.matchAll(/result="([a-z]+)"/g), (match) => match[1]);
+  const uses = Array.from(markup.matchAll(/\bin2?="([a-zA-Z]+)"/g), (match) => match[1]);
+  for (const result of results) {
+    assert.equal(uses.filter((use) => use === result).length, result === "hard" ? 2 : 1, result);
+  }
+  // Lowering first keeps the top edge inside the filter region, and the light is limited
+  // to the object and what is above it, so nothing can paint below the object.
+  assert.ok(markup.indexOf("feOffset") < markup.indexOf("feMorphology"));
+  assert.match(markup, /in="strength" in2="swept" operator="in"/);
+  const reach = Number(markup.match(/dy="([\d.]+)"/)[1]);
+  assert.ok(reach * 2 >= 40 * 3);
+});
+
+test("text glow strength follows the curve from the top edge to the trail's end", () => {
+  const strength = (curve) => buttonTextGlowStrengthTable(curve).split(" ").map(Number);
+  const fade = strength(BUTTON_TEXT_GLOW_DEFAULT_CURVE);
+  assert.equal(fade.length, 256);
+  assert.equal(fade[0], 0);
+  // Everything over the object holds the curve's Start strength.
+  assert.equal(fade[255], 1);
+  assert.equal(fade[128], 1);
+  assert.ok(fade[126] > 0.97);
+  const lit = fade.map((value, level) => [level, value]).filter(([, value]) => value > 0);
+  assert.ok(lit.at(0)[1] < 0.03);
+  lit.forEach(([level, value], index) => {
+    if (index > 0) assert.ok(value >= lit[index - 1][1]);
+  });
+  const full = strength([{ x: 0, y: 1, mode: "auto" }, { x: 1, y: 1, mode: "auto" }]);
+  assert.equal(full[255], 1);
+  assert.equal(full[50], 1);
+  assert.equal(full[0], 0);
+  const peak = strength([{ x: 0, y: 0, mode: "corner" }, { x: 0.5, y: 1, mode: "corner" }, { x: 1, y: 0, mode: "corner" }]);
+  assert.equal(peak[255], 0);
+  assert.ok(peak[126] < 0.05);
+  assert.ok(Math.max(...peak) > 0.95);
+});
+
+test("text glow is nothing at all when the curve is zero", () => {
+  const flat = (y) => [{ x: 0, y, mode: "auto" }, { x: 1, y, mode: "auto" }];
+  assert.ok(buttonTextGlowStrengthTable(flat(0)).split(" ").every((value) => Number(value) === 0));
+  assert.equal(buttonTextGlowCurveHasStrength(flat(0)), false);
+  assert.equal(buttonTextGlowCurveHasStrength(BUTTON_TEXT_GLOW_DEFAULT_CURVE), true);
+  // Two zero points whose handles lift the curve between them still paint a trail.
+  assert.equal(buttonTextGlowCurveHasStrength([
+    { x: 0, y: 0, mode: "free", inX: 0, inY: 0, outX: 0.3, outY: 0.8 },
+    { x: 1, y: 0, mode: "free", inX: -0.3, inY: 0.8, outX: 0, outY: 0 }
+  ]), true);
+  // Glow Light is the trail alone: nothing else may paint around the text or symbol.
+  const glow = readFileSync(join(import.meta.dirname, "..", "src", "button", "skins", "buttonTextGlow.ts"), "utf8");
+  assert.doesNotMatch(glow, /drop-shadow|text-shadow|box-shadow|halo/i);
+});
+
+test("text glow setting and target rules", () => {
+  for (const value of [undefined, null, "hover", "active", "always"]) {
+    assert.equal(isButtonTextGlowSetting(value), true);
+  }
+  for (const value of ["", "sometimes", true, 1, {}]) {
+    assert.equal(isButtonTextGlowSetting(value), false);
+  }
+  assert.equal(isButtonTextGlowCurve(undefined), true);
+  assert.equal(isButtonTextGlowCurve(null), true);
+  assert.equal(isButtonTextGlowCurve(BUTTON_TEXT_GLOW_DEFAULT_CURVE), true);
+  assert.equal(isButtonTextGlowCurve([{ x: 0, y: 1, mode: "auto" }]), false);
+  assert.equal(isButtonTextGlowCurve([{ x: 0.2, y: 1, mode: "auto" }, { x: 1, y: 0, mode: "auto" }]), false);
+  assert.equal(isButtonTextGlowCurve([{ x: 0, y: 2, mode: "auto" }, { x: 1, y: 0, mode: "auto" }]), false);
+  assert.equal(buttonSkinHasTextGlowTarget("<div data-core>{{label}}</div>"), true);
+  assert.equal(buttonSkinHasTextGlowTarget('<div data-core><svg viewBox="0 0 1 1"></svg></div>'), true);
+  assert.equal(buttonSkinHasTextGlowTarget('<div data-core><img src="x.png"></div>'), true);
+  assert.equal(buttonSkinHasTextGlowTarget("<div data-core></div>"), false);
+});
+
+test("gradient curve editing matches the Theme Editor's rules", () => {
+  const fade = buttonCurveFade();
+  assert.deepEqual(buttonCurveFlipped(fade).map((point) => point.y), [0, 1]);
+  assert.deepEqual(buttonCurveMirrored(fade).map((point) => point.y), [0, 1]);
+
+  const index = buttonCurveInsertionIndex(fade, { x: 0.5, y: 0.2 });
+  assert.equal(index, 1);
+  const added = buttonCurveWithInsertedPoint(fade, index, { x: 0.5, y: 0.2 });
+  assert.deepEqual(added[1], { x: 0.5, y: 0.2, mode: "auto" });
+  assert.equal(fade.length, 2);
+  assert.equal(buttonCurveInsertionIndex(added, { x: 0.5005, y: 0.2 }), -1);
+
+  // Start and End stay pinned to the X axis ends but can still change strength.
+  const start = buttonCurveWithMovedPoint(added, 0, { x: 0.3, y: 0.6 });
+  assert.equal(start[0].x, 0);
+  assert.equal(start[0].y, 0.6);
+  // An inner point cannot cross its neighbors, and Shift snaps to 5%.
+  assert.ok(buttonCurveWithMovedPoint(added, 1, { x: 1.5, y: 0.5 })[1].x < 1);
+  assert.deepEqual(buttonCurveWithMovedPoint(added, 1, { x: 0.42, y: 0.33 }, true)[1], { x: 0.4, y: 0.35, mode: "auto" });
+
+  assert.equal(buttonCurveWithoutPoint(added, 0).length, 3);
+  assert.equal(buttonCurveWithoutPoint(added, 2).length, 3);
+  assert.equal(buttonCurveWithoutPoint(added, 1).length, 2);
+
+  // Dragging a Smooth point's handle makes it Bezier and keeps the opposite handle in line.
+  const bent = buttonCurveWithMovedHandle(added, 1, "out", { x: 0.7, y: 0.4 });
+  assert.equal(bent[1].mode, "aligned");
+  assert.ok(Math.abs(bent[1].outY / bent[1].outX - bent[1].inY / bent[1].inX) < 0.01);
+  assert.equal(buttonCurveWithMovedHandle(added, 1, "out", { x: 0.7, y: 0.4 }, true)[1].mode, "free");
+  assert.equal(buttonCurveWithPointMode(bent, 1, "corner")[1].mode, "corner");
+  assert.equal("outX" in buttonCurveWithPointMode(bent, 1, "corner")[1], false);
+  assert.equal(buttonCurveWithPointMode(added, 1, "free")[1].mode, "free");
+
+  for (const preset of BUTTON_CURVE_PRESETS) {
+    assert.equal(isButtonTextGlowCurve(preset.build()), true, preset.label);
+  }
+  for (const preset of BUTTON_CURVE_PRESETS.slice(0, 5)) {
+    const curve = preset.build();
+    assert.equal(curve[0].y, 1, preset.label);
+    assert.equal(curve.at(-1).y, 0, preset.label);
+  }
+  const steps = BUTTON_CURVE_PRESETS.find((preset) => preset.label === "Steps").build();
+  assert.ok(steps.every((point, position) => position === 0 || point.x > steps[position - 1].x));
+  assert.match(buttonCurvePathData(fade, 2), /^M0 0L50 50L100 100$/);
 });

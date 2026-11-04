@@ -74,6 +74,7 @@ For a new skin, a conversion, or a complete replacement, emit every canonical he
 - Put every state-controlled value on a nested face, icon, frame, or decorative child behind a CSS custom property with a sensible fallback.
 - Initialize every resting visual custom property explicitly in `base`. Structure fallbacks are safety defaults, not a substitute for authored Base state.
 - Do not include `<script>`, `<style>`, event-handler attributes, navigation, network access, backend calls, Tauri calls, or state mutation.
+- CSS `url()` accepts only fragment references (`url(#id)`) and images embedded as base64 `data:image/png`, `jpeg`, `webp`, or `avif`. Never use a file path, web address, or SVG data URL. Put a rendered skin's pictures inside it, for example as one sprite strip stepped through `background-position`, and keep the whole skin file under 2 MiB.
 - React skins are not supported.
 
 ### React and styled-components conversion

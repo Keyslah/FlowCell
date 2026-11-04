@@ -20,6 +20,7 @@ export type ButtonRole =
 
 export type ButtonTextFitMode = "shrink" | "stack-whole-words" | "shrink-and-stack";
 export type ButtonTextAlignment = "skin" | "left" | "center" | "right";
+export type ButtonTextGlowMode = "hover" | "active" | "always";
 export type ButtonResizeAnchor = "top-left";
 export type ButtonWindowFitMode = "surface" | "hitbox" | "visual";
 export type ButtonSurfaceKind =
@@ -239,6 +240,10 @@ export interface ButtonPlacement extends ButtonRect {
   textAlignment: ButtonTextAlignment;
   textOffsetX: number;
   textOffsetY: number;
+  /** Optional host-owned light on the rendered text or symbol. Absent or null is off. */
+  textGlow?: ButtonTextGlowMode | null;
+  /** Strength along the glow's trail, start to end. Absent or null fades evenly from full to nothing. */
+  textGlowCurve?: ProgramPopoutGradientCurvePoint[] | null;
   minimumFontSize: number;
   textSizeOverride: number | null;
   allowLabelResize: boolean;

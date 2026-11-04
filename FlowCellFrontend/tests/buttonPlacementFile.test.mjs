@@ -732,6 +732,35 @@ test("Button placement loading rejects identity drift without mutating the draft
   assert.deepEqual(document, before);
 });
 
+test("Button settings carry the optional text glow and reject unknown values", () => {
+  const { document, surface } = validArrangementFixture();
+  const context = { programName: "Blender", panelName: "Utility" };
+  const placementId = surface.placementIds[0];
+  assert.equal(validateButtonSettingsFile(buildButtonSettingsFile(document, surface.id, context)).valid, true);
+
+  document.placements[placementId].textGlow = "active";
+  const settings = buildButtonSettingsFile(document, surface.id, context);
+  assert.equal(validateButtonSettingsFile(settings).valid, true);
+
+  document.placements[placementId].textGlow = null;
+  const loaded = applyButtonSettingsFile(document, surface.id, settings, context);
+  assert.equal(loaded.placements[placementId].textGlow, "active");
+
+  const invalid = structuredClone(settings);
+  invalid.entries.find((entry) => entry.placementId === placementId).placement.textGlow = "sometimes";
+  assert.equal(validateButtonSettingsFile(invalid).valid, false);
+
+  const curve = [{ x: 0, y: 1, mode: "auto" }, { x: 1, y: 0.2, mode: "corner" }];
+  document.placements[placementId].textGlowCurve = curve;
+  const curved = buildButtonSettingsFile(document, surface.id, context);
+  assert.equal(validateButtonSettingsFile(curved).valid, true);
+  document.placements[placementId].textGlowCurve = null;
+  assert.deepEqual(applyButtonSettingsFile(document, surface.id, curved, context).placements[placementId].textGlowCurve, curve);
+  const invalidCurve = structuredClone(curved);
+  invalidCurve.entries.find((entry) => entry.placementId === placementId).placement.textGlowCurve = "fade";
+  assert.equal(validateButtonSettingsFile(invalidCurve).valid, false);
+});
+
 test("Button settings preserve the Star Wars animation when saved and reloaded", () => {
   const { document, surface } = validArrangementFixture();
   surface.kind = "panel";

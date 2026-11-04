@@ -1,6 +1,7 @@
 import { emitTo } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalPosition, LogicalSize } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { webviewBrowserOptions } from "./webviewBrowserOptions";
 import { buildWindowContextUrl } from "./windowContext";
 
 export const FLOW_TOOLTIP_WINDOW_LABEL = "flowcell-tooltip";
@@ -104,7 +105,8 @@ async function getTooltipWindow(initialText: string): Promise<WebviewWindow> {
       shadow: false,
       visible: false,
       focus: false,
-      alwaysOnTop: true
+      alwaysOnTop: true,
+      ...webviewBrowserOptions
     });
 
     await waitForTooltipWindowCreated(window);

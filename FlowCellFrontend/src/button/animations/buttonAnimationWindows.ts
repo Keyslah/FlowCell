@@ -7,6 +7,7 @@ import {
   Window as TauriWindow
 } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { webviewBrowserOptions } from "../../lib/webviewBrowserOptions";
 import {
   buildWindowContextUrl,
   BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
@@ -156,7 +157,8 @@ async function createAnimationWindow(
     visible: false,
     focus: context.mode === "edit",
     alwaysOnTop: true,
-    skipTaskbar: true
+    skipTaskbar: true,
+    ...webviewBrowserOptions
   });
   try {
     await waitForWindowCreated(target);

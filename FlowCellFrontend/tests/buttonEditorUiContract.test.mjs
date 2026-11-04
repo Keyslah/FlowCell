@@ -18,6 +18,32 @@ function readEditorSources() {
     .join("\n");
 }
 
+test("Button Text owns the Glow Light section and its preview shows the lit look", () => {
+  const editor = readEditorFile("ButtonSkinEditor.tsx");
+  assert.match(editor, /<legend>Glow Light<\/legend>/);
+  assert.match(editor, /value: "hover", label: "On hover"/);
+  assert.match(editor, /value: "active", label: "When active"/);
+  assert.match(editor, /value: "always", label: "Always"/);
+  assert.match(editor, /textGlow=\{placement\.textGlow \? "always" : null\}/);
+  assert.match(editor, /themeOverride=\{themeOverride\}/);
+  assert.match(editor, /<ButtonGradientCurveEditor/);
+  assert.match(editor, /textGlowCurve: curve/);
+  assert.doesNotMatch(editor, /halo/i);
+  const curveEditor = readEditorFile("ButtonGradientCurveEditor.tsx");
+  for (const label of ["Smooth", "Corner", "Bezier", "Broken", "Flip", "Mirror", "Reset", "X Position", "Y Strength", "Delete"]) {
+    assert.match(curveEditor, new RegExp(label));
+  }
+  assert.ok(editor.indexOf("<legend>Glow Light</legend>") < editor.indexOf("Button Color</span>"));
+});
+
+test("Text glow fades outside the skin subtree the visual latch inspects", () => {
+  const glow = readFileSync(join(frontendRoot, "src", "button", "skins", "buttonTextGlow.ts"), "utf8");
+  const skinCss = glow.slice(glow.indexOf("const BUTTON_TEXT_GLOW_CSS"), glow.indexOf('].join("\\n");'));
+  assert.ok(skinCss.length > 0);
+  assert.doesNotMatch(skinCss, /transition|animation/);
+  assert.match(glow, /transition: FADE_TRANSITION/);
+});
+
 test("Button Editor opens stay maximized on one monitor without drag-to-restore", () => {
   const windows = readFileSync(
     join(frontendRoot, "src", "button", "windows", "buttonWindows.ts"),

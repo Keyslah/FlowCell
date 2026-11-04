@@ -13,8 +13,10 @@ import type {
   ButtonThemeOverride,
   ButtonTextAlignment,
   ButtonTextFitMode,
+  ButtonTextGlowMode,
   ButtonVisualMeasurement,
-  ButtonVisualState
+  ButtonVisualState,
+  ProgramPopoutGradientCurvePoint
 } from "../types";
 import { compileButtonSkin, type CompiledButtonSkin } from "./skinCompiler";
 import { DEFAULT_BUTTON_SKIN } from "./defaultButtonSkin";
@@ -36,6 +38,16 @@ import {
   resolveButtonVisualSamplingDecision
 } from "./buttonVisualSampling";
 import { applyButtonLabelTextOffset } from "./buttonTextOffset";
+import {
+  BUTTON_SKIN_PAINTED_ELEMENTS,
+  buttonTextGlowHostStyle,
+  mountButtonTextGlow,
+  resolveButtonTextGlowLit,
+  syncButtonTextGlow,
+  unmountButtonTextGlow,
+  updateButtonTextGlowCurve,
+  type ButtonTextGlowLayer
+} from "./buttonTextGlow";
 import {
   applyButtonSkinSurfaceThemeFallback,
   buttonHighlightFilter,
@@ -77,6 +89,8 @@ export interface ButtonSkinRendererProps {
   textAlignment?: ButtonTextAlignment;
   textOffsetX?: number;
   textOffsetY?: number;
+  textGlow?: ButtonTextGlowMode | null;
+  textGlowCurve?: readonly ProgramPopoutGradientCurvePoint[] | null;
   minimumFontSize: number;
   textSizeOverride?: number;
   previewStackWords?: boolean;
@@ -116,6 +130,7 @@ interface MountedSkin {
   core: HTMLElement | SVGElement;
   labelNode: HTMLElement | SVGElement | null;
   textAlignmentRestores: Array<() => void>;
+  textGlow: ButtonTextGlowLayer | null;
 }
 
 interface ButtonVisualRenderSnapshot {
@@ -140,6 +155,7 @@ interface ButtonVisualRenderSnapshot {
   activeHighlightAmount: number;
   hoverGlowAmount: number;
   activeGlowAmount: number;
+  textGlowLit: boolean;
   samplingState: ButtonVisualState;
   transitionSamplingKey: string | number | undefined;
 }
@@ -180,6 +196,7 @@ function buttonVisualSnapshotIntent(
       snapshot.release,
       snapshot.disabled,
       snapshot.error,
+      snapshot.textGlowLit,
       snapshot.idleHighlighted,
       snapshot.idleHighlightColor,
       snapshot.idleHighlightAmount,
@@ -314,7 +331,7 @@ function mountCompiledSkin(
   const labelNode = compiled.hasLabelToken
     ? injectLabel(container, label)
     : null;
-  return { container, core, labelNode, textAlignmentRestores: [] };
+  return { container, core, labelNode, textAlignmentRestores: [], textGlow: null };
 }
 
 type VisualRect = { left: number; top: number; right: number; bottom: number };
@@ -594,7 +611,7 @@ function readPaintedVisualRect(
   container: HTMLElement,
   renderScale: ButtonHostRenderScale
 ): VisualRect {
-  const elements: Element[] = [container, ...Array.from(container.querySelectorAll("*"))];
+  const elements: Element[] = [container, ...Array.from(container.querySelectorAll(BUTTON_SKIN_PAINTED_ELEMENTS))];
   const rects: VisualRect[] = [];
   const transformChainCache = new Map<Element, ButtonTransformChain>();
   for (const element of elements) {
@@ -977,8 +994,9 @@ function applyTextOffset(
   offsetY: number
 ): void {
   const labelNode = mounted.labelNode;
-  if (!labelNode) return;
-  applyButtonLabelTextOffset(labelNode, offsetX, offsetY);
+  if (labelNode) applyButtonLabelTextOffset(labelNode, offsetX, offsetY);
+  // Runs at every point the rendered text can have moved, so the beam follows it.
+  if (mounted.textGlow) syncButtonTextGlow(mounted.textGlow);
 }
 
 function setBooleanAttribute(host: HTMLElement, name: string, value: boolean): void {
@@ -998,6 +1016,8 @@ export function ButtonSkinRenderer({
   textAlignment = "skin",
   textOffsetX = 0,
   textOffsetY = 0,
+  textGlow = null,
+  textGlowCurve = null,
   minimumFontSize,
   textSizeOverride,
   previewStackWords,
@@ -1160,6 +1180,14 @@ export function ButtonSkinRenderer({
     activeGlowAmount: resolveButtonGlowAmount(
       themeOverride?.activeGlowAmount ?? themeOverride?.highlightAmount
     ),
+    textGlowLit: resolveButtonTextGlowLit(textGlow, {
+      hovered: hovered || rawHovered,
+      active: activeHighlight,
+      pressed,
+      held,
+      play,
+      disabled
+    }),
     samplingState: desiredSamplingState,
     transitionSamplingKey
   });
@@ -1394,6 +1422,27 @@ export function ButtonSkinRenderer({
     // callback must never rebuild the shadow DOM.
   }, [compiled?.skinId, compiled?.sourceFingerprint, hasMeasurementConsumer]);
 
+  const textGlowEnabled = Boolean(textGlow);
+  const textGlowCurveRef = useRef(textGlowCurve);
+  textGlowCurveRef.current = textGlowCurve;
+  useLayoutEffect(() => {
+    const mounted = mountedRef.current;
+    if (!mounted || !textGlowEnabled) return;
+    const layer = mountButtonTextGlow({ ...mounted, curve: textGlowCurveRef.current });
+    mounted.textGlow = layer;
+    return () => {
+      mounted.textGlow = null;
+      if (layer) unmountButtonTextGlow(layer);
+    };
+    // Follows every skin mount above; a Theme Text change reaches the paint it reads.
+  }, [textGlowEnabled, compiled?.skinId, compiled?.sourceFingerprint, hasMeasurementConsumer, themeTextColor]);
+
+  useLayoutEffect(() => {
+    const layer = mountedRef.current?.textGlow;
+    if (layer) updateButtonTextGlowCurve(layer, textGlowCurveRef.current);
+    // Content-keyed: a re-cloned document with the same curve changes nothing.
+  }, [JSON.stringify(textGlowCurve)]);
+
   useLayoutEffect(() => {
     if (!compiled || !onNaturalMeasurementRef.current) return;
     const natural = measureNaturalSkin(compiled, renderedLabel, textSizeOverride);
@@ -1539,7 +1588,10 @@ export function ButtonSkinRenderer({
         continueMeasurementSampling = decision.continueSampling;
       }
       offsetFramesRemaining = Math.max(0, offsetFramesRemaining - 1);
-      if (continueMeasurementSampling || transitionFramesRemaining > 0 || offsetFramesRemaining > 0) {
+      // The text glow fades on the host, outside the skin motion inspected above, and
+      // its overflow only collapses on the fade's last frame.
+      const textGlowFading = host.getAnimations().length > 0;
+      if (continueMeasurementSampling || transitionFramesRemaining > 0 || offsetFramesRemaining > 0 || textGlowFading) {
         transitionFramesRemaining = Math.max(0, transitionFramesRemaining - 1);
         frame = requestAnimationFrame(sample);
       }
@@ -1603,6 +1655,7 @@ export function ButtonSkinRenderer({
     overflow: "visible",
     pointerEvents: "none",
     filter: buttonHighlightFilter(renderedVisual),
+    ...(textGlow ? buttonTextGlowHostStyle(renderedVisual.textGlowLit) : {}),
     ...buttonSkinThemeColorVariables(skin, themeOverride?.colors),
     ...(typeof width === "number" ? { width: `${width}px` } : {}),
     ...(typeof height === "number" ? { height: `${height}px` } : {}),

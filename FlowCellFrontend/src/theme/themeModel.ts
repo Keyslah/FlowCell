@@ -29,6 +29,7 @@ import {
   setButtonSkinProfileColor
 } from "../button/skins/buttonSkinColors.js";
 import { BUTTON_SKIN_SECTION_ORDER } from "../button/skins/buttonSkinFormat.js";
+import { isButtonTextGlowCurve, isButtonTextGlowSetting } from "../button/skins/buttonTextGlow.js";
 import { validateButtonSkin } from "../button/skins/skinValidator.js";
 import {
   buildPanelRailOwnerEntries,
@@ -89,6 +90,9 @@ export interface ButtonThemeAppearance {
   textAlignment: ButtonPlacement["textAlignment"];
   textOffsetX: number;
   textOffsetY: number;
+  /** Absent in files saved before the control existed, which leave the placement unchanged. */
+  textGlow?: ButtonPlacement["textGlow"];
+  textGlowCurve?: ButtonPlacement["textGlowCurve"];
   minimumFontSize: number;
   textSizeOverride: number | null;
   allowLabelResize: boolean;
@@ -658,6 +662,8 @@ export function captureThemeFile(args: {
       textAlignment: placement.textAlignment,
       textOffsetX: placement.textOffsetX,
       textOffsetY: placement.textOffsetY,
+      textGlow: placement.textGlow ?? null,
+      textGlowCurve: placement.textGlowCurve ? structuredClone(placement.textGlowCurve) : null,
       minimumFontSize: placement.minimumFontSize,
       textSizeOverride: placement.textSizeOverride,
       allowLabelResize: placement.allowLabelResize,
@@ -840,6 +846,10 @@ function applyAppearanceToPlacement(
   for (const field of ["width", "height", "textFitMode", "textAlignment", "textOffsetX", "textOffsetY",
     "minimumFontSize", "textSizeOverride", "allowLabelResize", "matchHitboxToSkin", "allowStretching", "highlightOnHover"] as const) {
     Object.assign(placement, { [field]: appearance[field] });
+  }
+  if (appearance.textGlow !== undefined) placement.textGlow = appearance.textGlow;
+  if (appearance.textGlowCurve !== undefined) {
+    placement.textGlowCurve = structuredClone(appearance.textGlowCurve);
   }
   const button = document.buttons[placement.buttonId];
   if (button && resolveButtonPlacementPresentation(button, placement).label !== appearance.label) {
@@ -1671,7 +1681,7 @@ function isButtonThemeAppearance(value: unknown): value is ButtonThemeAppearance
     "themeOverride",
     "assignSkin"
   ];
-  if (!hasRequiredAndOptionalKeys(value, requiredKeys, ["highlightColorReset"])) {
+  if (!hasRequiredAndOptionalKeys(value, requiredKeys, ["highlightColorReset", "textGlow", "textGlowCurve"])) {
     return false;
   }
   const valid = isNonemptyString(value.placementId) &&
@@ -1692,6 +1702,8 @@ function isButtonThemeAppearance(value: unknown): value is ButtonThemeAppearance
     TEXT_ALIGNMENTS.has(value.textAlignment as ButtonPlacement["textAlignment"]) &&
     isFiniteNumber(value.textOffsetX) &&
     isFiniteNumber(value.textOffsetY) &&
+    isButtonTextGlowSetting(value.textGlow) &&
+    isButtonTextGlowCurve(value.textGlowCurve) &&
     isFiniteNumber(value.minimumFontSize) && value.minimumFontSize >= 1 &&
     (value.textSizeOverride === null || (isFiniteNumber(value.textSizeOverride) && value.textSizeOverride >= 1)) &&
     typeof value.allowLabelResize === "boolean" &&

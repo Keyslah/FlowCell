@@ -6,6 +6,7 @@ import type {
 import { createButtonStateDocument } from "../button/state/buttonDefaults.js";
 import { validateButtonStateDocument } from "../button/state/buttonStateValidation.js";
 import { resolveButtonPlacementPresentation } from "../button/state/buttonPresentation.js";
+import { isButtonTextGlowCurve, isButtonTextGlowSetting } from "../button/skins/buttonTextGlow.js";
 import {
   applyThemeFile, captureThemeFile, isFlowCellThemeFile, listThemePlacements,
   placementMatchesThemeTarget, type FlowCellThemeFile, type ThemeTarget
@@ -402,7 +403,8 @@ export function isPortableTheme(value: unknown): value is PortableTheme {
     if (typeof presentation.button.label !== "string" || typeof presentation.button.tooltip !== "string") return false;
     const placement = presentation.placement;
     if (![placement.x, placement.y, placement.width, placement.height, placement.zIndex].every(finite) || placement.width <= 0 || placement.height <= 0) return false;
-    if (!keysAllowed(placement, PLACEMENT_PRESENTATION_KEYS) || PLACEMENT_PRESENTATION_KEYS.some((key) => !Object.hasOwn(placement, key))) return false;
+    if (!keysAllowed(placement, [...PLACEMENT_PRESENTATION_KEYS, "textGlow", "textGlowCurve"]) || PLACEMENT_PRESENTATION_KEYS.some((key) => !Object.hasOwn(placement, key))) return false;
+    if (!isButtonTextGlowSetting(placement.textGlow) || !isButtonTextGlowCurve(placement.textGlowCurve)) return false;
     if (Object.keys(presentation.button).some((key) => !["label", "tooltip", "defaultTextFitMode", "activationAnimation", "activationBehavior"].includes(key))) return false;
   }
   const seen = new Set<string>();

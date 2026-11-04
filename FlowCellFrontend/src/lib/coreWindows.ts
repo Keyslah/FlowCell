@@ -11,6 +11,7 @@ import {
   type Window as TauriWindow
 } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { webviewBrowserOptions } from "./webviewBrowserOptions";
 import {
   BINDS_PREFILL_EVENT,
   BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
@@ -219,7 +220,8 @@ async function openCoreWindow(options: CoreWindowOptions): Promise<void> {
       visible: false,
       focus: true,
       alwaysOnTop: options.alwaysOnTop ?? false,
-      skipTaskbar: options.skipTaskbar ?? false
+      skipTaskbar: options.skipTaskbar ?? false,
+      ...webviewBrowserOptions
     });
     await waitForCreated(target);
     await applyPlacement(target, placement);
