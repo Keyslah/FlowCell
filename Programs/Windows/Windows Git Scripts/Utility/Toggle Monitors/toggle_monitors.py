@@ -1294,7 +1294,7 @@ def preferred_destination_rect(snapshot: DisplayConfigSnapshot, exclude_source: 
 
 def enumerate_top_level_windows(include_minimized_and_owned: bool = False) -> list[TopLevelWindow]:
     windows: list[TopLevelWindow] = []
-    ignored_classes = {"Shell_TrayWnd", "Progman", "WorkerW", "NotifyIconOverflowWindow"}
+    ignored_classes = {"Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Progman", "WorkerW", "NotifyIconOverflowWindow"}
 
     @EnumWindowsProc
     def callback(hwnd, _lparam):
@@ -1365,7 +1365,7 @@ def capture_window_placements() -> list[dict[str, object]]:
     placements = []
     with physical_window_coordinates():
         for window in enumerate_top_level_windows(include_minimized_and_owned=True):
-            if window.class_name in {"#32768", "tooltips_class32", "TaskListThumbnailWnd"}:
+            if window.class_name in {"#32768", "tooltips_class32", "TaskListThumbnailWnd", "Shell_SecondaryTrayWnd"}:
                 continue
             placement = WINDOWPLACEMENT()
             placement.length = ctypes.sizeof(placement)
@@ -1407,56 +1407,198 @@ def window_lifetime_token(hwnd: int, create: bool = False) -> Optional[int]:
     return int(token) if token else None
 
 
-def restore_window_placements(placements: list[dict[str, object]], active_rects: Iterable[Rect], logger: logging.Logger) -> None:
+class WindowIdentityChanged(DisplayConfigError):
+    pass
+
+
+def decode_window_placement(record: dict[str, object]) -> WINDOWPLACEMENT:
+    blob = base64.b64decode(str(record["placement"]), validate=True)
+    if len(blob) != ctypes.sizeof(WINDOWPLACEMENT):
+        raise ValueError("Invalid saved WINDOWPLACEMENT length.")
+    return WINDOWPLACEMENT.from_buffer_copy(blob)
+
+
+def window_placement_state(placement: WINDOWPLACEMENT, rect: Rect) -> dict[str, object]:
+    normal = placement.rcNormalPosition
+    return {
+        "rect": [rect.left, rect.top, rect.right, rect.bottom],
+        "normal": [normal.left, normal.top, normal.right, normal.bottom],
+        "showCmd": int(placement.showCmd),
+    }
+
+
+def window_record_identity_matches(left: dict[str, object], right: dict[str, object]) -> bool:
+    return all(left.get(key) == right.get(key) for key in ("hwnd", "identity", "lifetime", "class_name"))
+
+
+def window_log_identity(saved: dict[str, object]) -> str:
+    identity = saved.get("identity")
+    executable = identity[3] if isinstance(identity, list) and len(identity) == 4 else "unknown"
+    return f"hwnd={saved.get('hwnd', 'unknown')} executable={executable}"
+
+
+def read_matching_window_placement(saved: dict[str, object]) -> tuple[WINDOWPLACEMENT, Rect]:
+    hwnd = int(saved["hwnd"])
+    if not user32.IsWindowVisible(hwnd):
+        raise WindowIdentityChanged("window closed or hidden")
+    class_buffer = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, class_buffer, len(class_buffer))
+    if class_buffer.value != saved.get("class_name"):
+        raise WindowIdentityChanged("window class changed")
+    identity = window_process_identity(hwnd)
+    if identity is None or list(identity) != saved.get("identity"):
+        raise WindowIdentityChanged("window process identity changed or unavailable")
+    lifetime = window_lifetime_token(hwnd)
+    if lifetime is None or lifetime != saved.get("lifetime"):
+        raise WindowIdentityChanged("window lifetime changed or unavailable")
+    placement = WINDOWPLACEMENT()
+    placement.length = ctypes.sizeof(placement)
+    rect = RECTL()
+    if not user32.GetWindowPlacement(hwnd, ctypes.byref(placement)):
+        raise_win32(ctypes.get_last_error(), f"GetWindowPlacement(hwnd={hwnd})")
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        raise_win32(ctypes.get_last_error(), f"GetWindowRect(hwnd={hwnd})")
+    identity = window_process_identity(hwnd)
+    if identity is None or list(identity) != saved.get("identity") or window_lifetime_token(hwnd) != saved.get("lifetime"):
+        raise WindowIdentityChanged("window identity changed during placement readback")
+    return placement, rect_from_rectl(rect)
+
+
+def restore_window_placements(placements: list[dict[str, object]], active_rects: Iterable[Rect], logger: logging.Logger) -> dict[str, object]:
     active_rects = list(active_rects)
-    restored = 0
+    started = time.monotonic_ns()
+    deadline = started + TOPOLOGY_TIMEOUT_MS * 1_000_000
+    stable_ns = TOPOLOGY_STABLE_MS * 1_000_000
+    jobs = []
+    skipped = 0
     with physical_window_coordinates():
-        live = {window.hwnd: window for window in enumerate_top_level_windows(include_minimized_and_owned=True)}
         for saved in placements:
             try:
-                hwnd = int(saved["hwnd"])
-                window = live.get(hwnd)
-                if window is None or window.class_name != saved.get("class_name"):
-                    continue
-                identity = window_process_identity(hwnd)
-                if identity is None or list(identity) != saved.get("identity"):
-                    continue
-                lifetime = window_lifetime_token(hwnd)
-                if lifetime is None or lifetime != saved.get("lifetime"):
-                    continue
-                blob = base64.b64decode(str(saved["placement"]), validate=True)
-                if len(blob) != ctypes.sizeof(WINDOWPLACEMENT):
-                    continue
-                placement = WINDOWPLACEMENT.from_buffer_copy(blob)
-                saved_show_command = placement.showCmd
-                normal = rect_from_rectl(placement.rcNormalPosition)
-                if normal.width < 80 or normal.height < 40:
-                    continue
-                current = WINDOWPLACEMENT()
-                current.length = ctypes.sizeof(current)
-                if not user32.GetWindowPlacement(hwnd, ctypes.byref(current)):
-                    continue
-                # Keep the user's current minimized/maximized state. SHOWNA and
-                # SHOWMINNOACTIVE avoid activating windows during restoration.
-                iconic = bool(user32.IsIconic(hwnd))
-                placement.length = ctypes.sizeof(placement)
-                placement.flags = current.flags | WPF_ASYNCWINDOWPLACEMENT
-                placement.showCmd = SW_SHOWMINNOACTIVE if iconic else SW_SHOWNA
-                if not user32.SetWindowPlacement(hwnd, ctypes.byref(placement)):
-                    raise_win32(ctypes.get_last_error(), f"SetWindowPlacement(hwnd={hwnd})")
+                desired = decode_window_placement(saved)
+                normal = rect_from_rectl(desired.rcNormalPosition)
                 saved_rect = Rect(*(int(value) for value in saved["rect"]))
-                # WINDOWPLACEMENT handles work-area offsets and clamps completely
-                # off-screen windows. Use screen coordinates only for the exact
-                # visible rectangle when the original monitor still exists.
+                if normal.width < 80 or normal.height < 40:
+                    raise ValueError("Saved normal bounds are too small.")
+                if saved.get("class_name") in {"Shell_TrayWnd", "Shell_SecondaryTrayWnd"}:
+                    raise WindowIdentityChanged("taskbar is not a program window")
+                current, actual_rect = read_matching_window_placement(saved)
+                screen_rect = desired.showCmd == 1 and current.showCmd == 1
+                if screen_rect and (saved_rect.width < 80 or saved_rect.height < 40):
+                    raise ValueError("Saved screen bounds are too small.")
                 anchor = (saved_rect.left + min(saved_rect.width // 2, 40), saved_rect.top + min(saved_rect.height // 2, 20))
-                if not iconic and saved_show_command == 1 and current.showCmd == 1 and saved_rect.width >= 80 and saved_rect.height >= 40 and any(rect.contains_point(*anchor) for rect in active_rects):
-                    flags = SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS
-                    if not user32.SetWindowPos(hwnd, None, saved_rect.left, saved_rect.top, saved_rect.width, saved_rect.height, flags):
-                        raise_win32(ctypes.get_last_error(), f"SetWindowPos(hwnd={hwnd})")
-                restored += 1
+                if screen_rect and not any(rect.contains_point(*anchor) for rect in active_rects):
+                    raise ValueError("Saved window anchor is outside the active monitors.")
+                destination = None
+                visible_normal_size = None
+                if current.showCmd == 1 and desired.showCmd not in (1, 3):
+                    raise ValueError("Saved minimized bounds cannot identify a visible normal destination.")
+                if current.showCmd == 3 or (current.showCmd == 1 and desired.showCmd == 3):
+                    if desired.showCmd == 3:
+                        anchor = ((saved_rect.left + saved_rect.right) // 2, (saved_rect.top + saved_rect.bottom) // 2)
+                    if desired.showCmd not in (1, 3):
+                        raise ValueError("Saved minimized bounds cannot identify a maximized destination.")
+                    destination = next((rect for rect in active_rects if rect.contains_point(*anchor)), None)
+                    if destination is None:
+                        raise ValueError("Saved maximized destination is outside the active monitors.")
+                    if current.showCmd == 1:
+                        visible_normal_size = (normal.width, normal.height)
+                expected = {"showCmd": int(current.showCmd)}
+                expected["rect" if screen_rect else "normal"] = (
+                    [saved_rect.left, saved_rect.top, saved_rect.right, saved_rect.bottom]
+                    if screen_rect else [normal.left, normal.top, normal.right, normal.bottom]
+                )
+                jobs.append({
+                    "saved": saved, "desired": desired, "expected": expected,
+                    "screen_rect": screen_rect, "stable_since": None, "next_retry": started,
+                    "destination": destination,
+                    "visible_normal_size": visible_normal_size,
+                    "attempts": 0, "observed": window_placement_state(current, actual_rect),
+                    "observed_at": started, "reason": "placement has not matched", "skip": False,
+                })
             except (OSError, ValueError, TypeError, KeyError, DisplayConfigError) as error:
-                logger.warning("Skipping window placement restore: %s", error)
-    logger.info("Restored %d still-open program window placements", restored)
+                skipped += 1
+                logger.info("Window restore skipped %s reason=%s expected=%s observed=unknown",
+                            window_log_identity(saved) if isinstance(saved, dict) else "unknown", error, saved.get("rect") if isinstance(saved, dict) else "unknown")
+
+        while jobs:
+            for job in jobs:
+                if job["skip"]:
+                    continue
+                if time.monotonic_ns() > deadline:
+                    break
+                saved = job["saved"]
+                try:
+                    current, actual_rect = read_matching_window_placement(saved)
+                    observed = window_placement_state(current, actual_rect)
+                    job["observed"] = observed
+                    if current.showCmd != job["expected"]["showCmd"]:
+                        raise WindowIdentityChanged("window show state changed during restoration")
+                    now = time.monotonic_ns()
+                    job["observed_at"] = now
+                    matches = all(observed[key] == value for key, value in job["expected"].items())
+                    if job["destination"] is not None:
+                        matches = matches and job["destination"].contains_point(
+                            (actual_rect.left + actual_rect.right) // 2, (actual_rect.top + actual_rect.bottom) // 2,
+                        )
+                    if job["visible_normal_size"] is not None:
+                        matches = matches and (actual_rect.width, actual_rect.height) == job["visible_normal_size"]
+                    if matches:
+                        if job["stable_since"] is None:
+                            job["stable_since"] = now
+                        continue
+                    job["stable_since"] = None
+                    job["reason"] = "requested placement did not remain in effect"
+                    if now >= job["next_retry"] and now + stable_ns <= deadline:
+                        # Readback above rechecks the window lifetime before every
+                        # retry. Normal windows use physical screen coordinates only.
+                        hwnd = int(saved["hwnd"])
+                        if job["screen_rect"]:
+                            rect = Rect(*job["expected"]["rect"])
+                            flags = SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS
+                            accepted = user32.SetWindowPos(hwnd, None, rect.left, rect.top, rect.width, rect.height, flags)
+                        else:
+                            desired = WINDOWPLACEMENT.from_buffer_copy(bytes(job["desired"]))
+                            desired.length = ctypes.sizeof(desired)
+                            desired.flags = current.flags | WPF_ASYNCWINDOWPLACEMENT
+                            desired.showCmd = SW_SHOWMINNOACTIVE if current.showCmd == 2 else SW_SHOWNA
+                            accepted = user32.SetWindowPlacement(hwnd, ctypes.byref(desired))
+                        job["attempts"] += 1
+                        job["next_retry"] = now + stable_ns
+                        if not accepted:
+                            raise_win32(ctypes.get_last_error(), f"Window placement request(hwnd={hwnd})")
+                except WindowIdentityChanged as error:
+                    job["skip"] = True
+                    job["stable_since"] = None
+                    skipped += 1
+                    logger.info("Window restore skipped %s reason=%s expected=%s observed=%s",
+                                window_log_identity(saved), error, job["expected"], job["observed"])
+                except (OSError, ValueError, TypeError, KeyError, DisplayConfigError) as error:
+                    job["stable_since"] = None
+                    job["reason"] = str(error)
+            now = time.monotonic_ns()
+            if all(job["skip"] or (job["stable_since"] is not None and job["observed_at"] - job["stable_since"] >= stable_ns) for job in jobs):
+                break
+            if now >= deadline:
+                break
+            time.sleep(min(TOPOLOGY_POLL_MS * 1_000_000, deadline - now) / 1_000_000_000)
+
+    verified = 0
+    failed = []
+    now = time.monotonic_ns()
+    for job in jobs:
+        if job["skip"]:
+            continue
+        if job["stable_since"] is not None and job["observed_at"] - job["stable_since"] >= stable_ns and job["observed_at"] <= deadline:
+            verified += 1
+            logger.info("Window restore verified %s attempts=%d expected=%s observed=%s",
+                        window_log_identity(job["saved"]), job["attempts"], job["expected"], job["observed"])
+        else:
+            failed.append({"saved": job["saved"], "observed": job["observed"], "reason": job["reason"]})
+            logger.warning("Window restore failed %s attempts=%d reason=%s expected=%s observed=%s",
+                           window_log_identity(job["saved"]), job["attempts"], job["reason"], job["expected"], job["observed"])
+    logger.info("Window placement result: verified=%d skipped=%d failed=%d elapsed=%d ms",
+                verified, skipped, len(failed), round((now - started) / 1_000_000))
+    return {"verified": verified, "skipped": skipped, "failed": failed}
 
 
 def relocate_window(hwnd: int, source_rect: Rect, destination_rect: Rect, ordinal: int) -> None:
@@ -3630,13 +3772,45 @@ class ButtonMonitorToggle:
 
     def capture_side_windows(self, side: int) -> list[dict[str, object]]:
         placements = capture_window_placements()
+        previous = read_json_object(self.window_placements_path(side))
+        failed = previous.get("failedRestores", []) if (
+            previous.get("schema") == 1 and self.marker_matches_configuration(previous)
+            and previous.get("physical_keys") == sorted(self.group_keys[side])
+        ) else []
+        protected = []
+        saved_placements = []
+        for current in placements:
+            retained = None
+            for failure in failed if isinstance(failed, list) else []:
+                if not isinstance(failure, dict) or not isinstance(failure.get("saved"), dict):
+                    continue
+                if not window_record_identity_matches(current, failure["saved"]):
+                    continue
+                try:
+                    state = window_placement_state(
+                        decode_window_placement(current), Rect(*(int(value) for value in current["rect"])),
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if state == failure.get("observed"):
+                    retained = failure
+                    break
+            if retained is not None:
+                protected.append(retained)
+                saved_placements.append(retained["saved"])
+                self.logger.info("Preserved unresolved Group %d window target %s; failed placement is unchanged", side, window_log_identity(current))
+            else:
+                saved_placements.append(current)
         write_json_object(self.window_placements_path(side), {
             "schema": 1,
             "configuration_fingerprint": self.configuration_fingerprint(),
             "physical_keys": sorted(self.group_keys[side]),
-            "windows": placements,
+            "windows": saved_placements,
+            "failedRestores": protected,
         })
         self.logger.info("Captured %d program window placements for Group %d", len(placements), side)
+        # Rollback must use the actual outgoing frames, even when the persisted
+        # cache retains an older intended frame for an unresolved restoration.
         return placements
 
     def restore_side_windows(self, side: int, snapshot: DisplayConfigSnapshot) -> None:
@@ -3649,7 +3823,9 @@ class ButtonMonitorToggle:
         if not isinstance(placements, list) or not placements:
             return
         # The caller supplies the fresh snapshot from the topology readiness wait.
-        restore_window_placements(placements, snapshot_source_rects(snapshot).values(), self.logger)
+        result = restore_window_placements(placements, snapshot_source_rects(snapshot).values(), self.logger)
+        saved["failedRestores"] = result["failed"]
+        write_json_object(self.window_placements_path(side), saved)
 
     def load_matching_side_snapshot(self, side: int, path: Path) -> DisplayConfigSnapshot:
         snapshot = load_snapshot(path)

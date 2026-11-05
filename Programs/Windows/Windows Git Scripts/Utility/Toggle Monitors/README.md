@@ -9,6 +9,10 @@ Each Button keeps its own monitor groups and regular-window arrangements. A diff
 
 After switching, the Button checks the expected connected monitors every 300 ms and restores windows only after their geometry stays unchanged for 900 ms. Saved arrangements must also match their saved monitor positions, sizes, and rotations. It waits up to 10,000 ms for a delayed display. If that check times out, it attempts to return to the previous monitor arrangement and verifies that arrangement before restoring windows. If rollback cannot be verified, the script skips program-window restoration and records the failure in `toggle_monitors.log`.
 
+Program-window restoration then has its own shared 10,000 ms limit. It checks actual positions every 300 ms and reports a window as verified only after its placement matches for 900 ms. Requests that Windows accepts but does not apply are retried without activating the window. The log records verified, failed, and skipped windows with their executable names and requested/observed bounds. Taskbars and saved normal windows whose destination anchor is outside every active display are skipped.
+
+If a window fails to reach its saved placement, that intended placement is retained while the window remains at exactly the observed failed position, size, and show state. If its arrangement changes afterward, the next toggle saves the new arrangement normally. This protection is scoped to the same living window and connected monitor subset; reopened windows do not inherit an old window's target.
+
 To reopen the monitor checklist, run the owned **Toggle Monitors.vbs** launcher with `--configure`. The picker PowerShell file is a package helper; do not run it directly. Do not run the Python engine directly without its Button configuration.
 
 Startup and wake recovery enable every available display, independently of the two Button groups.

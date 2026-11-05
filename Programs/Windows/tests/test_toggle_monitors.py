@@ -190,7 +190,7 @@ class ToggleMonitorEngineTests(unittest.TestCase):
             toggle.capture_side_windows(1)
             self.assertNotEqual(toggle.window_placements_path(1), complete_path)
             self.assertEqual(complete_path.read_bytes(), complete_bytes)
-            with mock.patch.object(tm, "restore_window_placements") as restore, mock.patch.object(tm.time, "sleep"):
+            with mock.patch.object(tm, "restore_window_placements", return_value={"verified": 0, "skipped": 0, "failed": []}) as restore, mock.patch.object(tm.time, "sleep"):
                 toggle.restore_side_windows(1, snapshot)
                 self.assertEqual(restore.call_args.args[0], [{"hwnd": 300}])
                 toggle.restore_side_windows(2, snapshot)
@@ -1862,107 +1862,344 @@ class WindowPlacementTests(unittest.TestCase):
     def setUp(self):
         self.identity = (1000, 1001, 987654321, "editor.exe")
         self.window = tm.TopLevelWindow(100, tm.Rect(2000, 80, 2800, 680), "EditorWindow", "Document")
+        self.actual_rect = self.window.rect
+        self.normal_rect = tm.Rect(2000, 40, 2800, 640)
         self.show_command = 1
         self.placements = []
+        self.clock_ms = 0
+        self.accept_requests = True
+        self.accept_visible_placement = True
+        self.on_sleep = lambda: None
 
         def get_placement(_hwnd, pointer):
             placement = pointer._obj
             placement.length = tm.ctypes.sizeof(placement)
             placement.showCmd = self.show_command
-            placement.rcNormalPosition = tm.RECTL(2000, 40, 2800, 640)
+            placement.rcNormalPosition = tm.RECTL(self.normal_rect.left, self.normal_rect.top, self.normal_rect.right, self.normal_rect.bottom)
             return True
 
         def set_placement(_hwnd, pointer):
             self.placements.append(tm.WINDOWPLACEMENT.from_buffer_copy(bytes(pointer._obj)))
+            if self.accept_requests:
+                self.normal_rect = tm.rect_from_rectl(pointer._obj.rcNormalPosition)
+                if self.show_command == 1 and self.accept_visible_placement:
+                    rect = self.normal_rect
+                    self.actual_rect = tm.Rect(rect.left, rect.top + 40, rect.right, rect.bottom + 40)
             return True
 
-        self.patchers = [
-            mock.patch.object(tm, "physical_window_coordinates", side_effect=nullcontext),
-            mock.patch.object(tm, "enumerate_top_level_windows", return_value=[self.window]),
-            mock.patch.object(tm, "window_process_identity", return_value=self.identity),
-            mock.patch.object(tm.user32, "GetWindowPlacement", side_effect=get_placement),
-            mock.patch.object(tm.user32, "SetWindowPlacement", side_effect=set_placement),
-            mock.patch.object(tm.user32, "SetWindowPos", return_value=True),
-            mock.patch.object(tm.user32, "IsIconic", return_value=False),
-            mock.patch.object(tm, "window_lifetime_token", return_value=123456),
-        ]
-        self.mocks = [patcher.start() for patcher in self.patchers]
+        def set_position(_hwnd, _after, left, top, width, height, _flags):
+            if self.accept_requests:
+                self.actual_rect = tm.Rect(left, top, left + width, top + height)
+                self.normal_rect = tm.Rect(left, top - 40, left + width, top + height - 40)
+            return True
 
-    def tearDown(self):
-        for patcher in reversed(self.patchers):
-            patcher.stop()
+        def get_rect(_hwnd, pointer):
+            rect = pointer._obj
+            rect.left, rect.top, rect.right, rect.bottom = self.actual_rect.left, self.actual_rect.top, self.actual_rect.right, self.actual_rect.bottom
+            return True
+
+        def get_class(_hwnd, buffer, _length):
+            buffer.value = self.window.class_name
+            return len(buffer.value)
+
+        def advance_clock(seconds):
+            self.clock_ms += round(seconds * 1000)
+            self.on_sleep()
+
+        def patch(target, name, **kwargs):
+            patcher = mock.patch.object(target, name, **kwargs)
+            result = patcher.start()
+            self.addCleanup(patcher.stop)
+            return result
+
+        patch(tm, "physical_window_coordinates", side_effect=nullcontext)
+        patch(tm, "get_source_name", return_value=r"\\.\DISPLAY1")
+        self.windows = patch(tm, "enumerate_top_level_windows", return_value=[self.window])
+        self.process_identity = patch(tm, "window_process_identity", return_value=self.identity)
+        patch(tm.user32, "GetWindowPlacement", side_effect=get_placement)
+        patch(tm.user32, "GetWindowRect", side_effect=get_rect)
+        patch(tm.user32, "GetClassNameW", side_effect=get_class)
+        self.visible = patch(tm.user32, "IsWindowVisible", return_value=True)
+        self.set_placement = patch(tm.user32, "SetWindowPlacement", side_effect=set_placement)
+        self.set_position = patch(tm.user32, "SetWindowPos", side_effect=set_position)
+        self.lifetime = patch(tm, "window_lifetime_token", return_value=123456)
+        self.foreground = patch(tm.user32, "SetForegroundWindow")
+        patch(tm.time, "monotonic_ns", side_effect=lambda: self.clock_ms * 1_000_000)
+        patch(tm.time, "sleep", side_effect=advance_clock)
+
+    def restore(self, saved, rects=None):
+        return tm.restore_window_placements(saved, rects or [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
+
+    def displace(self):
+        self.actual_rect = tm.Rect(20, 80, 820, 680)
+        self.normal_rect = tm.Rect(20, 40, 820, 640)
 
     def test_capture_and_restore_keeps_screen_and_workspace_coordinates_separate_without_focus(self):
         saved = tm.capture_window_placements()
         self.assertEqual(saved[0]["identity"], list(self.identity))
         self.assertEqual(saved[0]["rect"], [2000, 80, 2800, 680])
-        tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
-        placement = self.placements[0]
-        self.assertEqual(tm.rect_from_rectl(placement.rcNormalPosition), tm.Rect(2000, 40, 2800, 640))
-        self.assertEqual(placement.showCmd, tm.SW_SHOWNA)
-        self.assertTrue(placement.flags & tm.WPF_ASYNCWINDOWPLACEMENT)
+        self.displace()
+        result = self.restore(saved)
+        self.assertEqual(result, {"verified": 1, "skipped": 0, "failed": []})
+        self.assertEqual(self.clock_ms, 1200)
+        self.set_placement.assert_not_called()
         flags = tm.SWP_NOACTIVATE | tm.SWP_NOZORDER | tm.SWP_NOOWNERZORDER | tm.SWP_ASYNCWINDOWPOS
-        self.mocks[5].assert_called_once_with(100, None, 2000, 80, 800, 600, flags)
+        self.set_position.assert_called_once_with(100, None, 2000, 80, 800, 600, flags)
+        self.foreground.assert_not_called()
 
     def test_closed_restarted_or_replaced_windows_are_not_restored(self):
         saved = tm.capture_window_placements()
-        for windows, identity in [
-            ([], self.identity),
-            ([self.window], (1000, 1001, 987654322, "editor.exe")),
-            ([tm.TopLevelWindow(100, self.window.rect, "OtherClass", "Other")], self.identity),
+        for visible, identity, class_name in [
+            (False, self.identity, "EditorWindow"),
+            (True, (1000, 1001, 987654322, "editor.exe"), "EditorWindow"),
+            (True, self.identity, "OtherClass"),
         ]:
-            with self.subTest(windows=windows, identity=identity):
-                self.mocks[1].return_value = windows
-                self.mocks[2].return_value = identity
-                tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
-        self.mocks[4].assert_not_called()
-        self.mocks[5].assert_not_called()
+            with self.subTest(visible=visible, identity=identity, class_name=class_name):
+                self.visible.return_value = visible
+                self.process_identity.return_value = identity
+                self.window = tm.TopLevelWindow(100, self.window.rect, class_name, "Other")
+                self.assertEqual(self.restore(saved)["skipped"], 1)
+        self.set_placement.assert_not_called()
+        self.set_position.assert_not_called()
 
     def test_minimized_window_is_not_unminimized_or_raised(self):
         saved = tm.capture_window_placements()
-        self.mocks[6].return_value = True
         self.show_command = 2
-        tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
+        self.normal_rect = tm.Rect(20, 40, 820, 640)
+        self.actual_rect = tm.Rect(-32000, -32000, -31840, -31960)
+        self.assertEqual(self.restore(saved)["verified"], 1)
         self.assertEqual(self.placements[0].showCmd, tm.SW_SHOWMINNOACTIVE)
-        self.mocks[5].assert_not_called()
+        self.assertEqual(self.show_command, 2)
+        self.set_position.assert_not_called()
+        self.foreground.assert_not_called()
 
     def test_recycled_hwnd_in_same_process_and_thread_is_not_restored(self):
         saved = tm.capture_window_placements()
-        self.mocks[7].return_value = 654321
-        tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
-        self.mocks[4].assert_not_called()
-        self.mocks[5].assert_not_called()
+        self.lifetime.return_value = 654321
+        self.assertEqual(self.restore(saved)["skipped"], 1)
+        self.set_placement.assert_not_called()
+        self.set_position.assert_not_called()
 
     def test_previously_maximized_window_does_not_replace_normal_bounds_with_maximized_rect(self):
         self.show_command = 3
         saved = tm.capture_window_placements()
         self.show_command = 1
-        tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
+        self.displace()
+        self.assertEqual(self.restore(saved)["verified"], 1)
         self.assertEqual(tm.rect_from_rectl(self.placements[0].rcNormalPosition), tm.Rect(2000, 40, 2800, 640))
-        self.mocks[5].assert_not_called()
+        self.set_position.assert_not_called()
+
+    def test_previously_maximized_window_ignoring_visible_move_is_not_verified(self):
+        self.show_command = 3
+        saved = tm.capture_window_placements()
+        self.show_command = 1
+        self.displace()
+        self.accept_visible_placement = False
+        result = self.restore(saved)
+        self.assertEqual(result["verified"], 0)
+        self.assertEqual(len(result["failed"]), 1)
+        self.assertEqual(self.clock_ms, 10000)
+        self.assertEqual(self.normal_rect, tm.Rect(2000, 40, 2800, 640))
+        self.assertEqual(self.actual_rect, tm.Rect(20, 80, 820, 680))
+        self.set_position.assert_not_called()
+
+    def test_saved_minimized_window_cannot_guess_a_current_normal_destination(self):
+        self.show_command = 2
+        saved = tm.capture_window_placements()
+        self.show_command = 1
+        self.displace()
+        self.assertEqual(self.restore(saved), {"verified": 0, "skipped": 1, "failed": []})
+        self.set_placement.assert_not_called()
+        self.set_position.assert_not_called()
 
     def test_maximized_window_keeps_show_state_without_forcing_normal_screen_bounds(self):
         saved = tm.capture_window_placements()
         self.show_command = 3
-        tm.restore_window_placements(saved, [tm.Rect(1920, 0, 3840, 1080)], mock.Mock())
+        self.normal_rect = tm.Rect(20, 40, 820, 640)
+        self.actual_rect = tm.Rect(1912, -8, 3848, 1048)
+        self.assertEqual(self.restore(saved)["verified"], 1)
         self.assertEqual(self.placements[0].showCmd, tm.SW_SHOWNA)
-        self.mocks[5].assert_not_called()
+        self.assertEqual(self.show_command, 3)
+        self.set_position.assert_not_called()
+        self.foreground.assert_not_called()
 
-    def test_unavailable_screen_uses_window_placement_visibility_clamp(self):
+    def test_maximized_wrong_monitor_is_not_verified_even_when_normal_bounds_match(self):
         saved = tm.capture_window_placements()
-        tm.restore_window_placements(saved, [tm.Rect(0, 0, 1920, 1080)], mock.Mock())
-        self.assertEqual(len(self.placements), 1)
-        self.mocks[5].assert_not_called()
+        self.show_command = 3
+        self.actual_rect = tm.Rect(-8, -8, 1928, 1048)
+        result = self.restore(saved)
+        self.assertEqual(result["verified"], 0)
+        self.assertEqual(len(result["failed"]), 1)
+        self.assertEqual(self.clock_ms, 10000)
+        self.set_position.assert_not_called()
+
+    def test_unavailable_anchor_skips_without_clamping_to_a_different_monitor(self):
+        saved = tm.capture_window_placements()
+        result = self.restore(saved, [tm.Rect(0, 0, 1920, 1080)])
+        self.assertEqual(result, {"verified": 0, "skipped": 1, "failed": []})
+        self.assertEqual(self.clock_ms, 0)
+        self.set_placement.assert_not_called()
+        self.set_position.assert_not_called()
+
+    def test_invalid_saved_physical_size_never_resizes_a_live_window(self):
+        saved = tm.capture_window_placements()
+        for rect in ([2000, 80, 2000, 680], [2000, 80, 2800, 79], [2000, 80, 2079, 119]):
+            with self.subTest(rect=rect):
+                saved[0]["rect"] = rect
+                self.assertEqual(self.restore(saved), {"verified": 0, "skipped": 1, "failed": []})
+        self.set_placement.assert_not_called()
+        self.set_position.assert_not_called()
+
+    def test_async_acceptance_without_actual_move_times_out_once_for_the_whole_batch(self):
+        saved = tm.capture_window_placements()
+        saved.append(dict(saved[0], hwnd=101))
+        self.displace()
+        self.accept_requests = False
+        result = self.restore(saved)
+        self.assertEqual(result["verified"], 0)
+        self.assertEqual(len(result["failed"]), 2)
+        self.assertEqual(self.clock_ms, 10000)
+        self.assertEqual(self.set_position.call_count, 22)
+        self.assertEqual(result["failed"][0]["observed"]["rect"], [20, 80, 820, 680])
+        self.set_placement.assert_not_called()
+
+    def test_delayed_async_move_must_then_remain_correct_for_900_ms(self):
+        saved = tm.capture_window_placements()
+        self.displace()
+        self.accept_requests = False
+        def settle():
+            if self.clock_ms == 600:
+                self.actual_rect = self.window.rect
+                self.normal_rect = tm.Rect(2000, 40, 2800, 640)
+        self.on_sleep = settle
+        self.assertEqual(self.restore(saved)["verified"], 1)
+        self.assertEqual(self.clock_ms, 1500)
+        self.assertEqual(self.set_position.call_count, 1)
+
+    def test_late_displacement_resets_the_matching_interval(self):
+        saved = tm.capture_window_placements()
+        self.on_sleep = lambda: self.displace() if self.clock_ms == 600 else None
+        self.assertEqual(self.restore(saved)["verified"], 1)
+        self.assertEqual(self.clock_ms, 1800)
+        self.assertEqual(self.set_position.call_count, 1)
+
+    def test_earlier_stable_window_is_rechecked_until_other_windows_finish(self):
+        saved = tm.capture_window_placements()
+        saved.append(dict(saved[0], hwnd=101, rect=[2100, 80, 2900, 680]))
+        self.accept_requests = False
+        self.on_sleep = lambda: self.displace() if self.clock_ms == 1200 else None
+        result = self.restore(saved)
+        self.assertEqual(result["verified"], 0)
+        self.assertEqual(len(result["failed"]), 2)
+        self.assertEqual(self.clock_ms, 10000)
+
+    def test_identity_change_after_queued_request_prevents_retry(self):
+        saved = tm.capture_window_placements()
+        self.displace()
+        self.accept_requests = False
+        self.on_sleep = lambda: setattr(self.lifetime, "return_value", 654321)
+        result = self.restore(saved)
+        self.assertEqual(result, {"verified": 0, "skipped": 1, "failed": []})
+        self.assertEqual(self.set_position.call_count, 1)
+        self.assertEqual(self.clock_ms, 300)
+
+    def test_changed_show_state_is_not_fought_by_retries(self):
+        saved = tm.capture_window_placements()
+        self.displace()
+        self.accept_requests = False
+        self.on_sleep = lambda: setattr(self, "show_command", 2)
+        self.assertEqual(self.restore(saved)["skipped"], 1)
+        self.assertEqual(self.set_position.call_count, 1)
+        self.set_placement.assert_not_called()
+
+    def test_secondary_taskbars_are_not_captured_or_restored_from_old_cache(self):
+        saved = tm.capture_window_placements()
+        saved[0]["class_name"] = "Shell_SecondaryTrayWnd"
+        self.windows.return_value = [tm.TopLevelWindow(100, self.window.rect, "Shell_SecondaryTrayWnd", "Taskbar")]
+        self.assertEqual(tm.capture_window_placements(), [])
+        self.assertEqual(self.restore(saved)["skipped"], 1)
+        self.set_position.assert_not_called()
+
+    def cache_toggle(self, root):
+        toggle = tm.ButtonMonitorToggle(mock.Mock(), ["one"], ["two"], root)
+        toggle.group_keys = {1: ["one"], 2: ["two"]}
+        return toggle
+
+    def persist_failed_restore(self, root):
+        toggle = self.cache_toggle(root)
+        intended = toggle.capture_side_windows(1)
+        self.displace()
+        self.accept_requests = False
+        snapshot, _, _ = make_snapshot([make_path(1, 1, 0)], [make_source_mode(1, 1920, 0, 1920, 1080)])
+        toggle.restore_side_windows(1, snapshot)
+        cached = tm.read_json_object(toggle.window_placements_path(1))
+        self.assertEqual(len(cached["failedRestores"]), 1)
+        self.assertEqual(cached["failedRestores"][0]["saved"], intended[0])
+        return intended
+
+    def test_failed_frame_guard_survives_new_instance_and_returns_actual_outgoing_for_rollback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            intended = self.persist_failed_restore(Path(temporary))
+            toggle = self.cache_toggle(Path(temporary))
+            self.windows.return_value = [tm.TopLevelWindow(100, self.actual_rect, "EditorWindow", "Document")]
+            outgoing = toggle.capture_side_windows(1)
+            cached = tm.read_json_object(toggle.window_placements_path(1))
+            self.assertEqual(cached["windows"], intended)
+            self.assertEqual(len(cached["failedRestores"]), 1)
+            self.assertEqual(outgoing[0]["rect"], [20, 80, 820, 680])
+            self.assertNotEqual(outgoing, cached["windows"])
+
+    def test_changed_frame_after_failed_restore_is_learned(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            intended = self.persist_failed_restore(Path(temporary))
+            toggle = self.cache_toggle(Path(temporary))
+            self.actual_rect = tm.Rect(100, 80, 900, 680)
+            self.normal_rect = tm.Rect(100, 40, 900, 640)
+            self.windows.return_value = [tm.TopLevelWindow(100, self.actual_rect, "EditorWindow", "Document")]
+            outgoing = toggle.capture_side_windows(1)
+            cached = tm.read_json_object(toggle.window_placements_path(1))
+            self.assertEqual(cached["windows"], outgoing)
+            self.assertNotEqual(cached["windows"], intended)
+            self.assertEqual(cached["failedRestores"], [])
+
+    def test_closed_or_recycled_window_cannot_inherit_failed_target(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.persist_failed_restore(Path(temporary))
+            toggle = self.cache_toggle(Path(temporary))
+            original = tm.read_json_object(toggle.window_placements_path(1))
+            for closed in (False, True):
+                with self.subTest(closed=closed):
+                    tm.write_json_object(toggle.window_placements_path(1), original)
+                    self.lifetime.return_value = 654321
+                    self.windows.return_value = [] if closed else [tm.TopLevelWindow(100, self.actual_rect, "EditorWindow", "New document")]
+                    outgoing = toggle.capture_side_windows(1)
+                    cached = tm.read_json_object(toggle.window_placements_path(1))
+                    self.assertEqual(cached["windows"], outgoing)
+                    self.assertEqual(cached["failedRestores"], [])
+
+    def test_failed_target_guard_is_scoped_to_configuration_and_connected_subset(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.persist_failed_restore(Path(temporary))
+            toggle = self.cache_toggle(Path(temporary))
+            self.windows.return_value = [tm.TopLevelWindow(100, self.actual_rect, "EditorWindow", "Document")]
+            original = tm.read_json_object(toggle.window_placements_path(1))
+            for changed in ({"configuration_fingerprint": "different"}, {"physical_keys": ["other"]}):
+                with self.subTest(changed=changed):
+                    tm.write_json_object(toggle.window_placements_path(1), dict(original, **changed))
+                    outgoing = toggle.capture_side_windows(1)
+                    cached = tm.read_json_object(toggle.window_placements_path(1))
+                    self.assertEqual(cached["windows"], outgoing)
+                    self.assertEqual(cached["failedRestores"], [])
 
     def test_flowcell_pop_and_fan_canvases_are_excluded_but_program_pages_are_captured(self):
-        self.mocks[2].return_value = (1000, 1001, 987654321, "flowcell_frontend.exe")
-        self.mocks[1].return_value = [
+        self.process_identity.return_value = (1000, 1001, 987654321, "flowcell_frontend.exe")
+        self.windows.return_value = [
             tm.TopLevelWindow(100, self.window.rect, "Tauri Window", "FlowCell - Button Popout"),
             tm.TopLevelWindow(101, self.window.rect, "Tauri Window", "FlowCell - Button Fan"),
             tm.TopLevelWindow(102, self.window.rect, "Tauri Window", "FlowCell - Program"),
         ]
         self.assertEqual([saved["hwnd"] for saved in tm.capture_window_placements()], [102])
-        self.mocks[2].return_value = self.identity
+        self.process_identity.return_value = self.identity
         self.assertEqual(len(tm.capture_window_placements()), 3)
 
 
