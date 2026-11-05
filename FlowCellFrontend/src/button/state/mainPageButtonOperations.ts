@@ -365,7 +365,9 @@ export function ensureFlowCellMainPageButtons(
         minimumFontSize: document.settings.defaultMinimumFontSize,
         textSizeOverride: null,
         allowLabelResize: false,
-        matchHitboxToSkin: true,
+        // Header Buttons fill their rect (Responsive), so the header row is one size whatever each
+        // label says. Rail Buttons stay Proportional: sized to their label, never stretched.
+        matchHitboxToSkin: entry.section !== "Header Buttons",
         allowStretching: false,
         highlightOnHover: false,
         activationCycle: null,

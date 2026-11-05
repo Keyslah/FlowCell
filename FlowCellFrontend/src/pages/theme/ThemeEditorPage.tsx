@@ -1314,6 +1314,7 @@ export default function ThemeEditorPage({
                           }}>
                             <option value="default">Default</option>
                             <option value="concrete">Concrete</option>
+                            <option value="chipped-concrete">Chipped Concrete</option>
                             <option value="none">None</option>
                             <option value="custom">Custom image</option>
                           </select>

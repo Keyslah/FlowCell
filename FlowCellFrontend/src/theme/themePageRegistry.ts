@@ -22,8 +22,11 @@ export interface ThemePageAssetDefinition {
 }
 
 export interface ThemePageAssetValue {
-  /** "concrete" selects the bundled concrete texture; only "custom" carries a path. */
-  mode: "default" | "none" | "custom" | "concrete";
+  /**
+   * "concrete" and "chipped-concrete" select bundled textures; only "custom" carries a path.
+   * Chipped Concrete also turns the Main rails into textured slabs.
+   */
+  mode: "default" | "none" | "custom" | "concrete" | "chipped-concrete";
   path: string | null;
 }
 
@@ -423,6 +426,17 @@ export const MAIN_THEME_PRESETS: readonly MainThemePreset[] = [
     backgroundImageMode: "concrete",
     railBackground: "rgba(255, 255, 255, 0.16)",
     railBorder: "rgba(255, 255, 255, 0.42)"
+  },
+  {
+    // The Poly Haven Chipped Concrete scan (CC0) at its own resolution; the rails become
+    // rendered raised slabs of the same concrete (see themeRuntime), so their fill and edge
+    // stay clear.
+    id: "chipped-concrete",
+    label: "Chipped Concrete",
+    backgroundColor: "#887F73",
+    backgroundImageMode: "chipped-concrete",
+    railBackground: "transparent",
+    railBorder: "transparent"
   }
 ];
 
@@ -460,7 +474,8 @@ export function isThemePageAppearance(value: unknown): value is ThemePageAppeara
       asset.mode !== "default" &&
       asset.mode !== "none" &&
       asset.mode !== "custom" &&
-      asset.mode !== "concrete"
+      asset.mode !== "concrete" &&
+      asset.mode !== "chipped-concrete"
     ) return false;
     if (asset.mode === "custom") return typeof asset.path === "string" && Boolean(asset.path.trim());
     return asset.path === null;

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -350,4 +350,58 @@ test("Main page offers the Concrete theme and a bundled Concrete background", ()
   assert.match(runtime, /asset\.mode === "concrete"\s*\?\s*`url\("\$\{concreteBackground\}"\)`/);
   const concrete = readFileSync(path.join(root, "src", "assets", "backgrounds", "concrete.jpg"));
   assert.deepEqual([...concrete.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+});
+
+test("Chipped Concrete stacks a page-sized base slab, rendered rail slabs and the Buttons", () => {
+  const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
+  const runtime = read("src", "theme", "themeRuntime.ts");
+  const railSurface = read("src", "components", "RailSurface.tsx");
+  const css = read("src", "pages", "main", "mainPage.css");
+  assert.match(editor, /<option value="chipped-concrete">Chipped Concrete<\/option>/);
+  // The page itself is the base level: one page-sized slab picture, see-through past its edges.
+  assert.match(runtime, /import chippedConcreteBase from "\.\.\/assets\/backgrounds\/chipped-concrete-base\.webp";/);
+  assert.match(runtime, /asset\.mode === "chipped-concrete"\s*\?\s*`url\("\$\{chippedConcreteBase\}"\)`/);
+  assert.match(runtime, /\["--flowcell-main-background-fill", "transparent"\]/);
+  assert.match(runtime, /\["--flowcell-main-base-mask", `url\("\$\{chippedConcreteBase\}"\)`\]/);
+  assert.match(css, /background-color: var\(--flowcell-main-background-fill, var\(--flowcell-main-background-color, #9db678\)\);/);
+  // Rail and header Button shadows stop at the base's edge, and the main window drops its frame shadow.
+  assert.match(css, /\.main-page__button-group--placement-layer \{[^}]*mask-image: var\(--flowcell-main-base-mask, none\);/);
+  assert.match(railSurface, /maskImage: "var\(--flowcell-main-base-mask, none\)"/);
+  assert.match(railSurface, /maskSize: `\$\{pageFrame\.width\}px \$\{pageFrame\.height\}px`/);
+  assert.match(railSurface, /maskPosition: `\$\{-\(MAIN_PAGE_BASE_OFFSET\.left \+ slabLeft\)\}px \$\{-\(MAIN_PAGE_BASE_OFFSET\.top \+ slabTop\)\}px`/);
+  assert.match(runtime, /mainWindowShadow: appearance\.pageId === "main" \? !isChippedConcreteMain\(appearance\) : undefined/);
+  assert.match(runtime, /if \(current\.label !== "main"\) return;/);
+  const base = readFileSync(path.join(root, "src", "assets", "backgrounds", "chipped-concrete-base.webp"));
+  assert.equal(base.subarray(0, 4).toString("latin1"), "RIFF");
+  assert.equal(base.subarray(8, 12).toString("latin1"), "WEBP");
+  assert.equal(existsSync(path.join(root, "src", "assets", "backgrounds", "chipped-concrete.jpg")), false);
+  // The window's frame is the page plus a little room, so the base reaches just past the rails' shadows.
+  // Rails and Buttons keep page coordinates: centered in the frame, or at the base offset under the slab.
+  const layout = read("src", "pages", "main", "mainLayout.ts");
+  const mainPage = read("src", "pages", "main", "MainPage.tsx");
+  const config = JSON.parse(read("src-tauri", "tauri.conf.json"));
+  const mainWindow = config.app.windows.find((window) => window.label === "main");
+  const frame = layout.match(/export const pageFrame: PageRecord = \{\s*id: "main-page-frame",\s*width: (\d+),\s*height: (\d+),/);
+  assert.ok(frame, "mainLayout.ts defines the main window frame");
+  assert.deepEqual([mainWindow.width, mainWindow.height], [Number(frame[1]), Number(frame[2])]);
+  assert.match(layout, /export const MAIN_PAGE_BASE_OFFSET = \{ left: 10, top: 0 \} as const;/);
+  assert.match(runtime, /\["--flowcell-main-page-left", `\$\{MAIN_PAGE_BASE_OFFSET\.left\}px`\]/);
+  assert.match(runtime, /\["--flowcell-main-page-top", `\$\{MAIN_PAGE_BASE_OFFSET\.top\}px`\]/);
+  assert.match(mainPage, /<ExactPageFrame page=\{pageFrame\}>/);
+  assert.match(mainPage, /<div className="main-page__content" style=\{MAIN_PAGE_CONTENT_STYLE\}>/);
+  assert.match(mainPage, /left: `var\(--flowcell-main-page-left, \$\{\(pageFrame\.width - page\.width\) \/ 2\}px\)`/);
+  assert.match(mainPage, /className="main-page__button-group main-page__button-group--placement-layer"\s*style=\{MAIN_PAGE_BASE_MASK_STYLE\}/);
+  // The slab picture sits in its own layer: the rail itself clips, and the slab's chunks and shadow reach past it.
+  assert.match(railSurface, /className="rail-surface__slab"/);
+  assert.match(railSurface, /var\(--flowcell-main-rail-\$\{cssRailId\}-slab, none\)/);
+  assert.match(railSurface, /var\(--flowcell-main-rail-backdrop-filter, blur\(/);
+  assert.match(css, /\.rail-surface__slab \{[^}]*pointer-events: none;/);
+  assert.match(runtime, /\["--flowcell-main-rail-backdrop-filter", "none"\]/);
+  assert.match(runtime, /`--flowcell-main-rail-\$\{cssRailId\}-slab`/);
+  for (const railId of ["program", "panel", "buttons", "info"]) {
+    assert.match(runtime, new RegExp(`"${railId}-rail": \\{ url: chippedConcreteRail`));
+    const slab = readFileSync(path.join(root, "src", "assets", "backgrounds", `chipped-concrete-rail-${railId}.webp`));
+    assert.equal(slab.subarray(0, 4).toString("latin1"), "RIFF");
+    assert.equal(slab.subarray(8, 12).toString("latin1"), "WEBP");
+  }
 });

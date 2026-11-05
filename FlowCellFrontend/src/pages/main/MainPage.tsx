@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent
 } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -144,7 +145,9 @@ import {
   buildButtonsSurfaceButtons,
   buildPanelRailButtons,
   buildProgramRailButtons,
+  MAIN_PAGE_BASE_OFFSET,
   page,
+  pageFrame,
   rails,
   staticButtons,
   type ButtonRecord
@@ -704,6 +707,22 @@ function getParentDirectory(path: string): string | null {
 
   return normalized.slice(0, separatorIndex);
 }
+
+// The page (rails and Buttons, in page coordinates) sits inside the window's frame: centered,
+// unless a page-shaped base slab sets --flowcell-main-page-left/top (themeRuntime) so the base
+// reaches just past the rails' shadows.
+const MAIN_PAGE_CONTENT_STYLE: CSSProperties = {
+  width: `${page.width}px`,
+  height: `${page.height}px`,
+  left: `var(--flowcell-main-page-left, ${(pageFrame.width - page.width) / 2}px)`,
+  top: `var(--flowcell-main-page-top, ${(pageFrame.height - page.height) / 2}px)`
+};
+
+// The base picture masks the header layers too; it covers the whole frame, so it is pinned there.
+const MAIN_PAGE_BASE_MASK_STYLE: CSSProperties = {
+  maskSize: `${pageFrame.width}px ${pageFrame.height}px`,
+  maskPosition: `${-MAIN_PAGE_BASE_OFFSET.left}px ${-MAIN_PAGE_BASE_OFFSET.top}px`
+};
 
 function isValidFlowCellBounds(bounds: FlowCellBounds | null | undefined): bounds is FlowCellBounds {
   return isUsableButtonWindowBounds(bounds);
@@ -3520,13 +3539,14 @@ export default function MainPage() {
         setSpaceDragging(false);
       }}
     >
-      <ExactPageFrame page={page}>
+      <ExactPageFrame page={pageFrame}>
         <div className="main-page__page">
           <div
             className="main-page__background"
             aria-hidden="true"
             style={{ backgroundImage: `var(--flowcell-main-background-image, url(${mainBackground}))` }}
           />
+          <div className="main-page__content" style={MAIN_PAGE_CONTENT_STYLE}>
           {buttonBootstrapError ? (
             <section
               className="main-page__bootstrap-error"
@@ -3556,6 +3576,7 @@ export default function MainPage() {
           {buttonDocument && topLeftActionButtons.length > 0 ? (
             <div
               className="main-page__button-group main-page__button-group--placement-layer"
+              style={MAIN_PAGE_BASE_MASK_STYLE}
             >
               {topLeftActionButtons.map((button) => (
                 resolveFlowCellMainPagePresentation(buttonDocument, button) ? <MainButtonHost
@@ -3576,6 +3597,7 @@ export default function MainPage() {
           {buttonDocument && topRightActionButtons.length > 0 ? (
             <div
               className="main-page__button-group main-page__button-group--placement-layer"
+              style={MAIN_PAGE_BASE_MASK_STYLE}
             >
               {topRightActionButtons.map((button) => (
                 resolveFlowCellMainPagePresentation(buttonDocument, button) ? <MainButtonHost
@@ -3614,6 +3636,7 @@ export default function MainPage() {
               />
             );
           }) : null}
+          </div>
           {fanSetupMenu ? (
             <>
               <div

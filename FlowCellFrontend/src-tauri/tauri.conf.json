@@ -15,8 +15,8 @@
       {
         "label": "main",
         "title": "FlowCell",
-        "width": 1225,
-        "height": 721,
+        "width": 1276,
+        "height": 762,
         "resizable": true,
         "fullscreen": false,
         "decorations": false,

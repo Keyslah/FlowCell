@@ -1,7 +1,14 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { makeSafeTauriUnlisten } from "../lib/safeTauriUnlisten.js";
 import concreteBackground from "../assets/backgrounds/concrete.jpg";
+import chippedConcreteBase from "../assets/backgrounds/chipped-concrete-base.webp";
+import chippedConcreteRailButtons from "../assets/backgrounds/chipped-concrete-rail-buttons.webp";
+import chippedConcreteRailInfo from "../assets/backgrounds/chipped-concrete-rail-info.webp";
+import chippedConcreteRailPanel from "../assets/backgrounds/chipped-concrete-rail-panel.webp";
+import chippedConcreteRailProgram from "../assets/backgrounds/chipped-concrete-rail-program.webp";
+import { MAIN_PAGE_BASE_OFFSET, RAIL_SLAB_BLEED_PX, rails } from "../pages/main/mainLayout.js";
 import {
   defaultMainThemeAppearance,
   mainThemeAppearanceToPageAppearance,
@@ -219,24 +226,112 @@ function cssUrl(path: string): string {
 interface ThemePageCssUpdate {
   tokens: ReadonlyArray<readonly [string, string]>;
   assets: ReadonlyArray<readonly [string, string | null]>;
+  /** Main page updates only: whether the main window keeps its system frame shadow. */
+  mainWindowShadow?: boolean;
+}
+
+// Chipped Concrete is three stacked levels of the same rendered concrete. The window's frame is the
+// base: one frame-sized slab picture (10 px tall, long worn stretches along its edges, a broken
+// corner and a worn round one, its own shadow), transparent past its edges so the window takes the
+// slab's shape. The page sits at MAIN_PAGE_BASE_OFFSET on it, so the base reaches just past the
+// rails' shadows. Its fill turns clear, and the base picture also masks the rail slabs and header
+// Buttons so their shadows stop at the slab's edge instead of darkening what is behind the window.
+//
+// The rails are raised slabs rendered in Blender (Key Studio's Chipped Concrete, 20 px
+// tall, sharp corners, broken chunks, lit like the keys), one unique picture per rail. Each record
+// keeps the picture's size and where the slab's top face landed in it (left, top, right, bottom in
+// picture px); that face is laid exactly over the rail, so the front edge, chunks and shadow reach
+// out into the rail's slab layer. The rails' own blur is turned off so it cannot smear the slabs.
+const CHIPPED_CONCRETE_RAIL_SLABS: Readonly<Record<string, {
+  url: string;
+  size: readonly [number, number];
+  face: readonly [number, number, number, number];
+}>> = {
+  "program-rail": { url: chippedConcreteRailProgram, size: [445, 1316], face: [31.095, 32.002, 357.935, 1209.251] },
+  "panel-rail": { url: chippedConcreteRailPanel, size: [445, 1316], face: [31.095, 32.002, 357.935, 1209.251] },
+  "buttons-rail": { url: chippedConcreteRailButtons, size: [1382, 1316], face: [30.994, 32.013, 1294.733, 1205.483] },
+  "info-rail": { url: chippedConcreteRailInfo, size: [517, 1316], face: [31.074, 32.001, 429.647, 1208.476] }
+};
+
+function chippedConcreteRailSlabEntries(): Array<readonly [string, string]> {
+  const entries: Array<readonly [string, string]> = [
+    ["--flowcell-main-rail-backdrop-filter", "none"],
+    ["--flowcell-main-background-fill", "transparent"],
+    ["--flowcell-main-base-mask", `url("${chippedConcreteBase}")`],
+    ["--flowcell-main-page-left", `${MAIN_PAGE_BASE_OFFSET.left}px`],
+    ["--flowcell-main-page-top", `${MAIN_PAGE_BASE_OFFSET.top}px`]
+  ];
+  for (const rail of rails) {
+    const slab = CHIPPED_CONCRETE_RAIL_SLABS[rail.id];
+    if (!slab) continue;
+    const [left, top, right, bottom] = slab.face;
+    const scaleX = rail.width / (right - left);
+    const scaleY = rail.height / (bottom - top);
+    const px = (value: number) => `${Math.round(value * 1000) / 1000}px`;
+    const cssRailId = rail.id.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+    entries.push([
+      `--flowcell-main-rail-${cssRailId}-slab`,
+      `url("${slab.url}") ${px(RAIL_SLAB_BLEED_PX - left * scaleX)} ${px(RAIL_SLAB_BLEED_PX - top * scaleY)} / ` +
+        `${px(slab.size[0] * scaleX)} ${px(slab.size[1] * scaleY)} no-repeat`
+    ]);
+  }
+  return entries;
+}
+
+const CHIPPED_CONCRETE_RAIL_SLAB = chippedConcreteRailSlabEntries();
+
+function isChippedConcreteMain(appearance: ThemePageAppearance): boolean {
+  return appearance.pageId === "main" && appearance.assets["background-image"]?.mode === "chipped-concrete";
+}
+
+function mainRailSlabCssEntries(
+  appearance: ThemePageAppearance
+): ReadonlyArray<readonly [string, string | null]> {
+  if (appearance.pageId !== "main") return [];
+  const slab = isChippedConcreteMain(appearance);
+  return CHIPPED_CONCRETE_RAIL_SLAB.map(([property, value]) => [property, slab ? value : null] as const);
 }
 
 function buildThemePageCssUpdate(appearance: ThemePageAppearance): ThemePageCssUpdate {
   const definition = getFlowCellThemePageDefinition(appearance.pageId);
   return {
     tokens: themePageTokenCssEntries(appearance),
-    assets: definition.assets.map((assetDefinition) => {
-      const asset = appearance.assets[assetDefinition.id];
-      const cssValue = asset.mode === "none"
-        ? "none"
-        : asset.mode === "concrete"
-          ? `url("${concreteBackground}")`
-          : asset.mode === "custom" && asset.path
-            ? cssUrl(asset.path)
-            : null;
-      return [assetDefinition.cssProperty, cssValue] as const;
-    })
+    assets: [
+      ...definition.assets.map((assetDefinition) => {
+        const asset = appearance.assets[assetDefinition.id];
+        const cssValue = asset.mode === "none"
+          ? "none"
+          : asset.mode === "concrete"
+            ? `url("${concreteBackground}")`
+            : asset.mode === "chipped-concrete"
+              ? `url("${chippedConcreteBase}")`
+              : asset.mode === "custom" && asset.path
+                ? cssUrl(asset.path)
+                : null;
+        return [assetDefinition.cssProperty, cssValue] as const;
+      }),
+      ...mainRailSlabCssEntries(appearance)
+    ],
+    mainWindowShadow: appearance.pageId === "main" ? !isChippedConcreteMain(appearance) : undefined
   };
+}
+
+// The main window starts with its system frame shadow (tauri.conf.json leaves it on). Around a
+// see-through window that shadow and its 1 px frame would outline the whole rectangle, so it is
+// off while the Chipped Concrete base gives the window its own outline, and back on otherwise.
+let mainWindowShadow = true;
+
+function syncMainWindowShadow(shadow: boolean | undefined): void {
+  if (shadow === undefined || shadow === mainWindowShadow) return;
+  let current: ReturnType<typeof getCurrentWindow>;
+  try {
+    current = getCurrentWindow();
+  } catch {
+    return;
+  }
+  if (current.label !== "main") return;
+  mainWindowShadow = shadow;
+  void current.setShadow(shadow).catch(() => {});
 }
 
 function applyThemePageCssUpdate(update: ThemePageCssUpdate, root: HTMLElement): void {
@@ -247,6 +342,7 @@ function applyThemePageCssUpdate(update: ThemePageCssUpdate, root: HTMLElement):
     if (value === null) root.style.removeProperty(property);
     else root.style.setProperty(property, value);
   }
+  syncMainWindowShadow(update.mainWindowShadow);
 }
 
 export async function applyThemePageAppearance(

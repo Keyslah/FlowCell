@@ -46,8 +46,11 @@ function Find-FlowCellRoot([string]$StartPath) {
     return [System.IO.Path]::GetFullPath((Split-Path -Parent $StartPath))
 }
 
-$repoRoot = Find-FlowCellRoot -StartPath $PSScriptRoot
-$flowCellLocalRoot = Join-Path $repoRoot 'flowcellbackend\local'
+$flowCellLocalRoot = if ($env:FLOWCELL_LOCAL_ROOT) {
+    $env:FLOWCELL_LOCAL_ROOT
+} else {
+    Join-Path (Find-FlowCellRoot -StartPath $PSScriptRoot) 'flowcellbackend\local'
+}
 $statusPath = Join-Path $flowCellLocalRoot 'logs\last_action_status.txt'
 $script:BackupUiLabel = Get-BackupUiLabel -Flavor $BackupFlavor
 $script:BackupUiTitle = Get-BackupUiTitle -Flavor $BackupFlavor
@@ -361,6 +364,12 @@ function Get-RequestedSourceFolders {
 }
 
 function Get-BackupRootConfigPath {
+    $ownerRoot = Split-Path -Parent $PSScriptRoot
+    $legacyConfig = Join-Path $ownerRoot 'flowcellbackend\local\github_backup_root.txt'
+    if (Test-Path -LiteralPath $legacyConfig -PathType Leaf) {
+        return $legacyConfig
+    }
+
     return (Join-Path $flowCellLocalRoot 'github_backup_root.txt')
 }
 

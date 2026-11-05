@@ -50,6 +50,19 @@ export const page: PageRecord = {
   viewBox: "0 0 1225 721"
 };
 
+/** The main window's frame: the page plus a little room around it, so a page-shaped base slab
+ * (Chipped Concrete) reaches just past the rails' shadows and still has room for its own shadow. Every rail and Button keeps the page's
+ * own coordinates: the page sits centered in the frame, or at MAIN_PAGE_BASE_OFFSET under a base
+ * slab (its shadows fall right and down, so the room goes there). */
+export const pageFrame: PageRecord = {
+  id: "main-page-frame",
+  width: 1276,
+  height: 762,
+  viewBox: "0 0 1276 762"
+};
+
+export const MAIN_PAGE_BASE_OFFSET = { left: 10, top: 0 } as const;
+
 export const rails: RailRecord[] = [
   {
     id: "program-rail",
@@ -100,6 +113,10 @@ export const rails: RailRecord[] = [
     background: "transparent"
   }
 ];
+
+/** How far a rail's slab layer reaches past the rail on every side: room for a rendered slab's
+ * front edge, broken chunks and shadow (see RailSurface and themeRuntime). */
+export const RAIL_SLAB_BLEED_PX = 72;
 
 type FolderRailDefinition = {
   railId: string;
@@ -278,139 +295,102 @@ function buildFolderRailButtons(
   return buttons;
 }
 
+// The header is one row of same-size Buttons: Refresh first at the top left, the window
+// controls last at the top right. The row spans the rails, from the Program rail's left
+// edge to the Info rail's right edge, so every Button is wide enough for its full label.
+const headerRow = {
+  y: 36.353741,
+  width: 100,
+  height: 37.294964,
+  radius: 18.647463,
+  step: 107,
+  leftX: 5.500015,
+  rightX: 1216.464044 - 3 * 100 - 2 * 7
+} as const;
+
+function headerButton(
+  groupId: "top-left-actions" | "top-right-actions",
+  slot: number,
+  record: Pick<ButtonRecord, "id" | "label" | "tooltip" | "actionId">
+): ButtonRecord {
+  return {
+    ...record,
+    groupId,
+    x: (groupId === "top-left-actions" ? headerRow.leftX : headerRow.rightX) + headerRow.step * slot,
+    y: headerRow.y,
+    width: headerRow.width,
+    height: headerRow.height,
+    radius: headerRow.radius
+  };
+}
+
 export const staticButtons: ButtonRecord[] = [
-  {
-    id: "top-left-button-1",
-    groupId: "top-left-actions",
-    x: 7.571957,
-    y: 36.353741,
-    width: 70.446043,
-    height: 37.294964,
-    radius: 18.647463,
-    label: "Save Layout",
-    tooltip: "Save every open Button Editor, Pop-out, Fan, and installed Page window.",
-    actionId: "top-left-button-1"
-  },
-  {
-    id: "top-left-button-2",
-    groupId: "top-left-actions",
-    x: 94.464043,
-    y: 36.353741,
-    width: 70.446043,
-    height: 37.294964,
-    radius: 18.647463,
-    label: "Load Layout",
-    tooltip: "Restore every saved Button Editor, Pop-out, Fan, and installed Page window.",
-    actionId: "top-left-button-2"
-  },
-  {
-    id: "top-left-button-3",
-    groupId: "top-left-actions",
-    x: 181.35613,
-    y: 36.353741,
-    width: 70.446043,
-    height: 37.294964,
-    radius: 18.647463,
-    label: "Binds",
-    tooltip: "Open the shortcut binding window for panel buttons and macros.",
-    actionId: "top-left-button-3"
-  },
-  {
-    id: "top-left-button-6",
-    groupId: "top-left-actions",
-    x: 268.248216,
-    y: 36.353741,
-    width: 70.446043,
-    height: 37.294964,
-    radius: 18.647463,
-    label: "Macro Lab",
-    tooltip: "Open Macro Lab for the selected program and panel.",
-    actionId: "open-macro-lab"
-  },
-  {
+  headerButton("top-left-actions", 0, {
     id: "top-left-button-7",
-    groupId: "top-left-actions",
-    x: 355.140303,
-    y: 36.353741,
-    width: 70.446043,
-    height: 37.294964,
-    radius: 18.647463,
     label: "Refresh",
     tooltip: "Reload the FlowCell frontend after file, script, or layout changes.",
     actionId: "top-left-button-7"
-  },
-  {
+  }),
+  headerButton("top-left-actions", 1, {
+    id: "top-left-button-1",
+    label: "Save Layout",
+    tooltip: "Save every open Button Editor, Pop-out, Fan, and installed Page window.",
+    actionId: "top-left-button-1"
+  }),
+  headerButton("top-left-actions", 2, {
+    id: "top-left-button-2",
+    label: "Load Layout",
+    tooltip: "Restore every saved Button Editor, Pop-out, Fan, and installed Page window.",
+    actionId: "top-left-button-2"
+  }),
+  headerButton("top-left-actions", 3, {
+    id: "top-left-button-3",
+    label: "Binds",
+    tooltip: "Open the shortcut binding window for panel buttons and macros.",
+    actionId: "top-left-button-3"
+  }),
+  headerButton("top-left-actions", 4, {
+    id: "top-left-button-6",
+    label: "Macro Lab",
+    tooltip: "Open Macro Lab for the selected program and panel.",
+    actionId: "open-macro-lab"
+  }),
+  headerButton("top-left-actions", 5, {
     id: "top-left-button-8",
-    groupId: "top-left-actions",
-    x: 442.032390,
-    y: 36.353741,
-    width: 70.446043,
-    height: 37.294964,
-    radius: 18.647463,
     label: "Settings",
     tooltip: "Open FlowCell startup settings.",
     actionId: "open-settings"
-  },
-  {
+  }),
+  headerButton("top-left-actions", 6, {
     id: "top-left-button-9",
-    groupId: "top-left-actions",
-    x: 528.923453,
-    y: 36.353741,
-    width: 92.446043,
-    height: 37.294964,
-    radius: 18.647463,
     label: "Buttons",
     tooltip: "Open the FlowCell Buttons Editor.",
     actionId: "open-button-editor"
-  },
-  {
+  }),
+  headerButton("top-left-actions", 7, {
     id: "top-left-button-10",
-    groupId: "top-left-actions",
-    x: 637.814518,
-    y: 36.353741,
-    width: 92.446043,
-    height: 37.294964,
-    radius: 18.647463,
     label: "Theme",
     tooltip: "Open the FlowCell Theme Editor.",
     actionId: "open-theme-editor"
-  },
-  {
+  }),
+  headerButton("top-right-actions", 0, {
     id: "top-right-button-1",
-    groupId: "top-right-actions",
-    x: 929.586346,
-    y: 36.353741,
-    width: 70.446043,
-    height: 37.294964,
-    radius: 18.647463,
     label: "min",
     tooltip: "Minimize the main FlowCell window.",
     actionId: "top-right-button-1"
-  },
-  {
+  }),
+  headerButton("top-right-actions", 1, {
     id: "top-right-button-2",
-    groupId: "top-right-actions",
-    x: 1035.25541,
-    y: 36.353741,
-    width: 70.446043,
-    height: 37.294964,
-    radius: 18.647463,
     label: "max",
     tooltip: "Maximize or restore the main FlowCell window.",
     actionId: "top-right-button-2"
-  },
-  {
+  }),
+  headerButton("top-right-actions", 2, {
     id: "top-right-button-3",
-    groupId: "top-right-actions",
-    x: 1140.924475,
-    y: 36.353741,
-    width: 70.446043,
-    height: 37.294964,
-    radius: 18.647463,
     label: "close",
     tooltip: "Close FlowCell and all of its open windows.",
     actionId: "top-right-button-3"
-  }
+  })
 ];
 
 export function buildProgramRailButtons(

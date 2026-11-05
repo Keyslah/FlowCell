@@ -1815,7 +1815,7 @@ test("FlowCell page registry round-trips Main background and individual rail tok
 });
 
 test("the new Concrete Main theme draws every rail box and leaves Buttons and Default unchanged", () => {
-  assert.deepEqual(MAIN_THEME_PRESETS.map((preset) => preset.label), ["Concrete"]);
+  assert.deepEqual(MAIN_THEME_PRESETS.map((preset) => preset.label), ["Concrete", "Chipped Concrete"]);
   assert.equal(mainThemePresetAppearance("missing"), null);
   for (const preset of MAIN_THEME_PRESETS) {
     const page = mainThemePresetAppearance(preset.id);
@@ -1824,7 +1824,13 @@ test("the new Concrete Main theme draws every rail box and leaves Buttons and De
     assert.equal(rails.length, 4);
     for (const rail of rails) {
       for (const part of ["background", "border"]) {
-        const color = normalizeButtonSkinColor(page.tokens[`rail-${rail.id}-${part}`]);
+        const token = page.tokens[`rail-${rail.id}-${part}`];
+        if (preset.backgroundImageMode === "chipped-concrete") {
+          // Rendered slab pictures draw these rails; a fill or edge would only tint them.
+          assert.equal(token, "transparent", `${preset.label} ${rail.name} rail ${part} must stay clear`);
+          continue;
+        }
+        const color = normalizeButtonSkinColor(token);
         const alpha = color.length === 9 ? Number.parseInt(color.slice(7), 16) : 255;
         assert.ok(alpha > 0, `${preset.label} ${rail.name} rail ${part} must be visible`);
       }
@@ -1850,6 +1856,11 @@ test("the new Concrete Main theme draws every rail box and leaves Buttons and De
   const concreteWithPath = structuredClone(concrete);
   concreteWithPath.assets["background-image"].path = "C:\\Themes\\concrete.jpg";
   assert.equal(isThemePageAppearance(concreteWithPath), false);
+  const chipped = mainThemePresetAppearance("chipped-concrete");
+  assert.deepEqual(chipped.assets["background-image"], { mode: "chipped-concrete", path: null });
+  const chippedWithPath = structuredClone(chipped);
+  chippedWithPath.assets["background-image"].path = "C:\\Themes\\chipped.jpg";
+  assert.equal(isThemePageAppearance(chippedWithPath), false);
 });
 
 test("legacy Main Theme geometry collisions reject without reflow or partial appearance", () => {

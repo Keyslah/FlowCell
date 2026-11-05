@@ -160,7 +160,8 @@ impl Drop for MainAspectRatio {
 mod tests {
     use super::*;
 
-    const RATIO: f64 = 1225.0 / 721.0;
+    // The Main window frame (mainLayout.ts pageFrame): the page plus the room a base slab needs.
+    const RATIO: f64 = 1276.0 / 762.0;
     const EDGES: [u32; 8] = [
         WMSZ_LEFT,
         WMSZ_RIGHT,
@@ -279,7 +280,7 @@ mod tests {
             .unwrap();
         let layout = include_str!("../../src/pages/main/mainLayout.ts");
         let page = layout
-            .split("export const page: PageRecord = {")
+            .split("export const pageFrame: PageRecord = {")
             .nth(1)
             .unwrap()
             .split("};")

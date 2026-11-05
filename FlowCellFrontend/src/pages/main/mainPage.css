@@ -37,15 +37,27 @@
 .main-page__background {
   position: absolute;
   inset: 0;
-  background-color: var(--flowcell-main-background-color, #9db678);
+  /* A page-shaped base picture (Chipped Concrete) clears the fill so the window shows through past its edges. */
+  background-color: var(--flowcell-main-background-fill, var(--flowcell-main-background-color, #9db678));
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
 }
 
+/* The page (rails and Buttons) inside the window's frame; size and offset come inline from MainPage. */
+.main-page__content {
+  position: absolute;
+}
+
 .rail-surface {
   position: absolute;
   overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.rail-surface__slab {
+  position: absolute;
   pointer-events: none;
   z-index: 1;
 }
@@ -80,6 +92,10 @@
   inset: 0;
   display: block;
   pointer-events: none;
+  /* With a page-shaped base picture, header Button shadows end at the base's edge
+     (its size and position on the frame come inline from MainPage). */
+  mask-image: var(--flowcell-main-base-mask, none);
+  mask-repeat: no-repeat;
 }
 
 .main-page__poptype-control {

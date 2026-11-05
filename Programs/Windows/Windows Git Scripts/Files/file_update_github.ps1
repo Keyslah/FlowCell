@@ -24,8 +24,11 @@ function Find-FlowCellRoot([string]$StartPath) {
     throw 'Could not locate the FlowCell repository root from this script location.'
 }
 
-$repoRoot = Find-FlowCellRoot -StartPath $PSScriptRoot
-$flowCellLocalRoot = Join-Path $repoRoot 'flowcellbackend\local'
+$flowCellLocalRoot = if ($env:FLOWCELL_LOCAL_ROOT) {
+    $env:FLOWCELL_LOCAL_ROOT
+} else {
+    Join-Path (Find-FlowCellRoot -StartPath $PSScriptRoot) 'flowcellbackend\local'
+}
 $statusPath = Join-Path $flowCellLocalRoot 'logs\last_action_status.txt'
 
 function Write-Status([string]$Message) {
