@@ -2,6 +2,6 @@
   "schemaVersion": 1,
   "programId": "plain-krita",
   "repository": "Keyslah/FlowCell",
-  "ref": "FlowCell",
+  "ref": "main",
   "catalogPath": "Programs/Krita/Krita Git Scripts"
 }

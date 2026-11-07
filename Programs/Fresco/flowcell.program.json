@@ -17,7 +17,7 @@
   "bundledSources": [
     {
       "id": "plain-adobe-fresco.update-git-scripts",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "panelName": "Files",
       "sourcePath": "Adobe Fresco Git Scripts/Files/Update Git Scripts",
       "importKind": "script",

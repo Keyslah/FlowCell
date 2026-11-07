@@ -63,7 +63,7 @@ and select the updater package or its declared entry with normal Add Button.
 
 The owned installed copy identifies its program through its install record and
 program manifest. Its packaged `updater.json` declares `Keyslah/FlowCell`, branch
-`FlowCell`, program ID and exact remote catalog path. Each run resolves that ref
+`main`, program ID and exact remote catalog path. Each run resolves that ref
 once, lists only the catalog subtree and downloads its files from that commit.
 No Git installation, login, clone, upload or background poll is involved.
 Blender and Fusion use Python entry points through their existing bridges,

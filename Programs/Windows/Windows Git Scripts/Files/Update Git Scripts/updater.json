@@ -2,6 +2,6 @@
   "schemaVersion": 1,
   "programId": "windows",
   "repository": "Keyslah/FlowCell",
-  "ref": "FlowCell",
+  "ref": "main",
   "catalogPath": "Programs/Windows/Windows Git Scripts"
 }

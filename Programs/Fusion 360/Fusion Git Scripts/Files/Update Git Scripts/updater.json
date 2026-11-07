@@ -2,6 +2,6 @@
   "schemaVersion": 1,
   "programId": "fusion-360",
   "repository": "Keyslah/FlowCell",
-  "ref": "FlowCell",
+  "ref": "main",
   "catalogPath": "Programs/Fusion 360/Fusion Git Scripts"
 }

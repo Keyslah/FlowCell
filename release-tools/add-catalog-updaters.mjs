@@ -25,9 +25,9 @@ for(const relative of manifests){
   assert(m.allowedScriptExtensions.includes(entry.split('.').pop()),`${relative}: updater entry is incompatible with runner`);
   const sourcePath=m.gitScriptsFolder+'/Files/Update Git Scripts';
   const packageRoot=safe(program,sourcePath);
-  const contribution={id:m.programId+'.update-git-scripts',version:'1.0.0',panelName:'Files',sourcePath,importKind:'script',displayLabel:'Update Git Scripts',sourceKind:'script',required:false,dependencies:[],installEffects:['Downloads this program catalog only; preserves local edits and installed Buttons.'],installOnAdd:true};
+  const contribution={id:m.programId+'.update-git-scripts',version:'1.0.1',panelName:'Files',sourcePath,importKind:'script',displayLabel:'Update Git Scripts',sourceKind:'script',required:false,dependencies:[],installEffects:['Downloads this program catalog only; preserves local edits and installed Buttons.'],installOnAdd:true};
   const files=['Update-Catalog.ps1',entry,...(entry.endsWith('.jsx')?['launch_updater.vbs']:[])];
-  const metadata={schemaVersion:1,programId:m.programId,repository:'Keyslah/FlowCell',ref:'FlowCell',catalogPath:path.posix.dirname(relative)+'/'+m.gitScriptsFolder};
+  const metadata={schemaVersion:1,programId:m.programId,repository:'Keyslah/FlowCell',ref:'main',catalogPath:path.posix.dirname(relative)+'/'+m.gitScriptsFolder};
   if(write){
     fs.mkdirSync(packageRoot,{recursive:true});
     for(const file of files)fs.copyFileSync(path.join(template,file),path.join(packageRoot,file));

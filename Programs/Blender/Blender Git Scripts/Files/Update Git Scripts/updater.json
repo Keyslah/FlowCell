@@ -2,6 +2,6 @@
   "schemaVersion": 1,
   "programId": "blender",
   "repository": "Keyslah/FlowCell",
-  "ref": "FlowCell",
+  "ref": "main",
   "catalogPath": "Programs/Blender/Blender Git Scripts"
 }

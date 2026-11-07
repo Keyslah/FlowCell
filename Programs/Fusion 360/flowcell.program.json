@@ -92,7 +92,7 @@
     },
     {
       "id": "fusion-360.update-git-scripts",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "panelName": "Files",
       "sourcePath": "Fusion Git Scripts/Files/Update Git Scripts",
       "importKind": "script",
