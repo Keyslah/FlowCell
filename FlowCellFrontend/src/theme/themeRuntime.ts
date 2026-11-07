@@ -19,6 +19,7 @@ import {
   FLOWCELL_THEME_PAGE_IDS,
   cloneThemePageAppearance,
   defaultThemePageAppearance,
+  effectiveThemePageAssetMode,
   getFlowCellThemePageDefinition,
   isThemePageAppearance,
   themePageTokenCssEntries,
@@ -281,7 +282,11 @@ function chippedConcreteRailSlabEntries(): Array<readonly [string, string]> {
 const CHIPPED_CONCRETE_RAIL_SLAB = chippedConcreteRailSlabEntries();
 
 function isChippedConcreteMain(appearance: ThemePageAppearance): boolean {
-  return appearance.pageId === "main" && appearance.assets["background-image"]?.mode === "chipped-concrete";
+  if (appearance.pageId !== "main") return false;
+  const background = getFlowCellThemePageDefinition("main").assets.find((asset) => asset.id === "background-image");
+  // "Default" counts: Chipped Concrete is the Main page's default look.
+  return !!background &&
+    effectiveThemePageAssetMode(background, appearance.assets["background-image"]) === "chipped-concrete";
 }
 
 function mainRailSlabCssEntries(
@@ -299,13 +304,14 @@ function buildThemePageCssUpdate(appearance: ThemePageAppearance): ThemePageCssU
     assets: [
       ...definition.assets.map((assetDefinition) => {
         const asset = appearance.assets[assetDefinition.id];
-        const cssValue = asset.mode === "none"
+        const mode = effectiveThemePageAssetMode(assetDefinition, asset);
+        const cssValue = mode === "none"
           ? "none"
-          : asset.mode === "concrete"
+          : mode === "concrete"
             ? `url("${concreteBackground}")`
-            : asset.mode === "chipped-concrete"
+            : mode === "chipped-concrete"
               ? `url("${chippedConcreteBase}")`
-              : asset.mode === "custom" && asset.path
+              : mode === "custom" && asset.path
                 ? cssUrl(asset.path)
                 : null;
         return [assetDefinition.cssProperty, cssValue] as const;
@@ -397,7 +403,9 @@ export function installThemeRuntime(): () => void {
   const applyStored = () => {
     const stored = readStoredDocument();
     for (const pageId of FLOWCELL_THEME_PAGE_IDS) {
-      const appearance = stored.pages[pageId];
+      // With nothing saved, the Main page still gets its default look (Chipped Concrete), which needs
+      // its runtime variables; the other pages' defaults are their stylesheets' own fallbacks.
+      const appearance = stored.pages[pageId] ?? (pageId === "main" ? defaultThemePageAppearance("main") : null);
       if (appearance) void applyThemePageAppearance(appearance).catch(() => {});
     }
   };

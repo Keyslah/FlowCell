@@ -139,7 +139,8 @@ import {
   type MotionSettings
 } from "../../lib/motionSettings";
 import { showOpenFileDialog } from "../../lib/tauri";
-import mainBackground from "../../assets/backgrounds/main-background.jpeg";
+// The default Main look; the theme runtime normally sets the background before the first paint matters.
+import mainBackground from "../../assets/backgrounds/chipped-concrete-base.webp";
 import type { FlowCellBounds, LayoutSnapshot, LayoutSnapshotWindow } from "../../types";
 import { orderButtonRectsByVisualRows } from "../../button/geometry/buttonGeometry";
 import {

@@ -347,7 +347,7 @@ test("Main page offers the Concrete theme and a bundled Concrete background", ()
   assert.match(editor, /pageValue === "main" \? \([\s\S]{0,400}MAIN_THEME_PRESETS\.map/);
   assert.match(editor, /mainThemePresetAppearance\(presetId\)/);
   assert.match(runtime, /import concreteBackground from "\.\.\/assets\/backgrounds\/concrete\.jpg";/);
-  assert.match(runtime, /asset\.mode === "concrete"\s*\?\s*`url\("\$\{concreteBackground\}"\)`/);
+  assert.match(runtime, /\bmode === "concrete"\s*\?\s*`url\("\$\{concreteBackground\}"\)`/);
   const concrete = readFileSync(path.join(root, "src", "assets", "backgrounds", "concrete.jpg"));
   assert.deepEqual([...concrete.subarray(0, 3)], [0xff, 0xd8, 0xff]);
 });
@@ -360,10 +360,14 @@ test("Chipped Concrete stacks a page-sized base slab, rendered rail slabs and th
   assert.match(editor, /<option value="chipped-concrete">Chipped Concrete<\/option>/);
   // The page itself is the base level: one page-sized slab picture, see-through past its edges.
   assert.match(runtime, /import chippedConcreteBase from "\.\.\/assets\/backgrounds\/chipped-concrete-base\.webp";/);
-  assert.match(runtime, /asset\.mode === "chipped-concrete"\s*\?\s*`url\("\$\{chippedConcreteBase\}"\)`/);
+  assert.match(runtime, /\bmode === "chipped-concrete"\s*\?\s*`url\("\$\{chippedConcreteBase\}"\)`/);
   assert.match(runtime, /\["--flowcell-main-background-fill", "transparent"\]/);
   assert.match(runtime, /\["--flowcell-main-base-mask", `url\("\$\{chippedConcreteBase\}"\)`\]/);
-  assert.match(css, /background-color: var\(--flowcell-main-background-fill, var\(--flowcell-main-background-color, #9db678\)\);/);
+  assert.match(css, /background-color: var\(--flowcell-main-background-fill, var\(--flowcell-main-background-color, #887F73\)\);/);
+  // Chipped Concrete is the default Main look: "Default" resolves to it, and the Main page gets it with nothing saved.
+  assert.match(runtime, /effectiveThemePageAssetMode\(background, appearance\.assets\["background-image"\]\) === "chipped-concrete"/);
+  assert.match(runtime, /stored\.pages\[pageId\] \?\? \(pageId === "main" \? defaultThemePageAppearance\("main"\) : null\)/);
+  assert.match(read("src", "pages", "main", "MainPage.tsx"), /import mainBackground from "\.\.\/\.\.\/assets\/backgrounds\/chipped-concrete-base\.webp";/);
   // Rail and header Button shadows stop at the base's edge, and the main window drops its frame shadow.
   assert.match(css, /\.main-page__button-group--placement-layer \{[^}]*mask-image: var\(--flowcell-main-base-mask, none\);/);
   assert.match(railSurface, /maskImage: "var\(--flowcell-main-base-mask, none\)"/);

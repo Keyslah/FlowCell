@@ -396,9 +396,10 @@ function placementProgramPanel(
 }
 
 export function defaultMainThemeAppearance(): MainThemeAppearance {
+  // Chipped Concrete is the default Main look (it replaced the original green page).
   return {
-    backgroundColor: "#9db678",
-    backgroundImageMode: "default",
+    backgroundColor: "#887F73",
+    backgroundImageMode: "chipped-concrete",
     backgroundImagePath: null,
     rails: Object.fromEntries(
       rails.map((rail) => [

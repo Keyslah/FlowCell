@@ -37,8 +37,9 @@
 .main-page__background {
   position: absolute;
   inset: 0;
-  /* A page-shaped base picture (Chipped Concrete) clears the fill so the window shows through past its edges. */
-  background-color: var(--flowcell-main-background-fill, var(--flowcell-main-background-color, #9db678));
+  /* A page-shaped base picture (Chipped Concrete, the default) clears the fill so the window shows through
+     past its edges. */
+  background-color: var(--flowcell-main-background-fill, var(--flowcell-main-background-color, #887F73));
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
