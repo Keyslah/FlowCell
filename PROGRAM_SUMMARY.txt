@@ -1,3 +1,6 @@
+2026-11-06 GitHub branch consolidation:
+- The default branch changes from FlowCell to main. The source checkout instructions use main, and the README links to the file organizer guide relative to the current branch.
+
 2026-11-04 Raised Button paint order:
 - Main placements paint left to right within visual rows and top to bottom across rows. The Windows Panel rail had Utility above Test in saved geometry, but alphabetical rendering painted Utility's baked shadow across Test.
 - The shared Button Surface uses that same order for Chipped Concrete and Concrete Moss keys in Pop, Fan and Buttons Editor. Raised keys exchange their existing paint slots. Other skin layers, expanded selects and lifted reorder previews keep their stacking rules.

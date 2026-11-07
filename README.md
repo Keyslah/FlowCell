@@ -29,7 +29,7 @@ Requires [AutoHotkey V2](https://www.autohotkey.com/download/ahk-v2.exe). AutoHo
 ## Organization
 To use the files panel, you have to set up the file organizer with your filing system. 
 
-https://github.com/Keyslah/FlowCell/blob/FlowCell/docs/File%20organizer.md  
+[File organizer setup](docs/File%20organizer.md)
 
 ## Build or develop FlowCell
 

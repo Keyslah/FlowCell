@@ -20,7 +20,7 @@ Install these on Windows:
 ```cmd
 git clone https://github.com/Keyslah/FlowCell.git
 cd FlowCell
-git checkout FlowCell
+git checkout main
 ```
 
 ## Developer launcher
