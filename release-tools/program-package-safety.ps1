@@ -202,6 +202,30 @@ function Assert-ProgramManifestReferencesTracked(
         "$fieldPrefix package source" `
         -RequireFile)
     }
+    $toolsetManifestPath = if (Test-Path -LiteralPath $sourcePath -PathType Container) {
+      Join-Path $sourcePath 'flowcell.toolset.json'
+    } elseif ([System.IO.Path]::GetFileName($sourcePath) -eq 'flowcell.toolset.json') {
+      $sourcePath
+    } else { $null }
+    if ($toolsetManifestPath -and (Test-Path -LiteralPath $toolsetManifestPath -PathType Leaf)) {
+      try { $toolset = Get-Content -LiteralPath $toolsetManifestPath -Raw | ConvertFrom-Json }
+      catch { Stop-Package "Invalid tool-set manifest: $toolsetManifestPath" }
+      if ($toolset.PSObject.Properties['appearance'] -and $toolset.appearance) {
+        $packageFolder = Split-Path -Parent $toolsetManifestPath
+        $programPrefix = $ProgramDirectory.FullName.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+        $relativeFolder = $packageFolder.Substring($programPrefix.Length).Replace('\', '/')
+        foreach ($entry in $toolset.appearance.skins.PSObject.Properties) {
+          $skinFiles = @([string]$entry.Value.file)
+          if ($entry.Value.PSObject.Properties['variants'] -and $entry.Value.variants) {
+            $skinFiles += @($entry.Value.variants.PSObject.Properties | ForEach-Object { [string]$_.Value })
+          }
+          foreach ($file in $skinFiles) {
+            $relativeSkin = Convert-ToSafeRelativeFolder $file "$fieldPrefix appearance skin" $ProgramDirectory.Name
+            [void](Assert-TrackedProgramReference $ProgramDirectory $TrackedFiles "$relativeFolder/$relativeSkin" "$fieldPrefix appearance skin" -RequireFile)
+          }
+        }
+      }
+    }
     $sourceIndex++
   }
 }

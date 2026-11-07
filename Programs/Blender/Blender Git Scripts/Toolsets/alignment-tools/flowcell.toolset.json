@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "blender.alignment-tools",
-  "version": "1.4.2",
-  "label": "alignment tools",
+  "version": "1.4.3",
+  "label": "align",
   "tooltip": "Align to the active object; Shift: world origin; Control: 3D cursor.",
   "kind": "toolset",
   "program": "Blender",
@@ -329,6 +329,72 @@
     },
     "updatePolicy": {
       "appendMissingChildSlots": true
+    }
+  },
+  "appearance": {
+    "skins": {
+      "skin-1-Chipped-Concrete-Key-100": {
+        "file": "skins/skin-1-Chipped-Concrete-Key-100.flowcell-button-skin.txt",
+        "variants": {
+          "0": "skins/skin-1-Chipped-Concrete-Key-100/0.flowcell-button-skin.txt",
+          "1": "skins/skin-1-Chipped-Concrete-Key-100/1.flowcell-button-skin.txt",
+          "2": "skins/skin-1-Chipped-Concrete-Key-100/2.flowcell-button-skin.txt",
+          "3": "skins/skin-1-Chipped-Concrete-Key-100/3.flowcell-button-skin.txt",
+          "4": "skins/skin-1-Chipped-Concrete-Key-100/4.flowcell-button-skin.txt",
+          "5": "skins/skin-1-Chipped-Concrete-Key-100/5.flowcell-button-skin.txt",
+          "6": "skins/skin-1-Chipped-Concrete-Key-100/6.flowcell-button-skin.txt",
+          "7": "skins/skin-1-Chipped-Concrete-Key-100/7.flowcell-button-skin.txt",
+          "8": "skins/skin-1-Chipped-Concrete-Key-100/8.flowcell-button-skin.txt",
+          "9": "skins/skin-1-Chipped-Concrete-Key-100/9.flowcell-button-skin.txt",
+          "10": "skins/skin-1-Chipped-Concrete-Key-100/10.flowcell-button-skin.txt",
+          "11": "skins/skin-1-Chipped-Concrete-Key-100/11.flowcell-button-skin.txt",
+          "12": "skins/skin-1-Chipped-Concrete-Key-100/12.flowcell-button-skin.txt",
+          "13": "skins/skin-1-Chipped-Concrete-Key-100/13.flowcell-button-skin.txt",
+          "14": "skins/skin-1-Chipped-Concrete-Key-100/14.flowcell-button-skin.txt",
+          "15": "skins/skin-1-Chipped-Concrete-Key-100/15.flowcell-button-skin.txt",
+          "16": "skins/skin-1-Chipped-Concrete-Key-100/16.flowcell-button-skin.txt",
+          "17": "skins/skin-1-Chipped-Concrete-Key-100/17.flowcell-button-skin.txt",
+          "18": "skins/skin-1-Chipped-Concrete-Key-100/18.flowcell-button-skin.txt",
+          "19": "skins/skin-1-Chipped-Concrete-Key-100/19.flowcell-button-skin.txt",
+          "20": "skins/skin-1-Chipped-Concrete-Key-100/20.flowcell-button-skin.txt",
+          "21": "skins/skin-1-Chipped-Concrete-Key-100/21.flowcell-button-skin.txt",
+          "22": "skins/skin-1-Chipped-Concrete-Key-100/22.flowcell-button-skin.txt",
+          "23": "skins/skin-1-Chipped-Concrete-Key-100/23.flowcell-button-skin.txt",
+          "24": "skins/skin-1-Chipped-Concrete-Key-100/24.flowcell-button-skin.txt",
+          "25": "skins/skin-1-Chipped-Concrete-Key-100/25.flowcell-button-skin.txt",
+          "26": "skins/skin-1-Chipped-Concrete-Key-100/26.flowcell-button-skin.txt",
+          "27": "skins/skin-1-Chipped-Concrete-Key-100/27.flowcell-button-skin.txt",
+          "28": "skins/skin-1-Chipped-Concrete-Key-100/28.flowcell-button-skin.txt",
+          "29": "skins/skin-1-Chipped-Concrete-Key-100/29.flowcell-button-skin.txt",
+          "30": "skins/skin-1-Chipped-Concrete-Key-100/30.flowcell-button-skin.txt",
+          "31": "skins/skin-1-Chipped-Concrete-Key-100/31.flowcell-button-skin.txt",
+          "32": "skins/skin-1-Chipped-Concrete-Key-100/32.flowcell-button-skin.txt"
+        }
+      },
+      "skin-2-Light-green-black-text-basic-Z": {
+        "file": "skins/skin-2-Light-green-black-text-basic-Z.flowcell-button-skin.txt"
+      }
+    },
+    "owner": "skin-1-Chipped-Concrete-Key-100",
+    "children": {
+      "x_min": "skin-2-Light-green-black-text-basic-Z",
+      "x_center": "skin-2-Light-green-black-text-basic-Z",
+      "x_max": "skin-2-Light-green-black-text-basic-Z",
+      "x_surface": "skin-2-Light-green-black-text-basic-Z",
+      "x_geo": "skin-2-Light-green-black-text-basic-Z",
+      "y_min": "skin-2-Light-green-black-text-basic-Z",
+      "y_center": "skin-2-Light-green-black-text-basic-Z",
+      "y_max": "skin-2-Light-green-black-text-basic-Z",
+      "y_surface": "skin-2-Light-green-black-text-basic-Z",
+      "y_geo": "skin-2-Light-green-black-text-basic-Z",
+      "z_min": "skin-2-Light-green-black-text-basic-Z",
+      "z_center": "skin-2-Light-green-black-text-basic-Z",
+      "z_max": "skin-2-Light-green-black-text-basic-Z",
+      "z_surface": "skin-2-Light-green-black-text-basic-Z",
+      "z_geo": "skin-2-Light-green-black-text-basic-Z",
+      "center_everything": "skin-2-Light-green-black-text-basic-Z",
+      "center_xy": "skin-2-Light-green-black-text-basic-Z",
+      "group": "skin-2-Light-green-black-text-basic-Z"
     }
   }
 }

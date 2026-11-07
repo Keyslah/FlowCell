@@ -14,6 +14,7 @@ import type { InstallButtonSourceResult } from "./ButtonStateRepository.js";
 import { cloneButtonDocument } from "./buttonDefaults.js";
 import { validateInstalledButtonLayout } from "./installedButtonLayoutValidation.js";
 import { resolveInstalledToolFields } from "./installedToolFields.js";
+import { assignInstalledToolSetSkins } from "./installedToolSetSkins.js";
 import { hideThemeContributionOwner } from "./buttonDocumentOperations.js";
 
 function stableDocumentIdSegment(value: string): string {
@@ -61,6 +62,7 @@ function appendMissingToolSetChildren(
     }
   );
 
+  const appearanceTargets: { placement: ButtonPlacement; skinKey?: string }[] = [];
   installed.children.forEach((child, index) => {
     const slot = normalizedSlot(child.slot);
     if (childIdBySlot.has(slot)) return;
@@ -109,6 +111,7 @@ function appendMissingToolSetChildren(
       resizeAnchor: "top-left"
     };
     document.placements[placementId] = placement;
+    appearanceTargets.push({ placement, skinKey: installed.layout?.appearance?.children?.[child.slot] });
     surface.placementIds.push(placementId);
     surface.width = Math.max(surface.width, rect.x + rect.width + document.settings.defaultSurfacePadding);
     surface.height = Math.max(surface.height, rect.y + rect.height + document.settings.defaultSurfacePadding);
@@ -116,6 +119,7 @@ function appendMissingToolSetChildren(
     unit.childPlacementIds.push(placementId);
     childIdBySlot.set(slot, childId);
   });
+  if (appearanceTargets.length) assignInstalledToolSetSkins(document, installed.layout?.appearance, appearanceTargets);
   unit.canonicalBounds = { ...unit.canonicalBounds, width: surface.width, height: surface.height };
 }
 
@@ -123,7 +127,7 @@ export function applyInstalledSourceUpdate(
   document: ButtonStateDocument,
   installed: InstallButtonSourceResult
 ): void {
-  const layout = validateInstalledButtonLayout(installed.layout);
+  const layout = validateInstalledButtonLayout(installed.layout, installed.children.map((child) => child.slot));
   const owner = document.buttons[installed.ownerButtonId];
   if (!owner?.sourceIdentity) {
     throw new Error(`Button '${installed.ownerButtonId}' is not an installed source owner.`);

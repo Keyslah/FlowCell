@@ -156,15 +156,15 @@ test("new and updated Tool Sets validate layout data before consuming it", () =>
 
   assert.match(
     editor,
-    /function addInstalledToolSet[\s\S]{0,300}const layout = validateInstalledButtonLayout\(result\.layout\)/
+    /function addInstalledToolSet[\s\S]{0,300}const layout = validateInstalledButtonLayout\(result\.layout, result\.children\.map/
   );
   assert.match(
     updates,
-    /function applyInstalledSourceUpdate[\s\S]{0,220}const layout = validateInstalledButtonLayout\(installed\.layout\)/
+    /function applyInstalledSourceUpdate[\s\S]{0,220}const layout = validateInstalledButtonLayout\(installed\.layout, installed\.children\.map/
   );
   assert.match(
     repository,
-    /layout:\s*validateInstalledButtonLayout\(response\.layout/
+    /layout:\s*validateInstalledButtonLayout\(\s*response\.layout/
   );
 });
 

@@ -613,7 +613,7 @@ test("Load Settings and placement defaults use the selected type and required bu
   assert.match(editor, /settingsPlacementKind \?\? "main-page"/);
 });
 
-test("Open Pop stays transient while Main Pop falls back to a canonical default", () => {
+test("Open Pop stays transient while Main Pop uses the current Buttons", () => {
   const main = readFileSync(
     join(frontendRoot, "src", "pages", "main", "MainPage.tsx"),
     "utf8"
@@ -631,7 +631,7 @@ test("Open Pop stays transient while Main Pop falls back to a canonical default"
     "utf8"
   );
   const transientPopBlock = main.match(
-    /const openMainPopChoice = async \([\s\S]*?\n  const openDefaultPanelPop = async/
+    /const openMainPopChoice = async \([\s\S]*?\n  const openPanelButtonsPop = async/
   );
   assert.ok(transientPopBlock, "Main transient Pop file handler must exist");
   assert.match(transientPopBlock[0], /buildTransientButtonPopoutSettingsDocument/);
@@ -647,13 +647,14 @@ test("Open Pop stays transient while Main Pop falls back to a canonical default"
   assert.doesNotMatch(transientPopBlock[0], /ensureRegularPopout|commitButtonDocumentMutation/);
 
   const defaultPopBlock = main.match(
-    /const openDefaultPanelPop = async \([\s\S]*?\n  const handleChoosePanelPop = async/
+    /const openPanelButtonsPop = async \([\s\S]*?\n  const handleChoosePanelPop = async/
   );
-  assert.ok(defaultPopBlock, "Main default Pop fallback must exist");
+  assert.ok(defaultPopBlock, "Main current-Button Pop handler must exist");
   assert.match(defaultPopBlock[0], /commitButtonDocumentMutation\(\(draft\) =>/);
   assert.match(defaultPopBlock[0], /candidate\.role === "single-script"/);
-  assert.match(defaultPopBlock[0], /ensureRegularPopout\(draft, memberButtons\)/);
-  assert.match(defaultPopBlock[0], /if \(!choice\) \{[\s\S]{0,120}openDefaultPanelPop/);
+  assert.match(defaultPopBlock[0], /ensureRegularPopout\(draft, memberButtons, \{ ownerless: true \}\)/);
+  assert.match(defaultPopBlock[0], /selectedPanelScriptRecords\.map\(\(record\) => record\.canonicalButtonId\)/);
+  assert.doesNotMatch(defaultPopBlock[0], /readMainLastPopChoices|openMainPopChoice/);
   assert.match(defaultPopBlock[0], /openButtonPopoutWindow\(\{/);
   assert.doesNotMatch(defaultPopBlock[0], /Use Open Pop first\./);
   assert.match(

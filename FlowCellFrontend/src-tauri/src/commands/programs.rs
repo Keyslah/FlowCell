@@ -5256,6 +5256,12 @@ fn preview_plain_program_package_in(
             .into_iter()
             .collect::<BTreeSet<_>>();
     for folder_name in list_child_directory_names(&programs_root)? {
+        // Core creates this directory before the Windows package is available.
+        if folder_name.eq_ignore_ascii_case("Windows")
+            && super::program_packages::placeholder_directories(&programs_root.join(&folder_name)).is_ok()
+        {
+            continue;
+        }
         let existing_manifest = load_program_manifest_from_root(programs_root, &folder_name)
             .map_err(|error| {
                 format!(
@@ -6423,6 +6429,27 @@ mod managed_program_setup_tests {
         .expect_err("duplicate process names must fail closed");
         assert!(error.contains("already claimed"));
         assert!(error.contains("not full path"));
+    }
+
+    #[test]
+    fn plain_program_preview_skips_only_the_directory_only_windows_placeholder() {
+        let programs_root = temporary_root("plain-program-windows-placeholder");
+        let placeholder = programs_root.join("Windows");
+        fs::create_dir_all(placeholder.join("Panels").join("Startup"))
+            .expect("create the initial Windows placeholder");
+        let _cleanup = TestProgramPackage(programs_root.clone());
+        let program = programs_root.file_name().unwrap().to_str().unwrap();
+        let executable = Path::new(r"C:\Apps\Example.exe");
+
+        let (program_root, _) = preview_plain_program_package_in(&programs_root, program, executable)
+            .expect("the placeholder does not block registration");
+        assert!(!program_root.exists(), "preflight never creates a program");
+
+        fs::write(placeholder.join("Panels").join("Startup").join("personal.txt"), b"keep")
+            .expect("add content to the placeholder");
+        let error = preview_plain_program_package_in(&programs_root, program, executable)
+            .expect_err("a directory containing files requires a valid manifest");
+        assert!(error.contains("invalid or unreadable manifest"));
     }
 
     #[test]

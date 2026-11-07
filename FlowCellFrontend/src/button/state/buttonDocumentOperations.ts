@@ -75,7 +75,8 @@ function addPlacement(
 
 export function ensureRegularPopout(
   document: ButtonStateDocument,
-  buttons: readonly ButtonRecord[]
+  buttons: readonly ButtonRecord[],
+  options: { ownerless?: boolean } = {}
 ): RegularButtonPopoutUnit {
   const eligible = [...new Map(
     buttons
@@ -88,7 +89,8 @@ export function ensureRegularPopout(
   const selectionKey = deriveRegularPopoutSelectionKey(identities);
   const existing = Object.values(document.popoutUnits).find(
     (unit): unit is RegularButtonPopoutUnit =>
-      unit.kind === "regular" && unit.selectionKey === selectionKey
+      unit.kind === "regular" && unit.selectionKey === selectionKey &&
+      (!options.ownerless || (!unit.ownerButtonId && !unit.ownerPlacementId && unit.interactionMode !== "fan"))
   );
   if (existing) return existing;
   const starter = createStarterButtonLayout(

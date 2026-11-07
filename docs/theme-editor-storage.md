@@ -77,3 +77,15 @@ Blender release packaging reads its configured current library, rejects missing
 assets and invalid embedded checksums, and copies complete portable archives
 without changing their bytes. Previous per-folder packages are still accepted.
 It never substitutes a stale catalog snapshot for the configured library.
+
+Program Theme targets expose **Import Theme** beside Target. It lists supplied
+themes and accepts a local saved archive. Legacy themes apply validated shared
+settings and image values while reporting the count of unavailable old placement
+overrides. Modern portable themes continue to require compatible source identities
+and exact versions.
+
+Portable theme saves retain captured literal skins and embedded numbered variants.
+They can embed the owned immutable source of a custom tool, while catalog tools
+use versioned dependencies resolved through the normal source installer. Recipient
+placement IDs replace saved baselines. A saved theme covers the selected scope's
+assigned appearance. Standalone Tool Set export is available in Button Editor.

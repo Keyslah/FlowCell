@@ -14,14 +14,238 @@ import {
   rails
 } from "./.compiled-button-system/pages/main/mainLayout.js";
 import {
+  buttonSpacingPixelsFromMillimeters,
   buttonRectsOverlap,
+  createStarterButtonLayout,
   orderButtonRectsByVisualRows,
   orderRaisedKeyPaintSlots
 } from "./.compiled-button-system/button/geometry/buttonGeometry.js";
+import { cloneButtonDocument, createButtonStateDocument } from "./.compiled-button-system/button/state/buttonDefaults.js";
+import { ensureRegularPopout } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
+import { createButtonSourceIdentity } from "./.compiled-button-system/button/state/sourceIdentity.js";
+import { validateButtonStateDocument } from "./.compiled-button-system/button/state/buttonStateValidation.js";
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readSource = (...segments) =>
   readFileSync(path.join(frontendRoot, ...segments), "utf8");
+
+function mainPopFixture() {
+  const document = createButtonStateDocument();
+  const ids = ["Project", ...Array.from({ length: 8 }, (_, index) => `Other ${index + 1}`)];
+  const panel = {
+    id: "files-panel", name: "Windows / Files", kind: "panel", width: 600, height: 300,
+    placementIds: [], visualOverflowAllowance: 24, uniformButtonSize: null
+  };
+  document.surfaces[panel.id] = panel;
+  for (const [index, id] of [...ids].reverse().entries()) {
+    document.buttons[id] = {
+      id, role: "single-script", sourceIdentity: createButtonSourceIdentity("Windows", "Files", `${id}.ps1`),
+      label: id, tooltip: "", executionTarget: { kind: "panel-script", programName: "Windows", panelName: "Files", fileName: `${id}.ps1` },
+      defaultSkinId: "skin-default-neutral", defaultTextFitMode: "shrink", disabled: false,
+      activationAnimation: null, activationBehavior: null, toolSetParentId: null, toolSetBehavior: null, metadata: {}
+    };
+    const visualIndex = ids.indexOf(id);
+    const placement = {
+      id: `main-${id}`, buttonId: id, surfaceId: panel.id,
+      x: (visualIndex % 4) * 128, y: Math.floor(visualIndex / 4) * 48,
+      width: id === "Project" ? 104 : 120, height: id === "Project" ? 36 : 40,
+      zIndex: index, skinOverrideId: "skin-default-neutral", textFitMode: "stack-whole-words", textAlignment: "center",
+      textOffsetX: 3, textOffsetY: -2, minimumFontSize: 9, textSizeOverride: 15,
+      allowLabelResize: false, matchHitboxToSkin: false, allowStretching: false,
+      highlightOnHover: true, activationCycle: null, visualStateMap: null, resizeAnchor: "top-left"
+    };
+    document.placements[placement.id] = placement;
+    panel.placementIds.push(placement.id);
+  }
+  return { document, ids, panel };
+}
+
+function mainPopHarness(fixture, selectedIds = []) {
+  const source = readSource("src", "pages", "main", "MainPage.tsx");
+  const identityStart = source.indexOf("function sourceIdentityMatchesFolderScope(");
+  const identityEnd = source.indexOf("type CanonicalRenameScope", identityStart);
+  const start = source.indexOf("const openPanelButtonsPop = async");
+  const end = source.indexOf("const handleChoosePanelPop = async", start);
+  assert.ok(identityStart >= 0 && identityEnd > identityStart && start >= 0 && end > start,
+    "execute the actual Main selected-Button Pop handlers");
+  const compiled = ts.transpileModule(
+    source.slice(identityStart, identityEnd) + source.slice(start, end) +
+    "\nglobalThis.openPanelPop = handleOpenPanelPop; globalThis.openButtonsPop = openPanelButtonsPop;",
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }
+  ).outputText;
+  let current = fixture.document;
+  const opened = [];
+  const toolSets = [];
+  const alerts = [];
+  const sandbox = {
+    selectedProgramName: "Windows", selectedPanelName: "Files",
+    selectedPanelScriptRecords: selectedIds.map((id) => ({ canonicalButtonId: id, fileName: `${id}.ps1`, label: id })),
+    buttonDocumentRef: { current },
+    loadMainPageButtonBootstrap: async () => ({ document: current }),
+    loadButtonStateDocument: async () => current,
+    acceptButtonDocument: (document) => { current = document; sandbox.buttonDocumentRef.current = document; },
+    commitButtonDocumentMutation: async (mutate) => {
+      const draft = structuredClone(current);
+      await mutate(draft);
+      const validation = validateButtonStateDocument(draft);
+      assert.equal(validation.valid, true, JSON.stringify(validation.issues));
+      current = draft;
+      sandbox.buttonDocumentRef.current = current;
+      return current;
+    },
+    ensureRegularPopout, cloneButtonDocument, createStarterButtonLayout, buttonSpacingPixelsFromMillimeters, orderButtonRectsByVisualRows,
+    areFolderNamesEqual: (left, right) => left?.trim().toLowerCase() === right?.trim().toLowerCase(),
+    openButtonPopoutWindow: async (args) => opened.push(structuredClone(args)),
+    activateToolSetOwner: async (id, document, behavior) => toolSets.push({ id, behavior, document }),
+    readMainLastPopChoices: () => assert.fail("normal Pop must not use the previous Open Pop file"),
+    openMainPopChoice: () => assert.fail("normal Pop must not open the remembered file"),
+    formatErrorMessage: (error) => error.message,
+    console: { error: () => {} }, window: { alert: (message) => alerts.push(message) }
+  };
+  vm.runInNewContext(compiled, sandbox);
+  return {
+    open: () => sandbox.openPanelPop(),
+    openIds: (ids) => sandbox.openButtonsPop("Windows", "Files", ids),
+    get document() { return current; }, opened, toolSets, alerts
+  };
+}
+
+test("Main Pop opens only highlighted Project even when another multi-Button Pop already exists", async () => {
+  const fixture = mainPopFixture();
+  const previous = ensureRegularPopout(fixture.document, fixture.ids.map((id) => fixture.document.buttons[id]));
+  const original = structuredClone(fixture.document);
+  const harness = mainPopHarness(fixture, ["Project"]);
+  await harness.open();
+  assert.deepEqual(harness.alerts, []);
+  assert.equal(harness.opened.length, 1);
+  const unit = harness.document.popoutUnits[harness.opened[0].popoutUnitId];
+  assert.notEqual(unit.id, previous.id);
+  assert.deepEqual(Array.from(unit.memberPlacementIds, (id) => harness.document.placements[id].buttonId), ["Project"]);
+  const placement = harness.document.placements[unit.memberPlacementIds[0]];
+  const source = original.placements["main-Project"];
+  for (const key of ["width", "height", "skinOverrideId", "textFitMode", "textAlignment", "textOffsetX", "textOffsetY",
+    "minimumFontSize", "textSizeOverride", "matchHitboxToSkin", "highlightOnHover"]) {
+    assert.deepEqual(placement[key], source[key], `Project keeps its authored ${key}`);
+  }
+  assert.deepEqual(harness.document.popoutUnits[previous.id], original.popoutUnits[previous.id]);
+  assert.deepEqual(harness.document.placements["main-Project"], source);
+  await harness.open();
+  assert.equal(harness.opened[1].popoutUnitId, unit.id, "repeated Pop reuses the exact selected unit");
+});
+
+test("Main Pop preserves an authored Fan with the same selection and reuses a separate ownerless Pop", async () => {
+  const fixture = mainPopFixture();
+  const fan = ensureRegularPopout(fixture.document, [fixture.document.buttons.Project]);
+  const surface = fixture.document.surfaces[fan.surfaceId];
+  const owner = {
+    ...structuredClone(fixture.document.placements[fan.memberPlacementIds[0]]),
+    id: "authored-fan-owner", x: 200, y: 8
+  };
+  fixture.document.placements[owner.id] = owner;
+  surface.placementIds.push(owner.id);
+  surface.width = 376;
+  Object.assign(fan, {
+    interactionMode: "fan", ownerButtonId: "Project", ownerPlacementId: owner.id,
+    openRule: "hover", closeRule: "hover-out", canonicalBounds: { x: 0, y: 0, width: 376, height: surface.height }
+  });
+  assert.equal(validateButtonStateDocument(fixture.document).valid, true);
+  const original = structuredClone(fixture.document);
+  const harness = mainPopHarness(fixture, ["Project"]);
+  await harness.open();
+  assert.deepEqual(harness.alerts, []);
+  assert.equal(harness.opened.length, 1);
+  const unit = harness.document.popoutUnits[harness.opened[0].popoutUnitId];
+  assert.notEqual(unit.id, fan.id);
+  assert.equal(unit.interactionMode, "pop");
+  assert.equal(unit.ownerButtonId, null);
+  assert.equal(unit.ownerPlacementId, null);
+  assert.deepEqual(harness.document.popoutUnits[fan.id], original.popoutUnits[fan.id]);
+  assert.deepEqual(harness.document.surfaces[fan.surfaceId], original.surfaces[fan.surfaceId]);
+  for (const id of surface.placementIds) assert.deepEqual(harness.document.placements[id], original.placements[id]);
+  await harness.open();
+  assert.equal(harness.opened[1].popoutUnitId, unit.id);
+  assert.equal(Object.keys(harness.document.popoutUnits).length, 2);
+});
+
+for (const count of [2, 8, 9]) {
+  test(`Main Pop packs exactly ${count} highlighted Buttons into rows of at most 4`, async () => {
+    const fixture = mainPopFixture();
+    const selected = fixture.ids.slice(0, count);
+    const harness = mainPopHarness(fixture, [...selected].reverse());
+    await harness.open();
+    assert.deepEqual(harness.alerts, []);
+    assert.equal(harness.opened.length, 1);
+    const unit = harness.document.popoutUnits[harness.opened[0].popoutUnitId];
+    const placements = Array.from(unit.memberPlacementIds, (id) => harness.document.placements[id]);
+    assert.deepEqual(placements.map((placement) => placement.buttonId), selected, "grid follows Main's visible row order");
+    assert.deepEqual(placements.map((placement) => placement.y), selected.map((_, index) => 8 + Math.floor(index / 4) * 40));
+    assert.equal(new Set(placements.map((placement) => placement.y)).size, Math.ceil(count / 4));
+    for (let index = 0; index < placements.length; index += 1) {
+      const placement = placements[index];
+      const source = fixture.document.placements[`main-${placement.buttonId}`];
+      assert.deepEqual([placement.width, placement.height], [source.width, source.height]);
+      const expectedX = index % 4 === 0 ? 8 : placements[index - 1].x + placements[index - 1].width;
+      assert.equal(placement.x, expectedX, "adjacent grid Buttons have the configured 0 px gap");
+    }
+    const surface = harness.document.surfaces[unit.surfaceId];
+    assert.equal(surface.width, count === 2 ? 240 : 496);
+    assert.equal(surface.height, 16 + Math.ceil(count / 4) * 40);
+    assert.deepEqual(JSON.parse(JSON.stringify(unit.canonicalBounds)), { x: 0, y: 0, width: surface.width, height: surface.height });
+  });
+}
+
+test("Main Pop with 0 highlighted Buttons opens the whole current panel", async () => {
+  const fixture = mainPopFixture();
+  const unrelated = structuredClone(fixture.document.buttons.Project);
+  unrelated.id = "Unrelated";
+  unrelated.sourceIdentity = createButtonSourceIdentity("Windows", "Utility", "Unrelated.ps1");
+  fixture.document.buttons[unrelated.id] = unrelated;
+  const harness = mainPopHarness(fixture);
+  await harness.open();
+  assert.deepEqual(harness.alerts, []);
+  const unit = harness.document.popoutUnits[harness.opened[0].popoutUnitId];
+  assert.deepEqual(Array.from(unit.memberPlacementIds, (id) => harness.document.placements[id].buttonId), fixture.ids);
+});
+
+test("Main Pop opens only a highlighted tool-set owner, and mixed selection keeps its exact scripts", async () => {
+  for (const mixed of [false, true]) {
+    const fixture = mainPopFixture();
+    const owner = structuredClone(fixture.document.buttons.Project);
+    owner.id = "Selected tool set";
+    owner.role = "tool-set-owner";
+    owner.executionTarget = null;
+    owner.sourceIdentity = createButtonSourceIdentity("Windows", "Files", "tool.flowcell.toolset.json");
+    fixture.document.buttons[owner.id] = owner;
+    const harness = mainPopHarness(fixture, mixed ? ["Project", owner.id] : [owner.id]);
+    await harness.open();
+    assert.deepEqual(harness.alerts, []);
+    assert.deepEqual(harness.toolSets.map(({ id, behavior }) => ({ id, behavior })), [{ id: owner.id, behavior: "open" }]);
+    assert.equal(harness.opened.length, mixed ? 1 : 0);
+    if (mixed) {
+      const unit = harness.document.popoutUnits[harness.opened[0].popoutUnitId];
+      assert.deepEqual(Array.from(unit.memberPlacementIds, (id) => harness.document.placements[id].buttonId), ["Project"]);
+    }
+  }
+});
+
+test("Main Pop refuses stale or unsupported highlighted IDs instead of opening the whole panel", async () => {
+  for (const selectedId of ["Missing", "Other panel", "Tool child"]) {
+    const fixture = mainPopFixture();
+    const otherPanel = structuredClone(fixture.document.buttons.Project);
+    otherPanel.id = "Other panel";
+    otherPanel.sourceIdentity = createButtonSourceIdentity("Windows", "Utility", "Other.ps1");
+    fixture.document.buttons[otherPanel.id] = otherPanel;
+    const child = structuredClone(fixture.document.buttons.Project);
+    child.id = "Tool child";
+    child.role = "tool-set-child";
+    fixture.document.buttons[child.id] = child;
+    const harness = mainPopHarness(fixture);
+    await assert.rejects(() => harness.openIds([selectedId]));
+    assert.equal(harness.opened.length, 0);
+    assert.equal(harness.toolSets.length, 0);
+    assert.equal(Object.keys(harness.document.popoutUnits).length, 0);
+  }
+});
 
 test("the Buttons rail follows saved visual rows and includes every panel Button", () => {
   const script = (id, x, y, width) => ({

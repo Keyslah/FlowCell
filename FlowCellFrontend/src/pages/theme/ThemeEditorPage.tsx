@@ -23,6 +23,7 @@ import {
 } from "../../button/state/ButtonDraftBus.js";
 import { cloneButtonDocument } from "../../button/state/buttonDefaults.js";
 import { createButtonSkinFromFile } from "../../button/editor/buttonSkinFiles.js";
+import { embedLocalButtonSkinFamilies, type ToolsetSkinLibrary } from "../../button/editor/toolsetPackageExport.js";
 import {
   BUTTON_GLOW_AMOUNT_MAX,
   BUTTON_HIGHLIGHT_AMOUNT_MAX,
@@ -855,10 +856,10 @@ export default function ThemeEditorPage({
     );
   };
 
-  const captureCurrentTheme = (): FlowCellThemeFile => {
-    if (!draftDocument) throw new Error("Canonical Button state is not loaded yet.");
+  const captureCurrentTheme = (document = draftDocument): FlowCellThemeFile => {
+    if (!document) throw new Error("Canonical Button state is not loaded yet.");
     return captureThemeFile({
-      document: draftDocument,
+      document,
       target,
       page: target.kind === "flowcell" ? selectedPageAppearance : null,
       gradient,
@@ -875,8 +876,16 @@ export default function ThemeEditorPage({
       if (installed && !contribution.current) throw new Error("The program theme features are still loading. Try saving again when they are ready.");
     }
     const extension = target.kind === "program" ? await contribution.current?.capture() : null;
-    return capturePortableTheme({ document: draftDocument, target, name: themeName,
-      descriptors: await getThemeToolDescriptors(target), theme: captureCurrentTheme(),
+    let library: Promise<ToolsetSkinLibrary> | undefined;
+    const document = await embedLocalButtonSkinFamilies(
+      draftDocument,
+      listThemePlacements(draftDocument, target).map((placement) => placement.id),
+      () => library ??= Promise.all([getButtonSkinDirectory(), listButtonSkinFiles()]).then(([directory, paths]) => ({
+        directory, paths, read: loadButtonSkinFile
+      }))
+    );
+    return capturePortableTheme({ document, target, name: themeName,
+      descriptors: await getThemeToolDescriptors(target), theme: captureCurrentTheme(document),
       ...(activeTheme?.id && activeTheme.name === themeName ? { id: activeTheme.id } : {}),
       contributions: extension ? { [extension.sourceId]: extension } : {} });
   };
@@ -1104,7 +1113,12 @@ export default function ThemeEditorPage({
       await contribution.current.validate(legacy.state);
       const previous = await contribution.current.capture();
       const latest = await loadButtonStateDocument();
-      const next = applyLegacyProgramAppearance(latest, target, legacy.buttonSettings, legacy.buttonAppearance);
+      const { document: next, skippedMissingPlacementCount } = applyLegacyProgramAppearance(
+        latest, target, legacy.buttonSettings, legacy.buttonAppearance
+      );
+      if (skippedMissingPlacementCount > 0) {
+        warnings.push(`Skipped ${skippedMissingPlacementCount} legacy Button appearance ${skippedMissingPlacementCount === 1 ? "override" : "overrides"} for missing placements.`);
+      }
       const state = { ...previous.state, ...legacy.state,
         fields: { ...(previous.state.fields as object), ...(legacy.state.fields as object) } };
       const complete = capturePortableTheme({ document: next, target, name, id: await legacyThemeIdentity(loaded.legacy),
@@ -1258,6 +1272,9 @@ export default function ThemeEditorPage({
             </select>
           </label>
         ) : null}
+        {showingProgramPage && contributionAvailable === true &&
+          <button className="theme-editor__program-import" type="button" disabled={pending}
+            onClick={() => setLibraryMode("import")}>Import Theme</button>}
         {!showingProgramPage && <p className="theme-editor__scope-summary">
           {scopedPlacements.length} Button occurrence{scopedPlacements.length === 1 ? "" : "s"} in scope
           {surfaceSummary ? ` · ${surfaceSummary}` : ""}

@@ -1,0 +1,197 @@
+=== structure ===
+<div data-core style="position:relative;display:inline-flex;align-items:center;justify-content:center;width:200px;height:100px;container-type:size;isolation:isolate;box-sizing:border-box;background-color:var(--flowcell-button-shade-surface-face,#000000);border:none;overflow:visible;">
+  <span data-anim="state-snap" style="pointer-events:none;position:absolute;inset:0;">
+  <span style="pointer-events:none;position:absolute;z-index:0;width:var(--neon-fill-width,0%);height:var(--neon-fill-height,0%);left:var(--neon-fill-left,50%);right:var(--neon-fill-right,50%);top:var(--neon-fill-top,50%);bottom:var(--neon-fill-bottom,50%);background-color:var(--flowcell-button-shade-live-face,#ff0000);box-shadow:0 0 10px #ff0000,0 0 30px #ff0000,0 0 50px #ff0000;transition:500ms;"></span>
+  <span data-anim="line-arm" style="pointer-events:none;position:absolute;inset:0;">
+    <span style="pointer-events:none;position:absolute;z-index:0;width:var(--neon-horizontal-width,15px);height:2px;top:0;left:0;background-color:var(--flowcell-button-shade-live-face,#ff0000);box-shadow:0 0 15px #ff0000,0 0 30px #ff0000,0 0 50px #ff0000;transition:500ms;"></span>
+    <span style="pointer-events:none;position:absolute;z-index:0;width:2px;height:var(--neon-vertical-height,15px);top:0;left:0;background-color:var(--flowcell-button-shade-live-face,#ff0000);box-shadow:0 0 15px #ff0000,0 0 30px #ff0000,0 0 50px #ff0000;transition:500ms;"></span>
+    <span style="pointer-events:none;position:absolute;z-index:0;width:var(--neon-horizontal-width,15px);height:2px;bottom:0;right:0;background-color:var(--flowcell-button-shade-live-face,#ff0000);box-shadow:0 0 15px #ff0000,0 0 30px #ff0000,0 0 50px #ff0000;transition:500ms;"></span>
+    <span style="pointer-events:none;position:absolute;z-index:0;width:2px;height:var(--neon-vertical-height,15px);bottom:0;right:0;background-color:var(--flowcell-button-shade-live-face,#ff0000);box-shadow:0 0 15px #ff0000,0 0 30px #ff0000,0 0 50px #ff0000;transition:500ms;"></span>
+  </span>
+  <span data-anim="skull-shift" style="pointer-events:none;position:absolute;width:87.5cqh;height:87.5cqh;top:6cqh;left:var(--skull-switch-x,6cqh);border-radius:50cqh;display:flex;align-items:center;justify-content:center;z-index:1;color:var(--skull-switch-color,var(--flowcell-button-shade-skull-inactive,#ffffff));filter:var(--skull-switch-filter,none);">
+    <svg data-skull-art viewBox="43.0 4 367 367" style="pointer-events:none;display:block;width:100%;height:100%;overflow:visible;"><path fill="currentColor" fill-rule="evenodd" d="M138,313 L138,355 L153,355 L153,352 L154,351 L156,351 L156,348 L157,347 L160,347 L161,348 L161,351 L164,351 L165,352 L165,355 L168,355 L169,356 L169,359 L172,359 L173,360 L173,362 L180,362 L181,363 L181,366 L195,366 L196,367 L196,370 L218,370 L218,356 L219,355 L222,355 L223,356 L223,366 L226,366 L227,367 L227,370 L230,370 L230,356 L231,355 L234,355 L234,352 L235,351 L238,351 L239,352 L239,366 L242,366 L243,367 L243,370 L257,370 L257,367 L258,366 L277,366 L277,363 L278,362 L288,362 L288,356 L289,355 L311,355 L311,352 L312,351 L315,351 L315,313 L312,313 L312,316 L311,317 L305,317 L305,320 L304,321 L301,321 L301,324 L300,325 L281,325 L281,331 L284,331 L285,332 L285,339 L284,340 L281,340 L280,339 L280,336 L278,336 L277,335 L277,329 L254,329 L254,355 L253,356 L250,356 L250,359 L249,360 L247,360 L246,359 L246,332 L235,332 L235,335 L234,336 L219,336 L218,335 L218,332 L212,332 L212,335 L211,336 L208,336 L208,343 L207,344 L204,344 L203,343 L203,332 L192,332 L191,331 L191,329 L181,329 L181,331 L180,332 L177,332 L177,343 L176,344 L173,344 L172,343 L172,336 L169,336 L168,335 L168,325 L165,325 L164,324 L164,321 L154,321 L153,320 L153,317 L142,317 L141,316 L141,313 Z M301,324 L304,324 L305,325 L305,335 L304,336 L301,336 L300,335 L300,325 Z M220,4 L219,5 L210,5 L209,6 L196,7 L195,8 L187,9 L186,10 L183,10 L179,12 L172,13 L171,14 L157,18 L154,20 L147,22 L138,27 L136,27 L128,31 L126,33 L121,35 L119,37 L116,38 L114,40 L104,46 L101,49 L100,49 L90,58 L89,58 L76,71 L76,72 L73,75 L72,78 L69,81 L68,85 L61,99 L61,101 L58,108 L58,111 L56,115 L56,118 L55,119 L55,123 L54,124 L54,128 L53,129 L53,134 L52,135 L52,140 L51,141 L51,148 L50,149 L50,159 L49,160 L49,180 L48,181 L48,201 L49,202 L49,221 L50,222 L50,235 L51,236 L52,235 L53,236 L53,238 L56,238 L57,239 L57,242 L60,242 L61,243 L61,246 L63,246 L64,247 L64,250 L67,250 L68,251 L68,254 L71,254 L72,255 L72,262 L79,262 L80,263 L80,266 L83,266 L84,267 L84,269 L91,269 L92,270 L92,273 L94,273 L94,270 L95,269 L102,269 L102,267 L103,266 L106,266 L106,263 L107,262 L114,262 L114,259 L115,258 L129,258 L130,259 L130,262 L133,262 L134,263 L134,281 L137,281 L138,282 L138,289 L137,290 L134,290 L134,297 L137,297 L138,298 L138,304 L145,304 L146,305 L146,308 L156,308 L157,309 L157,312 L168,312 L168,290 L169,289 L172,289 L172,278 L173,277 L176,277 L177,278 L177,281 L180,281 L181,282 L181,285 L180,286 L177,286 L177,316 L180,316 L181,317 L181,320 L187,320 L188,321 L188,324 L203,324 L203,298 L204,297 L207,297 L208,298 L208,300 L211,300 L212,301 L212,324 L215,324 L216,325 L216,328 L246,328 L246,298 L247,297 L249,297 L250,298 L250,304 L253,304 L254,305 L254,324 L265,324 L265,321 L266,320 L269,320 L269,317 L270,316 L273,316 L273,313 L274,312 L277,312 L277,309 L278,308 L280,308 L281,309 L281,320 L288,320 L288,317 L289,316 L296,316 L296,313 L297,312 L304,312 L304,309 L305,308 L308,308 L308,305 L309,304 L311,304 L311,301 L312,300 L315,300 L315,267 L316,266 L319,266 L319,263 L320,262 L323,262 L323,259 L324,258 L339,258 L340,259 L340,262 L346,262 L347,263 L347,266 L354,266 L355,267 L355,269 L366,269 L366,267 L367,266 L373,266 L373,263 L374,262 L377,262 L377,259 L378,258 L381,258 L381,255 L382,254 L385,254 L385,251 L386,250 L389,250 L389,247 L390,246 L393,246 L393,239 L394,238 L397,238 L397,230 L398,229 L399,230 L401,236 L401,234 L402,233 L402,224 L403,223 L403,207 L404,206 L403,173 L402,172 L402,162 L401,161 L401,154 L400,153 L400,146 L399,145 L399,140 L398,139 L397,128 L396,127 L396,123 L395,122 L394,113 L393,112 L393,109 L392,108 L392,105 L391,104 L389,93 L387,89 L387,86 L385,82 L385,79 L384,78 L382,71 L369,58 L368,58 L361,51 L360,51 L356,47 L355,47 L348,41 L344,39 L341,36 L338,35 L331,30 L309,19 L307,19 L299,15 L297,15 L290,12 L287,12 L283,10 L279,10 L278,9 L270,8 L269,7 L264,7 L263,6 L257,6 L256,5 L247,5 L246,4 Z M278,289 L280,289 L281,290 L281,293 L284,293 L285,294 L285,308 L284,309 L281,309 L280,308 L280,298 L278,298 L277,297 L277,290 Z M223,173 L230,173 L231,174 L231,176 L234,176 L235,177 L235,180 L238,180 L239,181 L239,188 L242,188 L243,189 L243,196 L246,196 L247,197 L247,200 L249,200 L250,201 L250,207 L253,207 L254,208 L254,215 L257,215 L258,216 L258,219 L261,219 L262,220 L262,231 L261,232 L258,232 L258,238 L257,239 L254,239 L254,242 L253,243 L247,243 L246,242 L246,239 L243,239 L242,238 L242,228 L239,228 L238,227 L238,224 L235,224 L234,223 L234,216 L231,216 L230,215 L230,212 L223,212 L223,219 L222,220 L219,220 L219,223 L218,224 L216,224 L216,231 L215,232 L212,232 L212,238 L211,239 L208,239 L208,242 L207,243 L200,243 L199,242 L199,236 L196,236 L195,235 L195,232 L192,232 L191,231 L191,224 L192,223 L195,223 L195,216 L196,215 L199,215 L199,208 L200,207 L203,207 L203,205 L204,204 L207,204 L207,197 L208,196 L211,196 L211,189 L212,188 L215,188 L215,185 L216,184 L218,184 L218,177 L219,176 L222,176 L222,174 Z M301,87 L323,87 L324,88 L324,91 L331,91 L332,92 L332,95 L335,95 L336,96 L336,99 L339,99 L340,100 L340,103 L342,103 L343,104 L343,107 L346,107 L347,108 L347,111 L350,111 L351,112 L351,118 L354,118 L355,119 L355,126 L358,126 L359,127 L359,138 L362,138 L363,139 L363,161 L362,162 L359,162 L359,176 L358,177 L355,177 L355,184 L354,185 L351,185 L351,188 L350,189 L347,189 L347,192 L346,193 L343,193 L343,196 L342,197 L340,197 L340,200 L339,201 L332,201 L332,204 L331,205 L328,205 L328,207 L327,208 L316,208 L315,207 L315,205 L305,205 L304,204 L304,201 L297,201 L296,200 L296,197 L293,197 L292,196 L292,193 L289,193 L288,192 L288,189 L285,189 L284,188 L284,185 L281,185 L280,184 L280,181 L278,181 L277,180 L277,174 L274,174 L273,173 L273,170 L270,170 L269,169 L269,162 L266,162 L265,161 L265,150 L262,150 L261,149 L261,135 L262,134 L265,134 L265,123 L266,122 L269,122 L269,115 L270,114 L273,114 L273,108 L274,107 L277,107 L277,104 L278,103 L280,103 L280,100 L281,99 L284,99 L284,96 L285,95 L292,95 L292,92 L293,91 L300,91 L300,88 Z M130,87 L153,87 L154,88 L154,91 L156,91 L157,92 L157,95 L168,95 L169,96 L169,99 L172,99 L173,100 L173,103 L176,103 L177,104 L177,111 L180,111 L181,112 L181,118 L184,118 L185,119 L185,126 L187,126 L188,127 L188,157 L187,158 L185,158 L185,165 L184,166 L181,166 L181,173 L180,174 L177,174 L177,176 L176,177 L173,177 L173,184 L172,185 L169,185 L169,188 L168,189 L165,189 L165,192 L164,193 L161,193 L161,196 L160,197 L154,197 L154,200 L153,201 L146,201 L146,204 L145,205 L123,205 L122,204 L122,201 L115,201 L114,200 L114,197 L111,197 L110,196 L110,193 L107,193 L106,192 L106,189 L103,189 L102,188 L102,185 L99,185 L98,184 L98,181 L95,181 L94,180 L94,166 L92,166 L91,165 L91,135 L92,134 L94,134 L94,127 L95,126 L98,126 L98,119 L99,118 L102,118 L102,112 L103,111 L106,111 L106,108 L107,107 L110,107 L110,100 L111,99 L118,99 L118,96 L119,95 L122,95 L122,92 L123,91 L129,91 L129,88 Z M187,73 L188,72 L195,72 L196,73 L196,76 L195,77 L188,77 L187,76 Z M145,63 L147,61 L149,61 L151,59 L155,59 L156,58 L160,58 L161,60 L172,60 L173,61 L173,64 L180,64 L181,65 L181,68 L184,68 L185,69 L185,72 L184,73 L177,73 L176,72 L176,69 L161,69 L160,68 L160,65 L146,65 Z M203,53 L204,52 L207,52 L208,53 L208,56 L207,57 L204,57 L203,56 Z"></path></svg>
+  </span>
+  <span data-arm-clip style="pointer-events:none;position:absolute;z-index:2;inset:0;overflow:hidden;opacity:var(--arm-visibility,0);">
+    <span data-anim="arm-follow" style="pointer-events:none;position:absolute;width:100%;height:100%;top:0;left:var(--skull-switch-x,6cqh);">
+      <span data-anim="arm-sweep" style="pointer-events:none;position:absolute;width:100%;height:100%;left:0;top:0;color:var(--flowcell-button-shade-bone-face,#ffffff);">
+        <svg data-arm-art viewBox="0 0 420 100" style="pointer-events:none;position:absolute;left:0;top:0;width:420cqh;height:100cqh;overflow:visible;">
+          <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M113 69 C125 69 135 65 145 62.5 S185 55 340 53" stroke-width="10.5" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></path>
+            <path d="M113 69 C125 69 135 65 145 62.5 S185 55 340 53" stroke="currentColor" stroke-width="6.5"></path>
+            <path d="M121 70.2 C130 69.6 137 66.8 143 64.4 M160 59.6 S190 56 340 54.6" stroke-width="1.4" style="stroke:color-mix(in oklch,currentColor 80%,var(--flowcell-button-shade-surface-face,#000000));"></path>
+            <circle cx="113" cy="69" r="4.8" fill="currentColor" stroke-width="2.6" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <path d="M109 56 C125 56 135 60 145 62.5 S185 70 340 72" stroke-width="11.5" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></path>
+            <path d="M109 56 C125 56 135 60 145 62.5 S185 70 340 72" stroke="currentColor" stroke-width="7.5"></path>
+            <path d="M117 58.2 C128 58.6 136 61.4 145 64.3 S185 71.6 340 73.6" stroke-width="1.4" style="stroke:color-mix(in oklch,currentColor 80%,var(--flowcell-button-shade-surface-face,#000000));"></path>
+            <ellipse cx="109" cy="56.5" rx="5" ry="7" fill="currentColor" stroke-width="2.6" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></ellipse>
+            <circle cx="104.5" cy="53.5" r="3.4" fill="currentColor" stroke-width="2.6" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <circle cx="100.5" cy="59" r="3.3" fill="currentColor" stroke-width="2.6" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <circle cx="106" cy="60.5" r="3" fill="currentColor" stroke-width="2.6" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <circle cx="101" cy="65.5" r="3.3" fill="currentColor" stroke-width="2.6" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <circle cx="105.5" cy="68" r="3" fill="currentColor" stroke-width="2.6" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <path d="M102 71 L94 75.5 L85 77.5 Q76.5 78.5 70.5 75.5 L63 71" stroke-width="7.2" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></path>
+            <path d="M102 71 L94 75.5 L85 77.5 Q76.5 78.5 70.5 75.5 L63 71" stroke="currentColor" stroke-width="4.4"></path>
+            <circle cx="94" cy="75.5" r="2.9" fill="currentColor" stroke-width="2.2" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <circle cx="85" cy="77.5" r="2.4" fill="currentColor" stroke-width="2.2" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <path d="M99 65 L90 62.5 L81 62.5 Q74 63 70.5 66 L65.5 67.5" stroke-width="7.2" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></path>
+            <path d="M99 65 L90 62.5 L81 62.5 Q74 63 70.5 66 L65.5 67.5" stroke="currentColor" stroke-width="4.4"></path>
+            <circle cx="90" cy="62.5" r="2.9" fill="currentColor" stroke-width="2.2" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <circle cx="81" cy="62.5" r="2.4" fill="currentColor" stroke-width="2.2" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <path d="M99 59.5 L90 56 L80 55 Q72.5 55 69.5 58.5 L65 61.5" stroke-width="7.2" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></path>
+            <path d="M99 59.5 L90 56 L80 55 Q72.5 55 69.5 58.5 L65 61.5" stroke="currentColor" stroke-width="4.4"></path>
+            <circle cx="90" cy="56" r="2.9" fill="currentColor" stroke-width="2.2" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <circle cx="80" cy="55" r="2.4" fill="currentColor" stroke-width="2.2" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <path d="M99 54 L89 49.5 L79 47.5 Q71 46.5 67.5 50.5 L63.5 55.5" stroke-width="7.2" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></path>
+            <path d="M99 54 L89 49.5 L79 47.5 Q71 46.5 67.5 50.5 L63.5 55.5" stroke="currentColor" stroke-width="4.4"></path>
+            <circle cx="89" cy="49.5" r="2.9" fill="currentColor" stroke-width="2.2" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+            <circle cx="79" cy="47.5" r="2.4" fill="currentColor" stroke-width="2.2" paint-order="stroke" style="stroke:var(--flowcell-button-shade-surface-face,#000000);"></circle>
+          </g>
+        </svg>
+      </span>
+    </span>
+  </span>
+  </span>
+</div>
+
+
+=== keyframes ===
+@keyframes fc-final-skull-drag-right {
+  from { left: 6cqh; }
+  to { left: calc(100% - 93.33cqh); }
+}
+@keyframes fc-final-skull-drag-left {
+  from { left: calc(100% - 93.33cqh); }
+  to { left: 6cqh; }
+}
+@keyframes fc-final-skull-reach-on {
+  from { transform: translateX(calc(100cqw - 64cqh)); }
+  to { transform: translateX(0); }
+}
+@keyframes fc-final-skull-withdraw-on {
+  from { transform: translateX(0); }
+  to { transform: translateX(35.33cqh); }
+}
+@keyframes fc-final-skull-reach-off {
+  from { transform: translateX(35.33cqh); }
+  to { transform: translateX(0); }
+}
+@keyframes fc-final-skull-withdraw-off {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(100cqw - 64cqh)); }
+}
+@keyframes fc-final-skull-outline-arm {
+  from, to {
+    --neon-horizontal-width:100%;
+    --neon-vertical-height:100%;
+  }
+}
+@keyframes fc-final-skull-snap-active {
+  from {
+    --skull-switch-color:var(--flowcell-button-shade-skull-inactive,#ffffff);
+    --neon-fill-width:0%;
+    --neon-fill-height:0%;
+    --neon-fill-left:50%;
+    --neon-fill-right:50%;
+    --neon-fill-top:50%;
+    --neon-fill-bottom:50%;
+  }
+  to {
+    --skull-switch-color:var(--flowcell-button-shade-skull-active,#ffffff);
+    --neon-fill-width:100%;
+    --neon-fill-height:100%;
+    --neon-fill-left:0;
+    --neon-fill-right:0;
+    --neon-fill-top:0;
+    --neon-fill-bottom:0;
+  }
+}
+@keyframes fc-final-skull-snap-inactive {
+  from { --skull-switch-color:var(--flowcell-button-shade-skull-active,#ffffff); }
+  to { --skull-switch-color:var(--flowcell-button-shade-skull-inactive,#ffffff); }
+}
+
+=== base ===
+--flowcell-button-highlight-on-hover:0;
+--flowcell-button-highlight-on-active:1;
+--flowcell-button-color-surface:#000000;
+--flowcell-button-color-skull-inactive:#ffffff;
+--flowcell-button-color-skull-active:#ffffff;
+--flowcell-button-color-bone:#ffffff;
+--flowcell-button-color-live:#ff0000;
+--flowcell-button-shade-surface-face:color-mix(in oklch,var(--flowcell-button-color-surface,#000000) 100%,transparent);
+--flowcell-button-shade-skull-inactive:color-mix(in oklch,var(--flowcell-button-color-skull-inactive,#ffffff) 100%,transparent);
+--flowcell-button-shade-skull-active:color-mix(in oklch,var(--flowcell-button-color-skull-active,#ffffff) 100%,transparent);
+--flowcell-button-shade-bone-face:color-mix(in oklch,var(--flowcell-button-color-bone,#ffffff) 100%,transparent);
+--flowcell-button-shade-live-face:color-mix(in oklch,var(--flowcell-button-color-live,#ff0000) 100%,transparent);
+--skull-switch-x:6cqh;
+--skull-switch-color:var(--flowcell-button-shade-skull-inactive,#ffffff);
+--skull-switch-filter:none;
+--arm-visibility:0;
+--neon-fill-width:0%;
+--neon-fill-height:0%;
+--neon-fill-left:50%;
+--neon-fill-right:50%;
+--neon-fill-top:50%;
+--neon-fill-bottom:50%;
+--neon-horizontal-width:15px;
+--neon-vertical-height:15px;
+
+=== hover ===
+--anim-line-arm:fc-final-skull-outline-arm 1s linear 0.06s infinite;
+
+=== play ===
+
+
+=== pressed ===
+--skull-switch-x:6cqh;
+--skull-switch-color:var(--flowcell-button-shade-skull-inactive,#ffffff);
+--arm-visibility:1;
+--neon-fill-width:0%;
+--neon-fill-height:0%;
+--neon-fill-left:50%;
+--neon-fill-right:50%;
+--neon-fill-top:50%;
+--neon-fill-bottom:50%;
+--neon-horizontal-width:100%;
+--neon-vertical-height:100%;
+--anim-line-arm:fc-final-skull-outline-arm 1s linear 0.06s infinite;
+--anim-state-snap:fc-final-skull-snap-active calc((200cqw - 163.33cqh) / 400cqh * 1s) steps(1,end) 0s 1 forwards;
+--anim-skull-shift:fc-final-skull-drag-right calc((100cqw - 99.33cqh) / 400cqh * 1s) linear calc((100cqw - 64cqh) / 400cqh * 1s) 1 both;
+--anim-arm-sweep:fc-final-skull-reach-on calc((100cqw - 64cqh) / 400cqh * 1s) linear 0s 1 forwards,fc-final-skull-withdraw-on 0.088325s linear calc((200cqw - 163.33cqh) / 400cqh * 1s) 1 forwards;
+--anim-arm-follow:fc-final-skull-drag-right calc((100cqw - 99.33cqh) / 400cqh * 1s) linear calc((100cqw - 64cqh) / 400cqh * 1s) 1 both;
+
+=== held ===
+--skull-switch-x:calc(100% - 93.33cqh);
+--skull-switch-color:var(--flowcell-button-shade-skull-active,#ffffff);
+--arm-visibility:0;
+--neon-fill-width:100%;
+--neon-fill-height:100%;
+--neon-fill-left:0;
+--neon-fill-right:0;
+--neon-fill-top:0;
+--neon-fill-bottom:0;
+--neon-horizontal-width:100%;
+--neon-vertical-height:100%;
+
+=== release ===
+--skull-switch-x:calc(100% - 93.33cqh);
+--skull-switch-color:var(--flowcell-button-shade-skull-active,#ffffff);
+--arm-visibility:1;
+--neon-fill-width:0%;
+--neon-fill-height:0%;
+--neon-fill-left:50%;
+--neon-fill-right:50%;
+--neon-fill-top:50%;
+--neon-fill-bottom:50%;
+--neon-horizontal-width:100%;
+--neon-vertical-height:100%;
+--anim-line-arm:fc-final-skull-outline-arm 1s linear 0.06s infinite;
+--anim-state-snap:fc-final-skull-snap-inactive calc((100cqw - 64cqh) / 400cqh * 1s) steps(1,end) 0s 1 forwards;
+--anim-skull-shift:fc-final-skull-drag-left calc((100cqw - 99.33cqh) / 400cqh * 1s) linear 0.088325s 1 both;
+--anim-arm-sweep:fc-final-skull-reach-off 0.088325s linear 0s 1 forwards,fc-final-skull-withdraw-off calc((100cqw - 64cqh) / 400cqh * 1s) linear calc((100cqw - 64cqh) / 400cqh * 1s) 1 forwards;
+--anim-arm-follow:fc-final-skull-drag-left calc((100cqw - 99.33cqh) / 400cqh * 1s) linear 0.088325s 1 both;
+
+=== disabled ===
+
+
+=== error ===

@@ -7738,7 +7738,7 @@ test("Blender Flatten/Revolve ships one clean-import toolset with skinned select
 
   assert.equal(manifest.kind, "toolset");
   assert.equal(manifest.program, "Blender");
-  assert.equal(manifest.version, "1.1.1");
+  assert.equal(manifest.version, "1.1.2");
   assert.equal(manifest.source, "flatten revolve.py");
   assert.deepEqual(childSlots, [
     "pivot_select",
@@ -7870,7 +7870,7 @@ test("Blender Tri Poly ships clean-import skinned Angle and Sides value Buttons"
 
   assert.equal(manifest.kind, "toolset");
   assert.equal(manifest.program, "Blender");
-  assert.equal(manifest.version, "1.1.1");
+  assert.equal(manifest.version, "1.1.2");
   assert.equal(manifest.source, "tri poly.py");
   assert.deepEqual(
     manifest.children.map((child) => child.slot),
@@ -7888,8 +7888,8 @@ test("Blender Tri Poly ships clean-import skinned Angle and Sides value Buttons"
   assert.deepEqual(
     Object.fromEntries(manifest.children.map((child) => [child.slot, child.label])),
     {
-      triangle_equilateral: "Equila...",
-      triangle_isosceles: "Isosc...",
+      triangle_equilateral: "Equal ",
+      triangle_isosceles: "Isosceles ",
       triangle_50: "Angle",
       triangle_right: "Right",
       triangle_scalene: "Scalene",
@@ -7996,7 +7996,7 @@ test("Blender Rotate shares one inline-value Button between Transform and Distri
     "flowcell.toolset.json"
   );
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  assert.equal(manifest.version, "1.1.1");
+  assert.equal(manifest.version, "1.1.2");
   assert.deepEqual(
     manifest.children.map((child) => child.slot),
     [

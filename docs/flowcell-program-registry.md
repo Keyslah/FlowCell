@@ -83,6 +83,11 @@ runner, empty `panels` and `bundledSources`, and `bindScopedNativeOwner: false`.
 It creates no Panel owner or source Button during registration. Add Panel and Add
 Button can extend the Program afterward through their normal lifecycles.
 
+A fresh installation's directory-only `Programs/Windows` placeholder is excluded
+from sibling manifest checks. A folder containing any file, an unsafe path, or an
+unreadable real package still fails validation. This permits registering an app
+directly before importing any Program ZIP.
+
 Program-scoped Pop, Fan, and related windows compare the foreground process to
 the normalized EXE stem exactly; paths and the `.exe` suffix are removed. Thus
 `krita.exe` matches `krita`, but `krita-helper.exe` does not. Applications that

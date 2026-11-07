@@ -32,6 +32,7 @@ import { readLastLayoutPath } from "../../lib/startupSettings.js";
 import type { LayoutSnapshot } from "../../types.js";
 import { validateInstalledButtonLayout } from "./installedButtonLayoutValidation.js";
 import { resolveInstalledToolFields } from "./installedToolFields.js";
+import { assignInstalledToolSetSkins, type InstalledToolSetAppearance } from "./installedToolSetSkins.js";
 import {
   validateButtonPlacementFile,
   type ButtonPlacementFile
@@ -56,6 +57,7 @@ export interface InstalledButtonLayout {
   placements?: Record<string, ButtonRect & { zIndex?: number }>;
   fields?: ButtonToolField[];
   childBehaviors?: Record<string, ButtonToolSetChildBehavior>;
+  appearance?: InstalledToolSetAppearance;
   updatePolicy?: {
     appendMissingChildSlots?: boolean;
   };
@@ -79,6 +81,8 @@ export interface InstallButtonSourceRequest {
   panelName: string;
   sourcePath: string;
   importKind: "script" | "tool-set" | "auto";
+  bundledSourceId?: string;
+  bundledSourceVersion?: string;
 }
 
 interface LegacyButtonBootstrapResult {
@@ -656,7 +660,13 @@ function normalizeInstallResult(
           };
         })
       : [],
-    layout: validateInstalledButtonLayout(response.layout as InstalledButtonLayout | undefined),
+    layout: validateInstalledButtonLayout(
+      response.layout as InstalledButtonLayout | undefined,
+      Array.isArray(response.children) ? response.children.map((child) => {
+        const record = child as Record<string, unknown>;
+        return String(record.slot ?? record.command ?? "");
+      }) : []
+    ),
     updateTransactionToken: typeof response.updateTransactionToken === "string" &&
       response.updateTransactionToken.trim()
       ? response.updateTransactionToken
@@ -853,6 +863,7 @@ function addMigratedToolSet(
   if (install.children.length === 0) {
     throw new Error(`Migrated tool set '${install.label}' has no child Buttons.`);
   }
+  const layout = validateInstalledButtonLayout(install.layout, install.children.map((child) => child.slot));
   document.buttons[install.ownerButtonId] = createMigratedButtonRecord({
     document,
     id: install.ownerButtonId,
@@ -862,7 +873,7 @@ function addMigratedToolSet(
     sourceIdentity: install.sourceIdentity
   });
   const ownerRect = nextMigrationPanelRect(document, panelSurface);
-  addMigratedPlacement(
+  const ownerPlacement = addMigratedPlacement(
     document,
     panelSurface,
     install.ownerButtonId,
@@ -870,7 +881,6 @@ function addMigratedToolSet(
     ownerRect
   );
 
-  const layout = install.layout;
   const starter = createStarterButtonLayout(
     install.children.map((child) => ({ id: child.slot, width: 144, height: 42 })),
     {
@@ -903,6 +913,7 @@ function addMigratedToolSet(
   document.surfaces[surfaceId] = surface;
 
   const childButtonIds: string[] = [];
+  const appearanceTargets = [{ placement: ownerPlacement, skinKey: layout?.appearance?.owner }];
   install.children.forEach((child, index) => {
     const childId = `button-child-${install.ownerButtonId}-${stableDocumentIdSegment(child.slot)}-${index}`;
     childButtonIds.push(childId);
@@ -917,7 +928,7 @@ function addMigratedToolSet(
       behavior: layout?.childBehaviors?.[child.slot] ?? null,
       metadata: { toolSetSlot: child.slot }
     });
-    addMigratedPlacement(
+    const placement = addMigratedPlacement(
       document,
       surface,
       childId,
@@ -925,7 +936,9 @@ function addMigratedToolSet(
       childRects[index],
       false
     );
+    appearanceTargets.push({ placement, skinKey: layout?.appearance?.children?.[child.slot] });
   });
+  assignInstalledToolSetSkins(document, layout?.appearance, appearanceTargets);
   const unitId = `popout-${install.ownerButtonId}`;
   document.popoutUnits[unitId] = {
     id: unitId,

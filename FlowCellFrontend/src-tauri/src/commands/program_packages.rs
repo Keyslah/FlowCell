@@ -266,7 +266,7 @@ fn validate_staged_package(root: &Path, name: &str) -> Result<(), String> {
 }
 
 // A fresh install can contain an empty Panels/Startup tree. Files are never merged.
-fn placeholder_directories(target: &Path) -> Result<Vec<PathBuf>, String> {
+pub(super) fn placeholder_directories(target: &Path) -> Result<Vec<PathBuf>, String> {
     plain_path(target)?;
     if !target.is_dir() {
         return Err("The program destination already exists and is not an empty folder.".into());

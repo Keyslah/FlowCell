@@ -342,8 +342,11 @@ pub(crate) fn get_theme_tool_descriptors(program_name: Option<String>) -> Result
         }
         for source in &manifest.bundled_sources {
             let path = manifest::resolve_relative_manifest_path(&program_root, &source.source_path, "bundledSources.sourcePath", false)?.ok_or("Bundled source path is missing.")?;
-            let toolset = path.join("flowcell.toolset.json");
-            let slots = if toolset.is_file() { read_json(&toolset)?.get("children").and_then(Value::as_array).map(|items| items.iter().filter_map(|c| c.get("slot").and_then(Value::as_str).map(str::to_string)).collect::<Vec<_>>()).unwrap_or_default() } else { vec![] };
+            let slots = if source.import_kind == "tool-set" {
+                crate::program_sources::install::preflight_button_source(&program, &path, &source.import_kind)?.child_slots
+            } else {
+                Vec::new()
+            };
             result.push(json!({"ownerButtonId":"","programName":program,"programId":manifest.program_id,"panelName":source.panel_name,
                 "sourceId":source.id,"sourceVersion":source.version,"sourceName":source.source_path,"importKind":source.import_kind,
                 "catalogPath":source.source_path,"sourcePath":path.to_string_lossy(),"slots":slots }));

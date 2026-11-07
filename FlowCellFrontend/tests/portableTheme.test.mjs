@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import { createButtonStateDocument } from "./.compiled-button-system/button/state/buttonDefaults.js";
+import ts from "typescript";
+import { cloneButtonDocument, createButtonStateDocument } from "./.compiled-button-system/button/state/buttonDefaults.js";
 import { mergeLegacyInstallsIntoDocument } from "./.compiled-button-system/button/state/ButtonStateRepository.js";
 import { createButtonSourceIdentity } from "./.compiled-button-system/button/state/sourceIdentity.js";
 import { ensureRegularPopout, ensureFanSetup, hideThemeContributionOwner } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
 import { captureThemeFile, applyThemeFile, listThemePlacements } from "./.compiled-button-system/theme/themeModel.js";
-import { capturePortableTheme, planPortableThemeImport, applyPortableTheme, isPortableTheme } from "./.compiled-button-system/theme/portableTheme.js";
+import { capturePortableTheme, planPortableThemeImport, applyPortableTheme, isPortableTheme, portableThemeForScope } from "./.compiled-button-system/theme/portableTheme.js";
 import { applyCommonProgramThemeEdit, applyLegacyProgramAppearance } from "./.compiled-button-system/theme/commonProgramTheme.js";
 import { captureProgramPopoutThemeSettings, resolveProgramPopoutThemeOverride } from "./.compiled-button-system/theme/programPopoutTheme.js";
 import { resolveButtonPlacementPresentation, editButtonPlacementPresentation } from "./.compiled-button-system/button/state/buttonPresentation.js";
 import { buildButtonAnimationScopedDocument, buildButtonTextScopedDocument } from "./.compiled-button-system/button/editor/buttonEditorSaveScopes.js";
 import { buildButtonSettingsFile } from "./.compiled-button-system/button/state/buttonSettingsFile.js";
 import { getFlowCellThemePageDefinition } from "./.compiled-button-system/theme/themePageRegistry.js";
+import { assignInstalledToolSetSkins } from "./.compiled-button-system/button/state/installedToolSetSkins.js";
+import { serializeButtonSkinSections } from "./.compiled-button-system/button/skins/buttonSkinFormat.js";
+import { getEmbeddedButtonSkinFamilySources, resolveEmbeddedButtonSkinFamilySource } from "./.compiled-button-system/button/skins/buttonSkinFamily.js";
+import { reconcileProgramPanelOwners } from "./.compiled-button-system/button/state/panelOwnerButtonOperations.js";
 
 const target = { kind: "program", programName: "Blender", panelName: null };
 function fixture(owner = "donor", version = "1.0.0") {
@@ -25,6 +31,41 @@ function fixture(owner = "donor", version = "1.0.0") {
     slots: ["left", "right"], catalogPath: "C:\\Author\\catalog", sourcePath: "C:\\Author\\installed" };
   return { document, descriptor };
 }
+
+test("portable themes preserve validated package variants and remap label baselines without local metadata", () => {
+  const donor = fixture();
+  const placement = Object.values(donor.document.placements).find((entry) =>
+    donor.document.buttons[entry.buttonId].metadata.toolSetSlot === "left");
+  const base = donor.document.skins[donor.document.buttons[placement.buttonId].defaultSkinId];
+  const source = (marker) => serializeButtonSkinSections({ ...base, base: `${base.base}\n--portable-family:${marker};` });
+  const appearance = { skins: { family: { source: source("base"), variants: { 4: source("four"), 6: source("six") } } } };
+  assignInstalledToolSetSkins(donor.document, appearance, [{ placement, skinKey: "family" }]);
+  const assigned = donor.document.skins[placement.skinOverrideId];
+  assigned.metadata.localSecret = "do not export";
+  donor.document.buttons[placement.buttonId].label = "Four";
+  const archive = capturePortableTheme({ document: donor.document, descriptors: [donor.descriptor], target, name: "Family" });
+  assert.equal(isPortableTheme(archive), true);
+  const saved = archive.theme.buttons.find((entry) => entry.label === "Four");
+  assert.match(saved.skin.base, /--portable-family:four/);
+  assert.deepEqual(saved.skin.metadata, { buttonSkinEmbeddedVariants: appearance.skins.family.variants });
+  assert.equal(JSON.stringify(archive).includes("localSecret"), false);
+  assert.equal(JSON.stringify(archive).includes("buttonSkinFamilyBaseline"), false);
+  const recipient = fixture("recipient");
+  const plan = planPortableThemeImport(recipient.document, archive, target, [recipient.descriptor]);
+  assert.deepEqual(plan.issues, []);
+  const applied = applyPortableTheme(recipient.document, archive, plan);
+  const child = Object.values(applied.buttons).find((entry) => entry.metadata.toolSetSlot === "left");
+  const restored = Object.values(applied.placements).find((entry) => entry.buttonId === child.id);
+  const skin = applied.skins[restored.skinOverrideId ?? child.defaultSkinId];
+  assert.deepEqual(getEmbeddedButtonSkinFamilySources(skin), appearance.skins.family.variants);
+  assert.equal(resolveEmbeddedButtonSkinFamilySource(skin, restored.id, "Four"), null);
+  assert.equal(resolveEmbeddedButtonSkinFamilySource(skin, restored.id, "Six!!!").count, 6);
+  assert.match(skin.base, /--portable-family:four/);
+  const invalid = structuredClone(archive);
+  invalid.theme.buttons.find((entry) => entry.label === "Four").skin.metadata.buttonSkinEmbeddedVariants[4] =
+    source("four").replace("<div", '<script>alert("x")</script><div');
+  assert.equal(isPortableTheme(invalid), false);
+});
 
 test("portable capture and apply uses owner and child slots, preserving authored presentation and runtime", () => {
   const donor = fixture();
@@ -207,6 +248,42 @@ function singleFixture(owner) {
   return { document, descriptor, unit };
 }
 
+test("portable dependency installation forwards exact catalog identity and leaves archived source identity local", async () => {
+  const source = readFileSync(new URL("../src/theme/portableThemeService.ts", import.meta.url), "utf8");
+  const parsed = ts.createSourceFile("portableThemeService.ts", source, ts.ScriptTarget.Latest, true);
+  const names = ["installationCandidates", "prepareThemeSurfaces", "preparePortableThemeImport"];
+  const functions = parsed.statements.filter((statement) => ts.isFunctionDeclaration(statement) && names.includes(statement.name?.text))
+    .map((statement) => statement.getText(parsed).replace(/^export /, "")).join("\n");
+  const compiled = ts.transpileModule(functions, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const donor = singleFixture("donor");
+  const theme = capturePortableTheme({ document: donor.document, target, name: "Shared", descriptors: [donor.descriptor] });
+  for (const catalogPath of ["Blender Git Scripts/example.py", null]) {
+    const original = createButtonStateDocument();
+    const available = { ...donor.descriptor, ownerButtonId: "", catalogPath };
+    const identity = createButtonSourceIdentity("Blender", "Tools", "recipient.flowcell-source.json");
+    let request = null;
+    const installed = { ownerButtonId: "recipient", sourceIdentity: identity, label: "Tool", tooltip: "", children: [],
+      executionTarget: { kind: "panel-script", programName: "Blender", panelName: "Tools", fileName: identity.displayFileName } };
+    const runtime = {
+      cloneButtonDocument, mergeLegacyInstallsIntoDocument, planPortableThemeImport, portableThemeForScope, applyPortableTheme,
+      ensureRegularPopout, ensureFanSetup, reconcileProgramPanelOwners,
+      createStableButtonId: () => "recipient",
+      getThemeToolDescriptors: async () => [available, ...(request ? [{ ...available, ownerButtonId: "recipient",
+        sourceId: catalogPath ? request.bundledSourceId : available.sourceId,
+        sourceVersion: catalogPath ? request.bundledSourceVersion : available.sourceVersion }] : [])],
+      loadButtonStateDocument: async () => original,
+      installButtonSource: async (value) => { request = value; return installed; },
+      uninstallButtonSource: async () => { throw new Error("Successful preparation must retain its new owner."); }
+    };
+    const prepare = new Function("runtime", `const { ${Object.keys(runtime).join(", ")} } = runtime;\n${compiled}\nreturn preparePortableThemeImport;`)(runtime);
+    const prepared = await prepare({ theme, target, document: original });
+    assert.ok(prepared.document.buttons.recipient);
+    assert.equal(request.bundledSourceId, catalogPath ? available.sourceId : undefined);
+    assert.equal(request.bundledSourceVersion, catalogPath ? available.sourceVersion : undefined);
+    assert.equal(request.panelName, "Tools");
+  }
+});
+
 test("scoped labels and animations remain occurrence-owned and editable in the Button Editor", () => {
   const donor = singleFixture("donor");
   donor.document.buttons.donor.label = "Imported label";
@@ -235,14 +312,27 @@ test("scoped labels and animations remain occurrence-owned and editable in the B
   assert.equal(Object.values(savedAgain.presentation)[0].button.label, "Edited private label");
 });
 
-test("legacy popped appearances reject unresolved identity and preserve missing fields", () => {
+test("legacy popped appearances preserve missing fields and apply global settings when old placements are absent", () => {
   const { document, unit } = singleFixture("recipient");
   const id = unit.memberPlacementIds[0];
   document.programPopoutColorOverrides = { [id]: { text: "#AABBCC" } };
-  const result = applyLegacyProgramAppearance(document, target, undefined, {
-    version: 1, placements: [{ placementId: id, buttonId: "recipient", color: "#123456" }]
+  const settings = { ...captureProgramPopoutThemeSettings(document, "Blender"), colors: ["#555555"] };
+  const missing = { placementId: "donor-placement", buttonId: "donor", color: "#445566" };
+  const result = applyLegacyProgramAppearance(document, target, settings, {
+    version: 1, placements: [missing, { placementId: id, buttonId: "recipient", color: "#123456" }]
   });
-  assert.deepEqual(result.programPopoutColorOverrides[id], { surface: "#123456", text: "#AABBCC" });
+  assert.equal(result.skippedMissingPlacementCount, 1);
+  assert.deepEqual(result.document.programPopoutThemes.blender.colors, ["#555555"]);
+  assert.deepEqual(result.document.programPopoutColorOverrides, { [id]: { surface: "#123456", text: "#AABBCC" } });
+  assert.throws(() => applyLegacyProgramAppearance(document, target, undefined, {
+    version: 1, placements: [{ ...missing, color: "malformed" }]
+  }), /color is invalid/);
+  assert.throws(() => applyLegacyProgramAppearance(document, target, undefined, {
+    version: 1, placements: [{ ...missing, lockedAppearance: {} }]
+  }), /lock is invalid/);
+  assert.throws(() => applyLegacyProgramAppearance(document, target, undefined, {
+    version: 1, placements: [missing, missing]
+  }), /identity is invalid or duplicated/);
   assert.throws(() => applyLegacyProgramAppearance(document, target, undefined, {
     version: 1, placements: [{ placementId: id, buttonId: "different", color: "#123456" }]
   }), /cannot be resolved exactly/);

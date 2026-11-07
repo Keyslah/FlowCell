@@ -73,13 +73,14 @@ export function applyCommonProgramThemeEdit(
   }
 }
 
-/** Legacy files apply only the settings they contain, with exact local identity checks. */
+/** Legacy placement IDs are local to their original installation. */
 export function applyLegacyProgramAppearance(
   document: ButtonStateDocument, target: ThemeTarget, settings?: unknown, appearance?: unknown
-): ButtonStateDocument {
+): { document: ButtonStateDocument; skippedMissingPlacementCount: number } {
   if (target.kind !== "program") throw new Error("Program theme settings require a program target.");
   const next = cloneButtonDocument(document);
   const previousSettings = structuredClone(document.programPopoutThemes);
+  let skippedMissingPlacementCount = 0;
   if (settings !== undefined) {
     const normalized = normalizeProgramPopoutThemeSettings(settings);
     if (!normalized) throw new Error("Saved popped Button settings are invalid.");
@@ -97,28 +98,33 @@ export function applyLegacyProgramAppearance(
     const seen = new Set<string>();
     for (const raw of value.placements) {
       const entry = raw as { placementId: string; buttonId: string; color?: string; textColor?: string; lockedAppearance?: ButtonThemeOverride } | null;
-      if (!entry || typeof entry.placementId !== "string" || typeof entry.buttonId !== "string" ||
+      if (!entry || typeof entry.placementId !== "string" || !entry.placementId.trim() ||
+        typeof entry.buttonId !== "string" || !entry.buttonId.trim() ||
         Object.keys(entry).some((key) => !["placementId", "buttonId", "color", "textColor", "lockedAppearance"].includes(key)) ||
         seen.has(entry.placementId)) throw new Error("Saved popped Button identity is invalid or duplicated.");
       seen.add(entry.placementId);
+      const colors = entry.color !== undefined || entry.textColor !== undefined ? normalizeProgramPopoutColorOverride({
+        ...(entry.color !== undefined ? { surface: entry.color } : {}), ...(entry.textColor !== undefined ? { text: entry.textColor } : {})
+      }) : null;
+      if ((entry.color !== undefined || entry.textColor !== undefined) && !colors) throw new Error("Saved popped Button color is invalid.");
+      const lock = entry.lockedAppearance === undefined ? null : normalizeProgramPopoutThemeLock(entry.lockedAppearance);
+      if (entry.lockedAppearance !== undefined && !lock) throw new Error("Saved popped Button lock is invalid.");
+      if (!Object.hasOwn(next.placements, entry.placementId)) {
+        skippedMissingPlacementCount += 1;
+        continue;
+      }
       const placement = next.placements[entry.placementId];
-      if (!placement || placement.buttonId !== entry.buttonId) {
+      if (placement.buttonId !== entry.buttonId) {
         throw new Error(`Saved Button '${entry.buttonId}' cannot be resolved exactly on this installation.`);
       }
       if (!placementMatchesThemeTarget(next, placement, target)) continue;
       if (!popped(next, placement.id)) throw new Error("Saved popped appearance references a non-popped Button.");
       if (next.programPopoutThemeLocks?.[placement.id]) continue;
-      const colors = entry.color !== undefined || entry.textColor !== undefined ? normalizeProgramPopoutColorOverride({
-        ...(entry.color !== undefined ? { surface: entry.color } : {}), ...(entry.textColor !== undefined ? { text: entry.textColor } : {})
-      }) : null;
-      if ((entry.color !== undefined || entry.textColor !== undefined) && !colors) throw new Error("Saved popped Button color is invalid.");
       if (colors) {
         next.programPopoutColorOverrides ??= {};
         next.programPopoutColorOverrides[placement.id] = { ...next.programPopoutColorOverrides[placement.id], ...colors };
       }
-      if (entry.lockedAppearance !== undefined) {
-        const lock = normalizeProgramPopoutThemeLock(entry.lockedAppearance);
-        if (!lock) throw new Error("Saved popped Button lock is invalid.");
+      if (lock) {
         next.programPopoutThemeLocks ??= {};
         next.programPopoutThemeLocks[placement.id] = lock;
       }
@@ -138,5 +144,5 @@ export function applyLegacyProgramAppearance(
   }
   const validation = validateButtonStateDocument(next);
   if (!validation.valid) throw new Error(validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
-  return next;
+  return { document: next, skippedMissingPlacementCount };
 }

@@ -1,11 +1,17 @@
 import type {
-  ButtonFanSetup, ButtonPlacement, ButtonPopoutUnit, ButtonRecord,
+  ButtonFanSetup, ButtonPlacement, ButtonPopoutUnit, ButtonRecord, ButtonSkin,
   ButtonStateDocument, ButtonSurface, JsonObject, ProgramPopoutThemeSettings,
   ProgramPopoutColorOverride, ButtonThemeOverride
 } from "../button/types.js";
 import { createButtonStateDocument } from "../button/state/buttonDefaults.js";
 import { validateButtonStateDocument } from "../button/state/buttonStateValidation.js";
 import { resolveButtonPlacementPresentation } from "../button/state/buttonPresentation.js";
+import { parseInstalledToolSetSkin } from "../button/state/installedToolSetSkins.js";
+import {
+  getEmbeddedButtonSkinFamilySources,
+  rememberButtonSkinFamilyBaseline,
+  resolveEmbeddedButtonSkinFamilySource
+} from "../button/skins/buttonSkinFamily.js";
 import { isButtonTextGlowCurve, isButtonTextGlowSetting } from "../button/skins/buttonTextGlow.js";
 import {
   applyThemeFile, captureThemeFile, isFlowCellThemeFile, listThemePlacements,
@@ -271,14 +277,25 @@ export function capturePortableTheme(args: {
       button: buttonPresentation(resolveButtonPlacementPresentation(document.buttons[placement.buttonId], placement)), placement: placementPresentation(placement)
     };
   });
-  source.buttons = source.buttons.filter((appearance) => selected.has(appearance.placementId)).map((appearance) => ({
-    ...appearance, label: presentation[placementMap.get(appearance.placementId)!].button.label,
-    placementId: placementMap.get(appearance.placementId)!,
-    buttonId: captureButton(appearance.buttonId), surfaceId: surfaceMap.get(appearance.surfaceId)!,
-    sourceIdentity: null, panelOwnerIdentity: null,
-    skin: { ...appearance.skin, id: `skin-${portableKey(JSON.stringify(appearance.skin))}`, metadata: {}, compileCache: null },
-    assignSkin: true
-  }));
+  source.buttons = source.buttons.filter((appearance) => selected.has(appearance.placementId)).map((appearance) => {
+    const placementId = placementMap.get(appearance.placementId)!;
+    const label = presentation[placementId].button.label;
+    const variants = getEmbeddedButtonSkinFamilySources(appearance.skin);
+    const current = resolveEmbeddedButtonSkinFamilySource(appearance.skin, appearance.placementId, label);
+    const skin: ButtonSkin = {
+      ...(current ? parseInstalledToolSetSkin(current.source, appearance.skin.name) : appearance.skin),
+      id: "",
+      metadata: variants ? { buttonSkinEmbeddedVariants: variants } : {},
+      compileCache: null
+    };
+    return {
+      ...appearance, label, placementId,
+      buttonId: captureButton(appearance.buttonId), surfaceId: surfaceMap.get(appearance.surfaceId)!,
+      sourceIdentity: null, panelOwnerIdentity: null,
+      skin: { ...skin, id: `skin-${portableKey(JSON.stringify(skin))}` },
+      assignSkin: true
+    };
+  });
   const surfaces: PortableThemeSurface[] = [...surfaceMap].map(([localId, id]) => {
     const surface = document.surfaces[localId];
     const units = Object.values(document.popoutUnits).filter((unit) => unit.surfaceId === localId);
@@ -368,6 +385,21 @@ export function isPortableTheme(value: unknown): value is PortableTheme {
     !isFlowCellThemeFile(value.theme) || !equalValue(value.target, value.theme.target) ||
     !Array.isArray(value.dependencies) || !record(value.references) || !record(value.presentation) ||
     !Array.isArray(value.surfaces) || !record(value.contributions)) return false;
+  const validatedVariants = new Set<string>();
+  for (const { skin } of value.theme.buttons) {
+    if (!Object.hasOwn(skin.metadata, "buttonSkinEmbeddedVariants")) continue;
+    const variants = getEmbeddedButtonSkinFamilySources(skin);
+    if (!variants) return false;
+    for (const source of Object.values(variants)) {
+      if (validatedVariants.has(source)) continue;
+      try {
+        parseInstalledToolSetSkin(source, skin.name);
+      } catch {
+        return false;
+      }
+      validatedVariants.add(source);
+    }
+  }
   const dependencies = value.dependencies as unknown[];
   if (!dependencies.every((entry) => record(entry) &&
     [entry.id, entry.programName, entry.programId, entry.panelName, entry.sourceId, entry.sourceVersion, entry.sourceName].every(nonempty) &&
@@ -600,6 +632,10 @@ export function applyPortableTheme(document: ButtonStateDocument, theme: Portabl
     Object.assign(placement, structuredClone(appearance.placement));
     if (outside || placement.presentationOverride) placement.presentationOverride = structuredClone(appearance.button);
     else Object.assign(button, structuredClone(appearance.button));
+    const skin = next.skins[placement.skinOverrideId ?? button.defaultSkinId];
+    if (getEmbeddedButtonSkinFamilySources(skin)) {
+      rememberButtonSkinFamilyBaseline(skin, placement.id, appearance.button.label);
+    }
   }
   for (const saved of theme.surfaces) {
     const localId = plan.surfaceIds[saved.id];

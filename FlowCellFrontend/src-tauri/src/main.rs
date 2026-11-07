@@ -268,6 +268,7 @@ fn main() {
             button_state::update_button_settings_default,
             button_state::save_button_skin_file,
             program_sources::install::install_button_source,
+            program_sources::install::toolset_package::export_installed_toolset,
             krita_brushes::pending_krita_brush_buttons,
             krita_brushes::prepare_krita_brush_button,
             krita_brushes::acknowledge_krita_brush_button,

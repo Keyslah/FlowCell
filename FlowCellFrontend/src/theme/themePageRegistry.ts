@@ -19,6 +19,8 @@ export interface ThemePageAssetDefinition {
   group: string;
   cssProperty: `--flowcell-${string}`;
   kind: "image";
+  /** What "Default" means for this asset when it is a bundled look rather than the page's own fallback. */
+  defaultMode?: Exclude<ThemePageAssetValue["mode"], "default" | "custom">;
 }
 
 export interface ThemePageAssetValue {
@@ -81,7 +83,8 @@ const MAIN_TOKENS: readonly ThemePageTokenDefinition[] = [
     label: "Background",
     group: "Workspace",
     cssProperty: "--flowcell-main-background-color",
-    defaultValue: "#9db678"
+    // Chipped Concrete is the default Main look (it replaced the original green page).
+    defaultValue: "#887F73"
   },
   {
     id: "chrome-background",
@@ -336,7 +339,10 @@ export const FLOWCELL_THEME_PAGE_REGISTRY: readonly ThemePageDefinition[] = [
       label: "Background Image",
       group: "Workspace",
       cssProperty: "--flowcell-main-background-image",
-      kind: "image"
+      kind: "image",
+      // The Main page's default is the Chipped Concrete base slab (rails as rendered slabs);
+      // "Default" in the Theme Editor means the same thing.
+      defaultMode: "chipped-concrete"
     }],
     buttonSurfaceKinds: ["panel"],
     buttonSurfaceIds: MAIN_PAGE_BUTTON_SURFACE_IDS,
@@ -401,9 +407,18 @@ export function defaultThemePageAppearance(pageId: FlowCellThemePageId): ThemePa
     tokens: Object.fromEntries(definition.tokens.map((token) => [token.id, token.defaultValue])),
     assets: Object.fromEntries(definition.assets.map((asset) => [
       asset.id,
-      { mode: "default", path: null } satisfies ThemePageAssetValue
+      { mode: asset.defaultMode ?? "default", path: null } satisfies ThemePageAssetValue
     ]))
   };
+}
+
+/** The look an asset value actually draws: "Default" resolves to the asset's bundled default, if it has one. */
+export function effectiveThemePageAssetMode(
+  definition: ThemePageAssetDefinition,
+  value: ThemePageAssetValue | undefined
+): ThemePageAssetValue["mode"] {
+  const mode = value?.mode ?? "default";
+  return mode === "default" && definition.defaultMode ? definition.defaultMode : mode;
 }
 
 /** Built-in Main page looks. They set page tokens/assets only, so Buttons keep their skins and colors. */

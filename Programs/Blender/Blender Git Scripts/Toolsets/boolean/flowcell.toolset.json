@@ -1,7 +1,7 @@
 {
     "schemaVersion": 1,
     "id": "blender.boolean",
-    "version": "1.1.3",
+    "version": "1.1.4",
     "label": "boolean",
     "tooltip": "Quick Boolean with I/U/D operation buttons, one cycling solver button, SI/HT/HC/S toggles, and Run.",
     "kind": "toolset",
@@ -295,5 +295,62 @@
         },
         "width": 616,
         "height": 158
+    },
+  "appearance": {
+    "skins": {
+      "skin-1-Chipped-Concrete-Key-100-b": {
+        "file": "skins/skin-1-Chipped-Concrete-Key-100-b.flowcell-button-skin.txt",
+        "variants": {
+          "0": "skins/skin-1-Chipped-Concrete-Key-100-b/0.flowcell-button-skin.txt",
+          "1": "skins/skin-1-Chipped-Concrete-Key-100-b/1.flowcell-button-skin.txt",
+          "2": "skins/skin-1-Chipped-Concrete-Key-100-b/2.flowcell-button-skin.txt",
+          "3": "skins/skin-1-Chipped-Concrete-Key-100-b/3.flowcell-button-skin.txt",
+          "4": "skins/skin-1-Chipped-Concrete-Key-100-b/4.flowcell-button-skin.txt",
+          "5": "skins/skin-1-Chipped-Concrete-Key-100-b/5.flowcell-button-skin.txt",
+          "6": "skins/skin-1-Chipped-Concrete-Key-100-b/6.flowcell-button-skin.txt",
+          "7": "skins/skin-1-Chipped-Concrete-Key-100-b/7.flowcell-button-skin.txt",
+          "8": "skins/skin-1-Chipped-Concrete-Key-100-b/8.flowcell-button-skin.txt",
+          "9": "skins/skin-1-Chipped-Concrete-Key-100-b/9.flowcell-button-skin.txt",
+          "10": "skins/skin-1-Chipped-Concrete-Key-100-b/10.flowcell-button-skin.txt",
+          "11": "skins/skin-1-Chipped-Concrete-Key-100-b/11.flowcell-button-skin.txt",
+          "12": "skins/skin-1-Chipped-Concrete-Key-100-b/12.flowcell-button-skin.txt",
+          "13": "skins/skin-1-Chipped-Concrete-Key-100-b/13.flowcell-button-skin.txt",
+          "14": "skins/skin-1-Chipped-Concrete-Key-100-b/14.flowcell-button-skin.txt",
+          "15": "skins/skin-1-Chipped-Concrete-Key-100-b/15.flowcell-button-skin.txt",
+          "16": "skins/skin-1-Chipped-Concrete-Key-100-b/16.flowcell-button-skin.txt",
+          "17": "skins/skin-1-Chipped-Concrete-Key-100-b/17.flowcell-button-skin.txt",
+          "18": "skins/skin-1-Chipped-Concrete-Key-100-b/18.flowcell-button-skin.txt",
+          "19": "skins/skin-1-Chipped-Concrete-Key-100-b/19.flowcell-button-skin.txt",
+          "20": "skins/skin-1-Chipped-Concrete-Key-100-b/20.flowcell-button-skin.txt",
+          "21": "skins/skin-1-Chipped-Concrete-Key-100-b/21.flowcell-button-skin.txt",
+          "22": "skins/skin-1-Chipped-Concrete-Key-100-b/22.flowcell-button-skin.txt",
+          "23": "skins/skin-1-Chipped-Concrete-Key-100-b/23.flowcell-button-skin.txt",
+          "24": "skins/skin-1-Chipped-Concrete-Key-100-b/24.flowcell-button-skin.txt",
+          "25": "skins/skin-1-Chipped-Concrete-Key-100-b/25.flowcell-button-skin.txt",
+          "26": "skins/skin-1-Chipped-Concrete-Key-100-b/26.flowcell-button-skin.txt",
+          "27": "skins/skin-1-Chipped-Concrete-Key-100-b/27.flowcell-button-skin.txt",
+          "28": "skins/skin-1-Chipped-Concrete-Key-100-b/28.flowcell-button-skin.txt",
+          "29": "skins/skin-1-Chipped-Concrete-Key-100-b/29.flowcell-button-skin.txt",
+          "30": "skins/skin-1-Chipped-Concrete-Key-100-b/30.flowcell-button-skin.txt",
+          "31": "skins/skin-1-Chipped-Concrete-Key-100-b/31.flowcell-button-skin.txt",
+          "32": "skins/skin-1-Chipped-Concrete-Key-100-b/32.flowcell-button-skin.txt"
+        }
+      },
+      "skin-2-Light-green-black-text-basic-Z": {
+        "file": "skins/skin-2-Light-green-black-text-basic-Z.flowcell-button-skin.txt"
+      }
+    },
+    "owner": "skin-1-Chipped-Concrete-Key-100-b",
+    "children": {
+      "operation_intersect": "skin-2-Light-green-black-text-basic-Z",
+      "operation_union": "skin-2-Light-green-black-text-basic-Z",
+      "operation_difference": "skin-2-Light-green-black-text-basic-Z",
+      "solver_cycle": "skin-2-Light-green-black-text-basic-Z",
+      "toggle_self_intersection": "skin-2-Light-green-black-text-basic-Z",
+      "toggle_hole_tolerant": "skin-2-Light-green-black-text-basic-Z",
+      "toggle_hide_cutter": "skin-2-Light-green-black-text-basic-Z",
+      "toggle_backup_active": "skin-2-Light-green-black-text-basic-Z",
+      "run_boolean": "skin-2-Light-green-black-text-basic-Z"
     }
+  }
 }

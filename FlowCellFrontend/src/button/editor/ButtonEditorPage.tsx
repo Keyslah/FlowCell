@@ -8,6 +8,7 @@ import {
   useState
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { unregisterLayoutWindow } from "../../lib/layoutSnapshots";
 import type { ButtonEditorWindowContext } from "../../lib/windowContext";
 import {
@@ -16,6 +17,7 @@ import {
 } from "../../lib/programRails";
 import {
   showOpenFileDialog,
+  showOpenFolderDialog,
   showSaveFileDialog
 } from "../../lib/tauri";
 import {
@@ -57,6 +59,7 @@ import {
   loadButtonSettingsDefault,
   loadButtonSettingsFile,
   loadButtonStateDocument,
+  listButtonSkinFiles,
   openButtonSkinDirectory,
   saveButtonSettingsFile,
   saveButtonSkinFile,
@@ -65,6 +68,8 @@ import {
   updateButtonSettingsDefault,
   type InstallButtonSourceResult
 } from "../state/ButtonStateRepository";
+import { assignInstalledToolSetSkins } from "../state/installedToolSetSkins";
+import { captureToolsetPackage } from "./toolsetPackageExport";
 import { useButtonEditorStore } from "../state/ButtonEditorStore";
 import {
   publishButtonCommit,
@@ -453,7 +458,7 @@ function addInstalledToolSet(
   ownerSurfaceId: string
 ): { ownerPlacement: ButtonPlacement; popoutSurfaceId: string } {
   if (result.children.length === 0) throw new Error("The installed tool set contains no child buttons.");
-  const layout = validateInstalledButtonLayout(result.layout);
+  const layout = validateInstalledButtonLayout(result.layout, result.children.map((child) => child.slot));
   const slots = result.children.map((child) => child.slot);
   if (new Set(slots).size !== slots.length) {
     throw new Error("The installed tool set contains duplicate child placement slots.");
@@ -503,6 +508,7 @@ function addInstalledToolSet(
     sourceIdentity: result.sourceIdentity
   });
   const ownerPlacement = addPlacement(document, result.ownerButtonId, ownerSurfaceId);
+  const skinAssignments = [{ placement: ownerPlacement, skinKey: layout?.appearance?.owner }];
   const childButtonIds: string[] = [];
   for (const child of result.children) {
     const childId = createStableButtonId("button-child");
@@ -518,8 +524,10 @@ function addInstalledToolSet(
       metadata: { toolSetSlot: child.slot }
     });
     const exact = childRects[child.slot];
-    addPlacement(document, childId, surface.id, exact);
+    const placement = addPlacement(document, childId, surface.id, exact);
+    skinAssignments.push({ placement, skinKey: layout?.appearance?.children?.[child.slot] });
   }
+  assignInstalledToolSetSkins(document, layout?.appearance, skinAssignments);
   const unitId = createStableButtonId("popout");
   document.popoutUnits[unitId] = {
     id: unitId,
@@ -756,6 +764,8 @@ function ButtonEditorContent({
   const selectedSkin = selectedButton && selectedPlacement
     ? store.draft.skins[selectedPlacement.skinOverrideId ?? selectedButton.defaultSkinId] ?? null
     : null;
+  const exportableToolSet = selectedSurfaceUnit?.kind === "tool-set" ? selectedSurfaceUnit
+    : Object.values(store.draft.popoutUnits).find((unit) => unit.kind === "tool-set" && unit.ownerButtonId === selectedButton?.id);
   const programOptions = useMemo(
     () => buildButtonEditorProgramOptions(store.draft, programs),
     [store.draft, programs]
@@ -1064,6 +1074,33 @@ function ButtonEditorContent({
     }).then((next) => { if (disposed) next(); else unlisten = next; });
     return () => { disposed = true; unlisten?.(); };
   }, [applyEditorContext]);
+
+  const exportToolSet = async () => {
+    if (exportableToolSet?.kind !== "tool-set" || busyRef.current) return;
+    const document = store.draft;
+    const label = document.buttons[exportableToolSet.ownerButtonId]?.label ?? "";
+    const folderName = `${label.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").trim().slice(0, 80) || "Shared"} Tool Set`;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const [parent] = await showOpenFolderDialog({ title: `Choose where to create '${folderName}'` });
+      if (!parent) return;
+      let skinLibrary: Promise<{ directory: string; paths: string[]; read: typeof loadButtonSkinFile }> | undefined;
+      const captured = await captureToolsetPackage(document, exportableToolSet, () =>
+        skinLibrary ??= Promise.all([getButtonSkinDirectory(), listButtonSkinFiles()]).then(([directory, paths]) => ({
+          directory, paths, read: loadButtonSkinFile
+        }))
+      );
+      const manifestPath = await invoke<string>("export_installed_toolset", {
+        request: { ...captured, destination: `${parent}/${folderName}` }
+      });
+      setMessage(`Exported Tool Set to ${manifestPath}. Share the whole folder. To install it, select flowcell.toolset.json with Add Button.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const importSource = useCallback(async () => {
     const importProgramName = lockedImportDestination?.programName ?? programName;
@@ -2997,6 +3034,16 @@ function ButtonEditorContent({
             >
               Update {settingsPlacementLabel} Default
             </button>
+            {exportableToolSet?.kind === "tool-set" ? (
+              <button
+                type="button"
+                className="button-editor-sidebar__placement-file"
+                disabled={busy}
+                onClick={() => void exportToolSet()}
+              >
+                Export Tool Set
+              </button>
+            ) : null}
             <button
               type="button"
               disabled={mainPageControlScope || selectedSetForSurface.size === 0 || busy}

@@ -20,8 +20,8 @@ const BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME: &str = "Defaults";
 const BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION: &str = ".flowcell-button-default.json";
 const BUTTON_SETTINGS_FILE_MAX_BYTES: usize = 16 * 1024 * 1024;
 const BUTTON_PLACEMENT_CYCLE_MAX_STATES: usize = 64;
-const BUTTON_SKIN_FILE_EXTENSION: &str = ".flowcell-button-skin.txt";
-const BUTTON_SKIN_FILE_MAX_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const BUTTON_SKIN_FILE_EXTENSION: &str = ".flowcell-button-skin.txt";
+pub(crate) const BUTTON_SKIN_FILE_MAX_BYTES: usize = 2 * 1024 * 1024;
 const BUTTON_SKIN_HEADERS: [&str; 10] = [
     "=== structure ===",
     "=== keyframes ===",
@@ -502,7 +502,7 @@ fn normalize_button_skin_file_path(path: &Path) -> PathBuf {
     PathBuf::from(format!("{base_path}{BUTTON_SKIN_FILE_EXTENSION}"))
 }
 
-fn validate_button_skin_source(source: &str) -> Result<(), String> {
+pub(crate) fn validate_button_skin_source(source: &str) -> Result<(), String> {
     if source.trim().is_empty() {
         return Err("Button skin source cannot be empty.".to_string());
     }

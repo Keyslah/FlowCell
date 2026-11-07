@@ -139,9 +139,14 @@ import {
   type MotionSettings
 } from "../../lib/motionSettings";
 import { showOpenFileDialog } from "../../lib/tauri";
-import mainBackground from "../../assets/backgrounds/main-background.jpeg";
+// The default Main look; the theme runtime normally sets the background before the first paint matters.
+import mainBackground from "../../assets/backgrounds/chipped-concrete-base.webp";
 import type { FlowCellBounds, LayoutSnapshot, LayoutSnapshotWindow } from "../../types";
-import { orderButtonRectsByVisualRows } from "../../button/geometry/buttonGeometry";
+import {
+  buttonSpacingPixelsFromMillimeters,
+  createStarterButtonLayout,
+  orderButtonRectsByVisualRows
+} from "../../button/geometry/buttonGeometry";
 import {
   buildButtonsSurfaceButtons,
   buildPanelRailButtons,
@@ -2951,35 +2956,82 @@ export default function MainPage() {
     }
   };
 
-  const openDefaultPanelPop = async (programName: string, panelName: string) => {
+  const openPanelButtonsPop = async (
+    programName: string,
+    panelName: string,
+    selectedButtonIds: readonly string[] = []
+  ) => {
     const current = buttonDocumentRef.current ?? await loadButtonStateDocument();
+    const selectedIds = new Set(selectedButtonIds);
     const panelButtons = Object.values(current.buttons).filter((candidate) =>
-      sourceIdentityMatchesFolderScope(candidate.sourceIdentity, programName, panelName)
+      (candidate.role === "single-script" || candidate.role === "tool-set-owner") &&
+      sourceIdentityMatchesFolderScope(candidate.sourceIdentity, programName, panelName) &&
+      (selectedIds.size === 0 || selectedIds.has(candidate.id))
     );
-    if (!panelButtons.some((candidate) => candidate.role === "single-script")) {
-      const toolSetOwners = panelButtons.filter((candidate) => candidate.role === "tool-set-owner");
-      if (toolSetOwners.length > 0) {
-        // A Tool Sets panel has no script Buttons to gather; Pop opens its tool sets instead.
-        for (const owner of toolSetOwners) {
-          await activateToolSetOwner(owner.id, current, "open");
-        }
-        return;
-      }
+    if (selectedIds.size > 0 && panelButtons.length !== selectedIds.size) {
+      throw new Error("A selected Button no longer belongs to this panel. Refresh and select it again.");
     }
+    const toolSetOwners = panelButtons.filter((candidate) => candidate.role === "tool-set-owner");
+    for (const owner of toolSetOwners) {
+      await activateToolSetOwner(owner.id, current, "open");
+    }
+    if (toolSetOwners.length > 0 && !panelButtons.some((candidate) => candidate.role === "single-script")) return;
     let popoutUnitId: string | null = null;
     const document = await commitButtonDocumentMutation((draft) => {
       const memberButtons = Object.values(draft.buttons).filter(
         (candidate) =>
           candidate.role === "single-script" &&
-          sourceIdentityMatchesFolderScope(candidate.sourceIdentity, programName, panelName)
+          sourceIdentityMatchesFolderScope(candidate.sourceIdentity, programName, panelName) &&
+          (selectedIds.size === 0 || selectedIds.has(candidate.id))
       );
       if (memberButtons.length === 0) {
         throw new Error("This panel has no script Buttons for a default Pop-out.");
       }
-      const existingUnitIds = new Set(Object.keys(draft.popoutUnits));
-      const unit = ensureRegularPopout(draft, memberButtons);
+      const unit = ensureRegularPopout(draft, memberButtons, { ownerless: true });
       popoutUnitId = unit.id;
-      return !existingUnitIds.has(unit.id);
+      const surface = draft.surfaces[unit.surfaceId];
+      const members = memberButtons.map((button) => {
+        const placement = draft.placements[unit.memberPlacementIds.find(
+          (id) => draft.placements[id]?.buttonId === button.id
+        )!];
+        const source = Object.values(draft.placements).find((candidate) =>
+          candidate.buttonId === button.id && draft.surfaces[candidate.surfaceId]?.kind === "panel"
+        );
+        if (!placement || !source) throw new Error(`The panel placement for '${button.label}' is missing.`);
+        // Copy presentation, keeping this Pop's own placement identity and execution owner.
+        const { id, surfaceId, buttonId, ...presentation } = source;
+        Object.assign(placement, cloneButtonDocument(presentation));
+        const skin = draft.skins[placement.skinOverrideId ?? button.defaultSkinId];
+        const baseline = skin?.metadata.buttonSkinFamilyBaseline;
+        if (baseline && typeof baseline === "object" && !Array.isArray(baseline) && typeof baseline[source.id] === "number") {
+          skin.metadata.buttonSkinFamilyBaseline = { ...baseline, [placement.id]: baseline[source.id] };
+        }
+        if (draft.themeOverrides?.[source.id]) {
+          draft.themeOverrides[placement.id] = cloneButtonDocument(draft.themeOverrides[source.id]);
+        }
+        return placement;
+      });
+      const ordered = orderButtonRectsByVisualRows(members);
+      const layout = createStarterButtonLayout(ordered.map(({ id }) => draft.placements[id]), {
+        padding: draft.settings.defaultSurfacePadding,
+        gap: buttonSpacingPixelsFromMillimeters(draft.settings.buttonSpacingMm),
+        maximumColumns: 4
+      });
+      ordered.forEach(({ id }, index) => Object.assign(draft.placements[id], layout.rects[id], { zIndex: index }));
+      surface.placementIds = ordered.map(({ id }) => id);
+      surface.width = layout.requiredWidth;
+      surface.height = layout.requiredHeight;
+      surface.uniformButtonSize = null;
+      unit.memberPlacementIds = [...surface.placementIds];
+      unit.canonicalBounds = { x: 0, y: 0, width: surface.width, height: surface.height };
+      unit.desktopBounds = null;
+      unit.desktopBoundsEnvelope = { ...unit.canonicalBounds };
+      unit.desktopBoundsFitMode = "surface";
+      unit.windowFitMode = "surface";
+      unit.interactionMode = "pop";
+      unit.ownerButtonId = null;
+      unit.ownerPlacementId = null;
+      return true;
     });
     if (!popoutUnitId) {
       throw new Error("FlowCell could not create the panel's default Pop-out.");
@@ -3014,7 +3066,7 @@ export default function MainPage() {
     });
   };
 
-  const handleOpenLastPanelPop = async () => {
+  const handleOpenPanelPop = async () => {
     if (!selectedProgramName || !selectedPanelName) return;
     try {
       // Bundled panels can install before their Main owner has been discovered.
@@ -3022,23 +3074,15 @@ export default function MainPage() {
       const { document: canonical } = await loadMainPageButtonBootstrap({
         removeStaleOwners: false
       });
-      const panelOwnerPlacement = resolvePanelOwnerMainPlacement(
-        canonical,
+      acceptButtonDocument(canonical);
+      await openPanelButtonsPop(
         selectedProgramName,
-        selectedPanelName
+        selectedPanelName,
+        selectedPanelScriptRecords.map((record) => record.canonicalButtonId)
       );
-      if (!panelOwnerPlacement) {
-        throw new Error("The selected panel has no canonical panel-owner Button.");
-      }
-      const choice = readMainLastPopChoices()[panelOwnerPlacement.buttonId];
-      if (!choice) {
-        await openDefaultPanelPop(selectedProgramName, selectedPanelName);
-        return;
-      }
-      await openMainPopChoice(choice, canonical, panelOwnerPlacement.buttonId);
     } catch (error) {
       console.error(
-        `Failed to open the last Pop-out for ${selectedProgramName}/${selectedPanelName}.`,
+        `Failed to pop Buttons for ${selectedProgramName}/${selectedPanelName}.`,
         error
       );
       window.alert(`Pop window could not be opened.\n\n${formatErrorMessage(error)}`);
@@ -3406,7 +3450,7 @@ export default function MainPage() {
     }
 
     if (button.actionId === "pop-panel-script") {
-      await handleOpenLastPanelPop();
+      await handleOpenPanelPop();
       return;
     }
 

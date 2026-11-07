@@ -29,6 +29,7 @@ import {
   setButtonSkinProfileColor
 } from "../button/skins/buttonSkinColors.js";
 import { BUTTON_SKIN_SECTION_ORDER } from "../button/skins/buttonSkinFormat.js";
+import { sameEmbeddedButtonSkinFamily } from "../button/skins/buttonSkinFamily.js";
 import { isButtonTextGlowCurve, isButtonTextGlowSetting } from "../button/skins/buttonTextGlow.js";
 import { validateButtonSkin } from "../button/skins/skinValidator.js";
 import {
@@ -396,9 +397,10 @@ function placementProgramPanel(
 }
 
 export function defaultMainThemeAppearance(): MainThemeAppearance {
+  // Chipped Concrete is the default Main look (it replaced the original green page).
   return {
-    backgroundColor: "#9db678",
-    backgroundImageMode: "default",
+    backgroundColor: "#887F73",
+    backgroundImageMode: "chipped-concrete",
     backgroundImagePath: null,
     rails: Object.fromEntries(
       rails.map((rail) => [
@@ -776,17 +778,17 @@ function assignedThemeSkinId(
   document: ButtonStateDocument,
   appearance: ButtonThemeAppearance
 ): string {
+  const matches = (skin: ButtonSkin) =>
+    sameButtonSkinSource(skin, appearance.skin) && sameEmbeddedButtonSkinFamily(skin, appearance.skin);
   const exact = document.skins[appearance.skin.id];
-  if (exact && sameButtonSkinSource(exact, appearance.skin)) return exact.id;
-  const reusable = Object.values(document.skins).find((skin) =>
-    sameButtonSkinSource(skin, appearance.skin)
-  );
+  if (exact && matches(exact)) return exact.id;
+  const reusable = Object.values(document.skins).find(matches);
   if (reusable) return reusable.id;
   const fingerprint = BUTTON_SKIN_SECTION_ORDER.map((section) => appearance.skin[section]).join("\u0000");
   const base = `flowcell-theme-embedded-${stableHash(fingerprint).toString(16).padStart(8, "0")}`;
   let id = base;
   let suffix = 2;
-  while (document.skins[id] && !sameButtonSkinSource(document.skins[id], appearance.skin)) {
+  while (document.skins[id] && !matches(document.skins[id])) {
     id = `${base}-${suffix}`;
     suffix += 1;
   }

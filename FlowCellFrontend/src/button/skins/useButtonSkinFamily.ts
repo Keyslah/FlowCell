@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createButtonSkinFromFile } from "../editor/buttonSkinFiles";
 import { getButtonSkinDirectory, listButtonSkinFiles, loadButtonSkinFile } from "../state/ButtonStateRepository";
 import type { ButtonSkin } from "../types";
-import { buttonSkinFamilyVariantPath, nearestButtonSkinFamilyPath } from "./buttonSkinFamily";
+import {
+  buttonSkinFamilyVariantPath,
+  nearestButtonSkinFamilyPath,
+  resolveEmbeddedButtonSkinFamilySource
+} from "./buttonSkinFamily";
+import { BUTTON_SKIN_FILE_EXTENSION } from "./buttonSkinFormat";
 import { validateButtonSkin } from "./skinValidator";
 
 const pendingVariants = new Map<string, Promise<ButtonSkin | null>>();
@@ -34,6 +39,20 @@ function loadFamilyVariant(relativePath: string): Promise<ButtonSkin | null> {
 
 export function useButtonSkinFamily(skin: ButtonSkin, placementId: string, label: string): ButtonSkin {
   const path = buttonSkinFamilyVariantPath(skin, placementId, label);
+  const embedded = useMemo(() => {
+    const variant = resolveEmbeddedButtonSkinFamilySource(skin, placementId, label);
+    if (!variant) return null;
+    try {
+      const rendered = createButtonSkinFromFile(
+        variant.source,
+        `${skin.name}${BUTTON_SKIN_FILE_EXTENSION}`,
+        `${skin.id}-variant-${variant.count}`
+      );
+      return validateButtonSkin(rendered).valid ? rendered : null;
+    } catch {
+      return null;
+    }
+  }, [skin, placementId, label]);
   const [variant, setVariant] = useState<{ path: string; skin: ButtonSkin } | null>(null);
   useEffect(() => {
     setVariant(null);
@@ -44,5 +63,5 @@ export function useButtonSkinFamily(skin: ButtonSkin, placementId: string, label
     });
     return () => { active = false; };
   }, [path]);
-  return variant && variant.path === path ? variant.skin : skin;
+  return embedded ?? (variant && variant.path === path ? variant.skin : skin);
 }

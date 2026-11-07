@@ -1,3 +1,5 @@
+import { isButtonSkinVariantCount } from "../skins/buttonSkinFamily.js";
+
 type UnknownRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -338,7 +340,40 @@ function validateBehavior(
   }
 }
 
-export function validateInstalledButtonLayout<T>(layout: T): T {
+function validateAppearance(value: unknown, childSlots?: readonly string[]): void {
+  if (!isRecord(value)) invalid("appearance", "must be an object.");
+  rejectUnknownKeys(value, ["skins", "owner", "children"], "appearance");
+  if (!isRecord(value.skins)) invalid("appearance.skins", "must be an object.");
+  const skins = value.skins;
+  for (const [key, entry] of Object.entries(skins)) {
+    const path = `appearance.skins.${key}`;
+    if (!/^[a-zA-Z0-9_.-]{1,128}$/.test(key) || !isRecord(entry)) invalid(path, "must name a skin object.");
+    rejectUnknownKeys(entry, ["source", "variants"], path);
+    requireNonemptyString(entry.source, `${path}.source`);
+    if (entry.variants === undefined) continue;
+    if (!isRecord(entry.variants)) invalid(`${path}.variants`, "must be an object.");
+    for (const [count, source] of Object.entries(entry.variants)) {
+      if (!isButtonSkinVariantCount(count)) invalid(`${path}.variants`, "must use canonical character counts.");
+      requireNonemptyString(source, `${path}.variants.${count}`);
+    }
+  }
+
+  const validateAssignment = (assignment: unknown, path: string): void => {
+    const key = requireNonemptyString(assignment, path);
+    if (!Object.hasOwn(skins, key)) invalid(path, "must name a declared skin.");
+  };
+  if (value.owner !== undefined) validateAssignment(value.owner, "appearance.owner");
+  if (value.children !== undefined) {
+    if (!isRecord(value.children)) invalid("appearance.children", "must be an object.");
+    for (const [slot, assignment] of Object.entries(value.children)) {
+      if (!slot.trim()) invalid("appearance.children", "cannot contain an empty slot.");
+      if (childSlots && !childSlots.includes(slot)) invalid(`appearance.children.${slot}`, "must name a declared child slot.");
+      validateAssignment(assignment, `appearance.children.${slot}`);
+    }
+  }
+}
+
+export function validateInstalledButtonLayout<T>(layout: T, childSlots?: readonly string[]): T {
   if (layout === undefined || layout === null) return layout;
   if (!isRecord(layout)) invalid("layout", "must be an object.");
   rejectUnknownKeys(
@@ -353,7 +388,8 @@ export function validateInstalledButtonLayout<T>(layout: T): T {
       "placements",
       "fields",
       "childBehaviors",
-      "updatePolicy"
+      "updatePolicy",
+      "appearance"
     ],
     "layout"
   );
@@ -417,6 +453,7 @@ export function validateInstalledButtonLayout<T>(layout: T): T {
     rejectUnknownKeys(layout.updatePolicy, ["appendMissingChildSlots"], "updatePolicy");
     validateOptionalBoolean(layout.updatePolicy, "appendMissingChildSlots", "updatePolicy");
   }
+  if (layout.appearance !== undefined) validateAppearance(layout.appearance, childSlots);
 
   return layout;
 }

@@ -137,7 +137,8 @@ export async function preparePortableThemeImport(args: {
     for (const { dependency, source } of sources) {
       const installed = await installButtonSource({
         ownerButtonId: createStableButtonId("button"), programName: source.programName,
-        panelName: dependency.panelName, sourcePath: source.sourcePath || source.catalogPath!, importKind: dependency.importKind
+        panelName: dependency.panelName, sourcePath: source.sourcePath || source.catalogPath!, importKind: dependency.importKind,
+        ...(source.catalogPath ? { bundledSourceId: source.sourceId, bundledSourceVersion: source.sourceVersion } : {})
       });
       staged.push(installed);
       candidate = mergeLegacyInstallsIntoDocument(candidate, [installed]);

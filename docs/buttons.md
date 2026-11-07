@@ -1057,6 +1057,33 @@ See `docs/repository-layout.md`, `docs/flowcell-program-registry.md`,
 `docs/flowcell-toolset-manifest.md`, and `docs/blender-scripts.md` for the package
 contracts.
 
+## Sharing a Tool Set with its skins
+
+Select a Tool Set owner or its Pop-out in Button Editor and choose **Export Tool Set**.
+Choose an existing parent folder. FlowCell creates a new `<label> Tool Set` folder,
+containing the installed immutable source, a `flowcell.toolset.json`, assigned owner
+and child skins, and required numbered variants. The current Editor draft supplies
+labels, tooltips, skin assignments and internal Button/field geometry. Runtime field
+values remain initialized from the source manifest's authored defaults.
+
+ZIP the complete exported folder to share it. The recipient extracts it, selects the
+appropriate registered Program/Panel, and chooses `flowcell.toolset.json` through
+**Add Button**. Program-specific execution still needs that Program's compatible
+runner or bridge. Export uses a new destination and validates staging before publish.
+
+Tool Set manifests support an optional `appearance` object. Its `skins` map associates
+each local key with a package-relative sectioned skin `file` and an optional `variants`
+map from grapheme counts to relative skin files. `owner` names the owner skin key,
+and `children` maps stable command slots to skin keys. Every declared file stays
+inside the package and must be present. Published Program packages also require
+those files to be Git-tracked. Each skin file is limited to 2 MiB, with a combined
+appearance limit of 64 MiB and 4096 file references.
+
+Fresh installation assigns those starter skins. Source updates preserve existing
+assignments and apply package defaults to newly added children. Numbered variants
+stay embedded with the installed skin, preserving the authored initial appearance
+and using exact or nearest available variants after label-length changes.
+
 ## Validation Map
 
 - Documentation-only changes: path existence, heading/link checks, and targeted

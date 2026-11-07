@@ -11,6 +11,7 @@
 .theme-editor.theme-editor { grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; padding-bottom: 12px; }
 .theme-editor.theme-editor--program-page { grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; padding: 8px; }
 .theme-editor--program-page .theme-editor__scope { padding: 0; border: 0; background: none; }
+.theme-editor__program-import { align-self: end; justify-self: end; }
 .theme-editor__header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .theme-editor__header-actions { justify-content: flex-end; }
 .theme-editor__content { min-height: 0; overflow: hidden; }

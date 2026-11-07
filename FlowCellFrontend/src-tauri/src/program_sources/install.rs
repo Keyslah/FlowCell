@@ -19,6 +19,9 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "toolset_package.rs"]
+pub(crate) mod toolset_package;
+
 const TOOLSET_MANIFEST_FILE_NAME: &str = "flowcell.toolset.json";
 const SCRIPT_MANIFEST_FILE_NAME: &str = "flowcell.script.json";
 const INSTALL_TRANSACTION_PREFIX: &str = ".flowcell-install-transaction-";
@@ -171,6 +174,8 @@ struct ToolsetManifest {
     children: Vec<ToolsetChildManifest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     layout: Option<ToolsetLayoutManifest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    appearance: Option<toolset_package::ToolsetAppearance<toolset_package::ToolsetSkinFiles>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     events: Option<BTreeMap<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1655,8 +1660,8 @@ fn prepare_source(
         seen_slots.push(slot.clone());
         children.push(ActiveSourceChild {
             slot,
-            label: child.label.trim().to_string(),
-            tooltip: child.tooltip.trim().to_string(),
+            label: child.label,
+            tooltip: child.tooltip,
             payload: child.payload,
             execution_target: child.execution_target,
         });
@@ -1666,7 +1671,7 @@ fn prepare_source(
         .as_ref()
         .map(|query| validate_toolset_state_query(query, &children))
         .transpose()?;
-    let layout = toolset
+    let mut layout = toolset
         .layout
         .as_ref()
         .map(|layout| {
@@ -1675,12 +1680,17 @@ fn prepare_source(
                 .map_err(|error| format!("Failed to serialize tool-set layout: {error}"))
         })
         .transpose()?;
+    if let Some(appearance) = toolset.appearance {
+        let appearance = toolset_package::resolve_appearance(appearance, package_root, &children)?;
+        layout.get_or_insert_with(|| json!({}))["appearance"] = serde_json::to_value(appearance)
+            .map_err(|error| format!("Failed to serialize tool-set appearance: {error}"))?;
+    }
     let _manifest_version = toolset.version;
     Ok(PreparedSource {
         package_source_root: package_root.to_path_buf(),
         source_relative_to_package: source_relative,
-        label: toolset.label.trim().to_string(),
-        tooltip: toolset.tooltip.trim().to_string(),
+        label: toolset.label,
+        tooltip: toolset.tooltip,
         kind: if toolset.kind.trim().is_empty() {
             "toolset".to_string()
         } else {
@@ -1698,6 +1708,14 @@ fn prepare_source(
 }
 
 fn copy_package_source(source: &Path, destination: &Path) -> Result<(), String> {
+    copy_package_source_entries(source, destination, false)
+}
+
+fn copy_package_source_entries(
+    source: &Path,
+    destination: &Path,
+    exporting: bool,
+) -> Result<(), String> {
     if source.is_file() {
         fs::create_dir_all(destination)
             .map_err(|error| format!("Failed to create {}: {error}", destination.display()))?;
@@ -1726,6 +1744,15 @@ fn copy_package_source(source: &Path, destination: &Path) -> Result<(), String> 
     {
         let entry =
             entry.map_err(|error| format!("Failed to inspect {}: {error}", source.display()))?;
+        let file_name = entry.file_name();
+        if exporting
+            && file_name.to_str().is_some_and(|name| {
+                name.eq_ignore_ascii_case("__pycache__")
+                    || name.to_ascii_lowercase().ends_with(".pyc")
+            })
+        {
+            continue;
+        }
         reject_package_source_reparse_point(&entry.path())?;
         let file_type = entry
             .file_type()
@@ -1736,9 +1763,9 @@ fn copy_package_source(source: &Path, destination: &Path) -> Result<(), String> 
                 entry.path().display()
             ));
         }
-        let target = destination.join(entry.file_name());
+        let target = destination.join(file_name);
         if file_type.is_dir() {
-            copy_package_source(&entry.path(), &target)?;
+            copy_package_source_entries(&entry.path(), &target, exporting)?;
         } else if file_type.is_file() {
             fs::copy(entry.path(), &target)
                 .map_err(|error| format!("Failed to copy {}: {error}", entry.path().display()))?;

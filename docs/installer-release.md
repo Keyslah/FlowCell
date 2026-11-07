@@ -108,7 +108,7 @@ Blender's saved theme library is the explicit data exception: staging reads
 `flowcellbackend/local/program-package-sources.json`, or an explicit
 `-BlenderThemeLibrary` argument to either packaging driver. Each build collects
 the current saved packages and only their referenced image assets into
-`Programs/Blender/blender themes/Packages/`. Newly saved themes and updated images
+`Programs/Blender/themes/Blender/`. Newly saved themes and updated images
 are included automatically in **FlowCell-Blender.zip**, the same program ZIP
 attached to FlowCell releases. Removed themes are not restored from older
 exports. Manifest image paths are made relative in the staged copies. Saved

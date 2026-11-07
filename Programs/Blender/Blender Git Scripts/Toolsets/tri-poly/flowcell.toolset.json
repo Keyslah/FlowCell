@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
     "id":  "blender.tri-poly",
-    "version":  "1.1.1",
+    "version":  "1.1.2",
     "label":  "tri poly",
     "tooltip":  "Create triangle and regular polygon prism shapes from a compact Tri \u0026 Poly tool set.",
     "kind":  "toolset",
@@ -13,7 +13,7 @@
     "children":  [
                      {
                          "slot":  "triangle_equilateral",
-                         "label":  "Equila...",
+                         "label":  "Equal ",
                          "tooltip":  "Create an equilateral triangular prism.",
                          "payload":  {
                                          "command":  "triangle_equilateral",
@@ -22,7 +22,7 @@
                      },
                      {
                          "slot":  "triangle_isosceles",
-                         "label":  "Isosc...",
+                         "label":  "Isosceles ",
                          "tooltip":  "Create an isosceles triangular prism.",
                          "payload":  {
                                          "command":  "triangle_isosceles",
@@ -206,5 +206,61 @@
                 "execute": false
             }
         }
+    },
+  "appearance": {
+    "skins": {
+      "skin-1-Chipped-Concrete-Key-100-d": {
+        "file": "skins/skin-1-Chipped-Concrete-Key-100-d.flowcell-button-skin.txt",
+        "variants": {
+          "0": "skins/skin-1-Chipped-Concrete-Key-100-d/0.flowcell-button-skin.txt",
+          "1": "skins/skin-1-Chipped-Concrete-Key-100-d/1.flowcell-button-skin.txt",
+          "2": "skins/skin-1-Chipped-Concrete-Key-100-d/2.flowcell-button-skin.txt",
+          "3": "skins/skin-1-Chipped-Concrete-Key-100-d/3.flowcell-button-skin.txt",
+          "4": "skins/skin-1-Chipped-Concrete-Key-100-d/4.flowcell-button-skin.txt",
+          "5": "skins/skin-1-Chipped-Concrete-Key-100-d/5.flowcell-button-skin.txt",
+          "6": "skins/skin-1-Chipped-Concrete-Key-100-d/6.flowcell-button-skin.txt",
+          "7": "skins/skin-1-Chipped-Concrete-Key-100-d/7.flowcell-button-skin.txt",
+          "8": "skins/skin-1-Chipped-Concrete-Key-100-d/8.flowcell-button-skin.txt",
+          "9": "skins/skin-1-Chipped-Concrete-Key-100-d/9.flowcell-button-skin.txt",
+          "10": "skins/skin-1-Chipped-Concrete-Key-100-d/10.flowcell-button-skin.txt",
+          "11": "skins/skin-1-Chipped-Concrete-Key-100-d/11.flowcell-button-skin.txt",
+          "12": "skins/skin-1-Chipped-Concrete-Key-100-d/12.flowcell-button-skin.txt",
+          "13": "skins/skin-1-Chipped-Concrete-Key-100-d/13.flowcell-button-skin.txt",
+          "14": "skins/skin-1-Chipped-Concrete-Key-100-d/14.flowcell-button-skin.txt",
+          "15": "skins/skin-1-Chipped-Concrete-Key-100-d/15.flowcell-button-skin.txt",
+          "16": "skins/skin-1-Chipped-Concrete-Key-100-d/16.flowcell-button-skin.txt",
+          "17": "skins/skin-1-Chipped-Concrete-Key-100-d/17.flowcell-button-skin.txt",
+          "18": "skins/skin-1-Chipped-Concrete-Key-100-d/18.flowcell-button-skin.txt",
+          "19": "skins/skin-1-Chipped-Concrete-Key-100-d/19.flowcell-button-skin.txt",
+          "20": "skins/skin-1-Chipped-Concrete-Key-100-d/20.flowcell-button-skin.txt",
+          "21": "skins/skin-1-Chipped-Concrete-Key-100-d/21.flowcell-button-skin.txt",
+          "22": "skins/skin-1-Chipped-Concrete-Key-100-d/22.flowcell-button-skin.txt",
+          "23": "skins/skin-1-Chipped-Concrete-Key-100-d/23.flowcell-button-skin.txt",
+          "24": "skins/skin-1-Chipped-Concrete-Key-100-d/24.flowcell-button-skin.txt",
+          "25": "skins/skin-1-Chipped-Concrete-Key-100-d/25.flowcell-button-skin.txt",
+          "26": "skins/skin-1-Chipped-Concrete-Key-100-d/26.flowcell-button-skin.txt",
+          "27": "skins/skin-1-Chipped-Concrete-Key-100-d/27.flowcell-button-skin.txt",
+          "28": "skins/skin-1-Chipped-Concrete-Key-100-d/28.flowcell-button-skin.txt",
+          "29": "skins/skin-1-Chipped-Concrete-Key-100-d/29.flowcell-button-skin.txt",
+          "30": "skins/skin-1-Chipped-Concrete-Key-100-d/30.flowcell-button-skin.txt",
+          "31": "skins/skin-1-Chipped-Concrete-Key-100-d/31.flowcell-button-skin.txt",
+          "32": "skins/skin-1-Chipped-Concrete-Key-100-d/32.flowcell-button-skin.txt"
+        }
+      },
+      "skin-2-Light-green-black-text-basic-Z": {
+        "file": "skins/skin-2-Light-green-black-text-basic-Z.flowcell-button-skin.txt"
+      }
+    },
+    "owner": "skin-1-Chipped-Concrete-Key-100-d",
+    "children": {
+      "triangle_equilateral": "skin-2-Light-green-black-text-basic-Z",
+      "triangle_isosceles": "skin-2-Light-green-black-text-basic-Z",
+      "triangle_50": "skin-2-Light-green-black-text-basic-Z",
+      "triangle_right": "skin-2-Light-green-black-text-basic-Z",
+      "triangle_scalene": "skin-2-Light-green-black-text-basic-Z",
+      "polygon_create": "skin-2-Light-green-black-text-basic-Z",
+      "angle_input": "skin-2-Light-green-black-text-basic-Z",
+      "sides_input": "skin-2-Light-green-black-text-basic-Z"
     }
+  }
 }

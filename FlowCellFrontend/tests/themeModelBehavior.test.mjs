@@ -32,6 +32,7 @@ import {
   FLOWCELL_THEME_PAGE_REGISTRY,
   MAIN_THEME_PRESETS,
   defaultThemePageAppearance,
+  effectiveThemePageAssetMode,
   isThemePageAppearance,
   mainThemePresetAppearance,
   themePageSupportsButtonSurface,
@@ -1847,10 +1848,20 @@ test("the new Concrete Main theme draws every rail box and leaves Buttons and De
     assert.deepEqual(applyThemeFile(document, theme).document, document);
   }
 
+  // Chipped Concrete is the default Main look: the stock appearance is the preset, and "Default" draws it.
   const stock = defaultThemePageAppearance("main");
-  assert.equal(stock.tokens["background-color"], "#9db678");
-  assert.deepEqual(stock.assets["background-image"], { mode: "default", path: null });
+  assert.equal(stock.tokens["background-color"], "#887F73");
+  assert.deepEqual(stock.assets["background-image"], { mode: "chipped-concrete", path: null });
   assert.equal(stock.tokens["rail-program-rail-background"], "transparent");
+  assert.deepEqual(stock, mainThemePresetAppearance("chipped-concrete"));
+  const mainBackground = FLOWCELL_THEME_PAGE_REGISTRY.find((page) => page.id === "main").assets[0];
+  assert.equal(effectiveThemePageAssetMode(mainBackground, { mode: "default", path: null }), "chipped-concrete");
+  assert.equal(effectiveThemePageAssetMode(mainBackground, { mode: "none", path: null }), "none");
+  for (const pageId of FLOWCELL_THEME_PAGE_IDS.filter((id) => id !== "main")) {
+    for (const asset of FLOWCELL_THEME_PAGE_REGISTRY.find((page) => page.id === pageId).assets) {
+      assert.equal(defaultThemePageAppearance(pageId).assets[asset.id].mode, "default");
+    }
+  }
   const concrete = mainThemePresetAppearance("concrete");
   assert.deepEqual(concrete.assets["background-image"], { mode: "concrete", path: null });
   const concreteWithPath = structuredClone(concrete);

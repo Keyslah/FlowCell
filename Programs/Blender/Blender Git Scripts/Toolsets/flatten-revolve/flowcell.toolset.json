@@ -1,8 +1,8 @@
 {
     "schemaVersion": 1,
     "id": "blender.flatten-revolve",
-    "version": "1.1.1",
-    "label": "flatten revolve",
+    "version": "1.1.2",
+    "label": "flat",
     "tooltip": "Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place.",
     "kind": "toolset",
     "program": "Blender",
@@ -335,5 +335,61 @@
                 "execute": false
             }
         }
+    },
+  "appearance": {
+    "skins": {
+      "skin-1-Chipped-Concrete-Key-100-c": {
+        "file": "skins/skin-1-Chipped-Concrete-Key-100-c.flowcell-button-skin.txt",
+        "variants": {
+          "0": "skins/skin-1-Chipped-Concrete-Key-100-c/0.flowcell-button-skin.txt",
+          "1": "skins/skin-1-Chipped-Concrete-Key-100-c/1.flowcell-button-skin.txt",
+          "2": "skins/skin-1-Chipped-Concrete-Key-100-c/2.flowcell-button-skin.txt",
+          "3": "skins/skin-1-Chipped-Concrete-Key-100-c/3.flowcell-button-skin.txt",
+          "4": "skins/skin-1-Chipped-Concrete-Key-100-c/4.flowcell-button-skin.txt",
+          "5": "skins/skin-1-Chipped-Concrete-Key-100-c/5.flowcell-button-skin.txt",
+          "6": "skins/skin-1-Chipped-Concrete-Key-100-c/6.flowcell-button-skin.txt",
+          "7": "skins/skin-1-Chipped-Concrete-Key-100-c/7.flowcell-button-skin.txt",
+          "8": "skins/skin-1-Chipped-Concrete-Key-100-c/8.flowcell-button-skin.txt",
+          "9": "skins/skin-1-Chipped-Concrete-Key-100-c/9.flowcell-button-skin.txt",
+          "10": "skins/skin-1-Chipped-Concrete-Key-100-c/10.flowcell-button-skin.txt",
+          "11": "skins/skin-1-Chipped-Concrete-Key-100-c/11.flowcell-button-skin.txt",
+          "12": "skins/skin-1-Chipped-Concrete-Key-100-c/12.flowcell-button-skin.txt",
+          "13": "skins/skin-1-Chipped-Concrete-Key-100-c/13.flowcell-button-skin.txt",
+          "14": "skins/skin-1-Chipped-Concrete-Key-100-c/14.flowcell-button-skin.txt",
+          "15": "skins/skin-1-Chipped-Concrete-Key-100-c/15.flowcell-button-skin.txt",
+          "16": "skins/skin-1-Chipped-Concrete-Key-100-c/16.flowcell-button-skin.txt",
+          "17": "skins/skin-1-Chipped-Concrete-Key-100-c/17.flowcell-button-skin.txt",
+          "18": "skins/skin-1-Chipped-Concrete-Key-100-c/18.flowcell-button-skin.txt",
+          "19": "skins/skin-1-Chipped-Concrete-Key-100-c/19.flowcell-button-skin.txt",
+          "20": "skins/skin-1-Chipped-Concrete-Key-100-c/20.flowcell-button-skin.txt",
+          "21": "skins/skin-1-Chipped-Concrete-Key-100-c/21.flowcell-button-skin.txt",
+          "22": "skins/skin-1-Chipped-Concrete-Key-100-c/22.flowcell-button-skin.txt",
+          "23": "skins/skin-1-Chipped-Concrete-Key-100-c/23.flowcell-button-skin.txt",
+          "24": "skins/skin-1-Chipped-Concrete-Key-100-c/24.flowcell-button-skin.txt",
+          "25": "skins/skin-1-Chipped-Concrete-Key-100-c/25.flowcell-button-skin.txt",
+          "26": "skins/skin-1-Chipped-Concrete-Key-100-c/26.flowcell-button-skin.txt",
+          "27": "skins/skin-1-Chipped-Concrete-Key-100-c/27.flowcell-button-skin.txt",
+          "28": "skins/skin-1-Chipped-Concrete-Key-100-c/28.flowcell-button-skin.txt",
+          "29": "skins/skin-1-Chipped-Concrete-Key-100-c/29.flowcell-button-skin.txt",
+          "30": "skins/skin-1-Chipped-Concrete-Key-100-c/30.flowcell-button-skin.txt",
+          "31": "skins/skin-1-Chipped-Concrete-Key-100-c/31.flowcell-button-skin.txt",
+          "32": "skins/skin-1-Chipped-Concrete-Key-100-c/32.flowcell-button-skin.txt"
+        }
+      },
+      "skin-2-Light-green-black-text-basic-Z": {
+        "file": "skins/skin-2-Light-green-black-text-basic-Z.flowcell-button-skin.txt"
+      }
+    },
+    "owner": "skin-1-Chipped-Concrete-Key-100-c",
+    "children": {
+      "flatten_profile": "skin-2-Light-green-black-text-basic-Z",
+      "flatten_axis_select": "skin-2-Light-green-black-text-basic-Z",
+      "generate_revolve": "skin-2-Light-green-black-text-basic-Z",
+      "revolve_axis_select": "skin-2-Light-green-black-text-basic-Z",
+      "pivot_select": "skin-2-Light-green-black-text-basic-Z",
+      "angle_input": "skin-2-Light-green-black-text-basic-Z",
+      "steps_input": "skin-2-Light-green-black-text-basic-Z",
+      "merge_input": "skin-2-Light-green-black-text-basic-Z"
     }
+  }
 }

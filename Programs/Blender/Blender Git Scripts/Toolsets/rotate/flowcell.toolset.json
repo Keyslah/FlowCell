@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
     "id":  "blender.rotate",
-    "version":  "1.1.1",
+    "version":  "1.1.2",
     "label":  "rotate",
     "tooltip":  "rotate objects with, transform, and distribute(evenly spaced copies around pivot)",
     "kind":  "toolset",
@@ -40,7 +40,7 @@
                      },
                      {
                          "slot":  "preset_30",
-                         "label":  "30 deg",
+                         "label":  "30",
                          "tooltip":  "Apply a 30 degree positive quick-rotate immediately and stage the angle.",
                          "payload":  {
                                          "command":  "preset_30",
@@ -49,7 +49,7 @@
                      },
                      {
                          "slot":  "preset_45",
-                         "label":  "45 deg",
+                         "label":  "45",
                          "tooltip":  "Apply a 45 degree positive quick-rotate immediately and stage the angle.",
                          "payload":  {
                                          "command":  "preset_45",
@@ -58,7 +58,7 @@
                      },
                      {
                          "slot":  "preset_90",
-                         "label":  "90 deg",
+                         "label":  "90",
                          "tooltip":  "Apply a 90 degree positive quick-rotate immediately and stage the angle.",
                          "payload":  {
                                          "command":  "preset_90",
@@ -67,7 +67,7 @@
                      },
                      {
                          "slot":  "preset_180",
-                         "label":  "180 deg",
+                         "label":  "180",
                          "tooltip":  "Apply a 180 degree positive quick-rotate immediately and stage the angle.",
                          "payload":  {
                                          "command":  "preset_180",
@@ -76,7 +76,7 @@
                      },
                      {
                          "slot":  "preset_270",
-                         "label":  "270 deg",
+                         "label":  "270",
                          "tooltip":  "Apply a 270 degree positive quick-rotate immediately and stage the angle.",
                          "payload":  {
                                          "command":  "preset_270",
@@ -665,5 +665,71 @@
                 "execute": false
             }
         }
+    },
+  "appearance": {
+    "skins": {
+      "skin-1-Chipped-Concrete-Key-100": {
+        "file": "skins/skin-1-Chipped-Concrete-Key-100.flowcell-button-skin.txt",
+        "variants": {
+          "0": "skins/skin-1-Chipped-Concrete-Key-100/0.flowcell-button-skin.txt",
+          "1": "skins/skin-1-Chipped-Concrete-Key-100/1.flowcell-button-skin.txt",
+          "2": "skins/skin-1-Chipped-Concrete-Key-100/2.flowcell-button-skin.txt",
+          "3": "skins/skin-1-Chipped-Concrete-Key-100/3.flowcell-button-skin.txt",
+          "4": "skins/skin-1-Chipped-Concrete-Key-100/4.flowcell-button-skin.txt",
+          "5": "skins/skin-1-Chipped-Concrete-Key-100/5.flowcell-button-skin.txt",
+          "6": "skins/skin-1-Chipped-Concrete-Key-100/6.flowcell-button-skin.txt",
+          "7": "skins/skin-1-Chipped-Concrete-Key-100/7.flowcell-button-skin.txt",
+          "8": "skins/skin-1-Chipped-Concrete-Key-100/8.flowcell-button-skin.txt",
+          "9": "skins/skin-1-Chipped-Concrete-Key-100/9.flowcell-button-skin.txt",
+          "10": "skins/skin-1-Chipped-Concrete-Key-100/10.flowcell-button-skin.txt",
+          "11": "skins/skin-1-Chipped-Concrete-Key-100/11.flowcell-button-skin.txt",
+          "12": "skins/skin-1-Chipped-Concrete-Key-100/12.flowcell-button-skin.txt",
+          "13": "skins/skin-1-Chipped-Concrete-Key-100/13.flowcell-button-skin.txt",
+          "14": "skins/skin-1-Chipped-Concrete-Key-100/14.flowcell-button-skin.txt",
+          "15": "skins/skin-1-Chipped-Concrete-Key-100/15.flowcell-button-skin.txt",
+          "16": "skins/skin-1-Chipped-Concrete-Key-100/16.flowcell-button-skin.txt",
+          "17": "skins/skin-1-Chipped-Concrete-Key-100/17.flowcell-button-skin.txt",
+          "18": "skins/skin-1-Chipped-Concrete-Key-100/18.flowcell-button-skin.txt",
+          "19": "skins/skin-1-Chipped-Concrete-Key-100/19.flowcell-button-skin.txt",
+          "20": "skins/skin-1-Chipped-Concrete-Key-100/20.flowcell-button-skin.txt",
+          "21": "skins/skin-1-Chipped-Concrete-Key-100/21.flowcell-button-skin.txt",
+          "22": "skins/skin-1-Chipped-Concrete-Key-100/22.flowcell-button-skin.txt",
+          "23": "skins/skin-1-Chipped-Concrete-Key-100/23.flowcell-button-skin.txt",
+          "24": "skins/skin-1-Chipped-Concrete-Key-100/24.flowcell-button-skin.txt",
+          "25": "skins/skin-1-Chipped-Concrete-Key-100/25.flowcell-button-skin.txt",
+          "26": "skins/skin-1-Chipped-Concrete-Key-100/26.flowcell-button-skin.txt",
+          "27": "skins/skin-1-Chipped-Concrete-Key-100/27.flowcell-button-skin.txt",
+          "28": "skins/skin-1-Chipped-Concrete-Key-100/28.flowcell-button-skin.txt",
+          "29": "skins/skin-1-Chipped-Concrete-Key-100/29.flowcell-button-skin.txt",
+          "30": "skins/skin-1-Chipped-Concrete-Key-100/30.flowcell-button-skin.txt",
+          "31": "skins/skin-1-Chipped-Concrete-Key-100/31.flowcell-button-skin.txt",
+          "32": "skins/skin-1-Chipped-Concrete-Key-100/32.flowcell-button-skin.txt"
+        }
+      },
+      "skin-2-Light-green-black-text-basic-rotate-Tool-Set": {
+        "file": "skins/skin-2-Light-green-black-text-basic-rotate-Tool-Set.flowcell-button-skin.txt"
+      }
+    },
+    "owner": "skin-1-Chipped-Concrete-Key-100",
+    "children": {
+      "axis_z": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "axis_x": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "axis_y": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "preset_30": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "preset_45": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "preset_90": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "preset_180": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "preset_270": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "center_geometry": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "center_origin": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "center_world": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "center_cursor": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "center_object": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "mode_transform": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "mode_distribute": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "apply_positive": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "value_input": "skin-2-Light-green-black-text-basic-rotate-Tool-Set",
+      "apply_negative": "skin-2-Light-green-black-text-basic-rotate-Tool-Set"
     }
+  }
 }
