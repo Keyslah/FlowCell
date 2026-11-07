@@ -470,6 +470,18 @@ test("package capture and restore include closed canonical Buttons and live draf
   assert.equal(h.document.programPopoutColorOverrides.owner.surface, "#112233");
 });
 
+test("the palette lists Buttons in deployed row order with Whole Layout off", async () => {
+  const h = harness();
+  addLivePopout(h);
+  h.document.programPopoutThemes.blender.screenTopToBottom = false;
+  addLiveMember(h, "right", 10);
+  addLiveMember(h, "left", 10);
+  h.document.placements.right.x = 35;
+  h.document.placements.left.height = 30;
+  const scan = await h.run("button-theme.palette", { operation: "scan" });
+  assert.deepEqual(Array.from(scan.placements, ({ label }) => label), ["left", "right", "Tools"]);
+});
+
 test("checkbox scope probes native windows concurrently and reuses its rendered response for the revision guard", async () => {
   let hold = true;
   const visibility = [], monitors = [];
@@ -487,7 +499,10 @@ test("checkbox scope probes native windows concurrently and reuses its rendered 
     doc.placements[id] = { ...doc.placements.owner, id, buttonId: id, surfaceId };
     doc.surfaces[surfaceId] = { ...doc.surfaces.pop, id: surfaceId, placementIds: [id] };
     doc.popoutUnits[unitId] = { ...doc.popoutUnits.unit, id: unitId, surfaceId, ownerPlacementId: id, ownerButtonId: id };
-    h.windows.set(`live${suffix}`, { ...h.windows.get("live"), buttonPopoutUnitId: unitId });
+    h.windows.set(`live${suffix}`, {
+      ...h.windows.get("live"), buttonPopoutUnitId: unitId,
+      snapshotBounds: { Left: 300, Top: suffix === "-b" ? 0 : 100, Width: 200, Height: 200 }
+    });
   }
   const pending = h.run("button-theme.palette", { operation: "scan" });
   await new Promise(setImmediate);
@@ -497,7 +512,7 @@ test("checkbox scope probes native windows concurrently and reuses its rendered 
   assert.equal(monitors.length, 3, "all independent monitor queries start before any resolves");
   for (const entry of [...monitors].reverse()) entry.resolve();
   const scan = await pending;
-  assert.deepEqual(JSON.parse(JSON.stringify(scan.placements.map(({ label }) => label))), ["Tools", "owner-a", "owner-b"]);
+  assert.deepEqual(Array.from(scan.placements, ({ label }) => label), ["owner-b", "Tools", "owner-a"]);
   assert.equal(scans, 1, "scan result and revision fingerprint share one rendered palette");
   hold = false;
   scans = 0;
@@ -506,11 +521,11 @@ test("checkbox scope probes native windows concurrently and reuses its rendered 
   });
   assert.equal(checked.placements[0].enabled, false);
   assert.equal(scans, 2, "one fresh guard scan and one shared response/fingerprint scan (the core helper's internal scan is separate)");
-  h.document.placements.owner.y += 2;
+  h.document.placements["owner-b"].y += 2;
   await assert.rejects(h.run("button-theme.palette", { operation: "participation" }, {
     expectedRevision: checked.revision, placementIds: [checked.placements[0].placementId], enabled: true
   }), /changed after the last scan/);
-  assert.ok(h.document.programPopoutThemeLocks.owner, "fresh stale protection is not bypassed for speed");
+  assert.ok(h.document.programPopoutThemeLocks["owner-b"], "fresh stale protection is not bypassed for speed");
 });
 
 test("explicit manual edits to an unchecked Button save its updated frozen color", async () => {

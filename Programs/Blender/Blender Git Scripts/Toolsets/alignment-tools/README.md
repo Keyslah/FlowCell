@@ -2,7 +2,7 @@
 
 These are intentional user-requested behaviors. Preserve them when updating, importing, or deploying this package.
 
-- Three axis rows: `X Min | Center | X Max | Surface | Origin`, then Y, then Z. Only Min and Max repeat the axis name.
+- Three axis rows, each with Min, Center, Max, Surface, and Origin. X Min and Max put a vertical bar before or after X. Y and Z Min underline the axis letter, and Max overlines it. Each axis Center uses a bullseye.
 - Bottom row: `All | X-Y | Group`, with equal widths and heights across the full toolset width.
 - Min and Max are separate, fixed actions. Center aligns bounding-box centers on its axis. All centers XYZ; X-Y preserves Z.
 - Hold Alt with Center, All, or X-Y to move whole objects by their origins to the active object's origin on the requested axes. Origins remain fixed relative to each object's geometry. With Group on, move the combined bounding-box center to the active object's origin instead, preserving relative positions and excluding the fixed active object from the group. Alt also combines with Shift/world and Control/cursor anchors; those anchors still move the entire selection.

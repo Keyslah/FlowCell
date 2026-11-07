@@ -9,6 +9,76 @@ import {
   DEFAULT_BUTTON_SKIN,
   LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE
 } from "./.compiled-button-system/button/skins/defaultButtonSkin.js";
+import {
+  mountChippedConcreteKeyTravel,
+  readChippedConcreteKeyTravel
+} from "./.compiled-button-system/button/skins/chippedConcreteKeyTravel.js";
+
+test("Chipped Concrete keys use equal travel speed and preserve the flush release during fast clicks", async () => {
+  const profile = readChippedConcreteKeyTravel("--cc-travel-profile: 2 4 0,0 2,1 5,2.5 8,4 9,4.5 10,5;");
+  assert.ok(profile);
+  assert.equal(readChippedConcreteKeyTravel("--cc-travel-profile: 2 4 0,0 5,1 2,2 8,4 9,4.5 10,5;"), null);
+  const moves = [];
+  const style = new Map();
+  const core = {
+    style: {
+      setProperty: (property, value) => style.set(property, value),
+      removeProperty: (property) => style.delete(property)
+    },
+    animate(stops, duration) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      moves.push({ stops, duration, finish: resolve });
+      return { finished: promise, cancel: reject };
+    }
+  };
+  const travel = mountChippedConcreteKeyTravel(core, profile);
+  const idle = { hovered: false, pressed: false, released: false, selected: false, disabled: false };
+  const hover = { ...idle, hovered: true };
+  const update = (state) => travel.update({ ...hover, ...state });
+  const assertMove = (duration, from, to) => {
+    const move = moves.at(-1);
+    assert.equal(move.duration, duration);
+    assert.equal(move.stops[0]["--cc-motion-frame"], from);
+    assert.equal(move.stops.at(-1)["--cc-motion-frame"], to);
+  };
+  async function finish() {
+    moves.at(-1).finish();
+    await Promise.resolve();
+  }
+
+  travel.update(idle);
+  update({});
+  assertMove(240, "0%", "40%");
+  await finish();
+  update({ pressed: true });
+  assertMove(240, "40%", "100%");
+  update({ released: true });
+  update({ released: false });
+  assert.equal(moves.length, 2, "fast release waits for the press");
+  await finish();
+  assertMove(48, "100%", "80%");
+  await finish();
+  assertMove(192, "80%", "40%");
+  await finish();
+
+  update({ pressed: true });
+  update({ selected: true });
+  await finish();
+  assertMove(48, "100%", "80%");
+  await finish();
+  assert.equal(style.get("--cc-motion-frame"), "80%");
+  update({ pressed: true, selected: true });
+  assertMove(48, "80%", "100%");
+  update({ released: true, selected: false });
+  await finish();
+  assertMove(480, "100%", "0%");
+  await finish();
+  assert.equal(style.get("--cc-motion-frame"), "0%");
+  travel.update(idle);
+  update({});
+  assertMove(240, "0%", "40%");
+  travel.dispose();
+});
 
 test("saved DefaultGray color variants gain an exact face without changing their effects or identity", () => {
   const document = createButtonStateDocument();
@@ -110,6 +180,12 @@ import {
 import {
   createButtonSkinFromFile
 } from "./.compiled-button-system/button/editor/buttonSkinFiles.js";
+import {
+  buttonSkinFamilyFromPath,
+  buttonSkinFamilyVariantPath,
+  nearestButtonSkinFamilyPath,
+  withButtonSkinFamily
+} from "./.compiled-button-system/button/skins/buttonSkinFamily.js";
 import {
   validateButtonSkin
 } from "./.compiled-button-system/button/skins/skinValidator.js";
@@ -1698,6 +1774,32 @@ test("portable Button skin files become complete isolated working skins", () => 
     ),
     /missing canonical sections/
   );
+});
+
+test("numbered skin families match label characters, preserve legacy artwork, and stay inside Skins", () => {
+  const root = "D:\\Button editor\\Skins";
+  const file = (count) => `${root}\\Chipped Concrete\\chipped concrete${count}.flowcell-button-skin.txt`;
+  const source = serializeButtonSkinSections({
+    ...createEmptyButtonSkinSections(),
+    structure: "<div data-core>{{label}}</div>"
+  });
+  const skin = createButtonSkinFromFile(source, file(30), "skin-key", root);
+  const variant = (count) => `Chipped Concrete/Chipped Concrete${count}.flowcell-button-skin.txt`;
+  const label = "Sync recent creative shortcuts";
+  assert.deepEqual(skin.metadata, { buttonSkinFamily: "Chipped Concrete" });
+  assert.equal(buttonSkinFamilyVariantPath(skin, "new", label), variant(30));
+  assert.equal(buttonSkinFamilyVariantPath(skin, "new", "Do  more"), variant(8));
+  assert.equal(buttonSkinFamilyVariantPath(skin, "new", "e\u0301 👩‍🔧"), variant(3));
+  skin.metadata.buttonSkinFamilyBaseline = { existing: 30 };
+  assert.equal(buttonSkinFamilyVariantPath(skin, "existing", label), null);
+  assert.equal(buttonSkinFamilyVariantPath(skin, "existing", "Renamed"), variant(7));
+  assert.equal(buttonSkinFamilyVariantPath(withButtonSkinFamily(skin, null), "existing", "Renamed"), null);
+  assert.equal(buttonSkinFamilyFromPath(file("08"), root), null);
+  assert.equal(buttonSkinFamilyFromPath(file(8).replace("Skins", "Other"), root), null);
+  assert.equal(buttonSkinFamilyFromPath(`${root}\\..\\Other\\Other8.flowcell-button-skin.txt`, root), null);
+  assert.equal(buttonSkinFamilyVariantPath(withButtonSkinFamily(skin, "../Other"), "new", label), null);
+  assert.equal(nearestButtonSkinFamilyPath([file(7), file(9), file(30)], file(8), root), file(9));
+  assert.equal(nearestButtonSkinFamilyPath([file(7), file(30), file(32)], file(45), root), file(32));
 });
 
 test("skin paste rejects duplicate, unknown, malformed, and prefixed headers atomically", () => {

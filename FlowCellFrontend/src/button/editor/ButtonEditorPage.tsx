@@ -105,7 +105,7 @@ import {
   type CompactButtonPlacement,
   type NamedButtonRect
 } from "../geometry/buttonGeometry";
-import { DEFAULT_BUTTON_SKIN_ID } from "../skins/defaultButtonSkin";
+import { buttonSkinFamilyFromPath, withButtonSkinFamily } from "../skins/buttonSkinFamily";
 import {
   BUTTON_SKIN_FILE_EXTENSION,
   buttonSkinNameFromPath,
@@ -324,7 +324,7 @@ function registeredPanelsForProgram(
   )?.panelNames ?? [];
 }
 
-function createButtonRecord(args: {
+function createButtonRecord(document: ButtonStateDocument, args: {
   id: string;
   role: ButtonRecord["role"];
   label: string;
@@ -342,7 +342,7 @@ function createButtonRecord(args: {
     label: args.label,
     tooltip: args.tooltip ?? "",
     executionTarget: args.executionTarget ?? null,
-    defaultSkinId: DEFAULT_BUTTON_SKIN_ID,
+    defaultSkinId: document.settings.defaultSkinId,
     defaultTextFitMode: "shrink",
     disabled: false,
     activationAnimation: null,
@@ -434,7 +434,7 @@ function addInstalledSingle(
   surfaceId: string
 ): ButtonPlacement | null {
   if (!result.executionTarget) throw new Error("The installed script did not return an execution target.");
-  document.buttons[result.ownerButtonId] = createButtonRecord({
+  document.buttons[result.ownerButtonId] = createButtonRecord(document, {
     id: result.ownerButtonId,
     role: "single-script",
     label: result.label,
@@ -495,7 +495,7 @@ function addInstalledToolSet(
     throw new Error(geometryIssues.map((issue) => issue.message).join("\n"));
   }
   const surface = createSurface(document, `${result.label} Tool Set`, "tool-set-popout", width, height);
-  document.buttons[result.ownerButtonId] = createButtonRecord({
+  document.buttons[result.ownerButtonId] = createButtonRecord(document, {
     id: result.ownerButtonId,
     role: "tool-set-owner",
     label: result.label,
@@ -507,7 +507,7 @@ function addInstalledToolSet(
   for (const child of result.children) {
     const childId = createStableButtonId("button-child");
     childButtonIds.push(childId);
-    document.buttons[childId] = createButtonRecord({
+    document.buttons[childId] = createButtonRecord(document, {
       id: childId,
       role: "tool-set-child",
       label: child.label,
@@ -2564,6 +2564,11 @@ function ButtonEditorContent({
     });
   };
 
+  const workingSkinAfterFileSave = async (skin: ButtonSkin, path: string): Promise<ButtonSkin> => {
+    const family = buttonSkinFamilyFromPath(path, await getButtonSkinDirectory());
+    return withButtonSkinFamily(skin, family?.name ?? null);
+  };
+
   const loadWorkingSkinFile = async (
     requestedPath: string | null
   ): Promise<ButtonSkinFileResult | null> => {
@@ -2571,9 +2576,9 @@ function ButtonEditorContent({
     setBusy(true);
     setMessage(null);
     try {
+      const skinDirectory = await getButtonSkinDirectory();
       let selectedPath = requestedPath;
       if (!selectedPath) {
-        const skinDirectory = await getButtonSkinDirectory();
         selectedPath = (await showOpenFileDialog({
           title: "Load Button Skin",
           filter: "FlowCell Button Skin (*.flowcell-button-skin.txt)|*.flowcell-button-skin.txt",
@@ -2587,7 +2592,8 @@ function ButtonEditorContent({
       const loadedSkin = createButtonSkinFromFile(
         source,
         selectedPath,
-        createStableButtonId("skin")
+        createStableButtonId("skin"),
+        skinDirectory
       );
       setMessage(
         `Skin '${loadedSkin.name}' loaded from ${selectedPath}.`
@@ -2614,10 +2620,10 @@ function ButtonEditorContent({
         targetPath,
         serializeButtonSkinSections(workingSkin)
       );
-      const savedSkin: ButtonSkin = {
+      const savedSkin = await workingSkinAfterFileSave({
         ...cloneButtonDocument(workingSkin),
         name: buttonSkinNameFromPath(writtenPath)
-      };
+      }, writtenPath);
       setMessage(
         `Reusable skin '${savedSkin.name}' saved to ${writtenPath}. Button assignments were not changed.`
       );
@@ -2647,11 +2653,11 @@ function ButtonEditorContent({
         targetPath,
         serializeButtonSkinSections(workingSkin)
       );
-      const duplicate: ButtonSkin = {
+      const duplicate = await workingSkinAfterFileSave({
         ...cloneButtonDocument(workingSkin),
         id,
         name: buttonSkinNameFromPath(writtenPath)
-      };
+      }, writtenPath);
       setMessage(
         `Reusable skin '${duplicate.name}' saved as a new file at ${writtenPath}. Button assignments were not changed.`
       );
@@ -2679,10 +2685,10 @@ function ButtonEditorContent({
         path,
         serializeButtonSkinSections(workingSkin)
       );
-      const updatedSkin: ButtonSkin = {
+      const updatedSkin = await workingSkinAfterFileSave({
         ...cloneButtonDocument(workingSkin),
         name: buttonSkinNameFromPath(writtenPath)
-      };
+      }, writtenPath);
       setMessage(
         `Reusable skin file '${updatedSkin.name}' updated at ${writtenPath}. Button assignments were not changed.`
       );

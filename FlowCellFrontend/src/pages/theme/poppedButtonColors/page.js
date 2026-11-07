@@ -895,9 +895,7 @@
       row.className = `button-theme-bucket button-theme-bucket--${bucket.kind}`;
       for (const input of row.querySelectorAll("input")) {
         if (input.type === "checkbox") input.checked = pendingButtonParticipation.get(placement.placementId) ?? placement.enabled !== false;
-        else if (document.activeElement === input) continue;
-        else if (input.type === "text") input.value = bucket.color || "";
-        else if (input.type === "color" && bucket.color) input.value = bucket.color;
+        else if (input.type === "color" && document.activeElement !== input && bucket.color) input.value = bucket.color;
       }
     }
     setBusy(busy);
@@ -1092,33 +1090,21 @@
     const labelText = gradientStopLabel(channel, index);
     const control = element("div", "button-theme-gradient__color");
     control.append(element("span", "button-theme-gradient__label", labelText));
-    const inputs = element("span", "button-theme-gradient__color-inputs");
     const picker = document.createElement("input");
     picker.type = "color";
     picker.value = colors()[index];
     picker.setAttribute("aria-label", `${spec.ariaPrefix}${labelText} color picker`);
-    const textInput = document.createElement("input");
-    textInput.type = "text";
-    textInput.value = colors()[index];
-    textInput.setAttribute("aria-label", `${spec.ariaPrefix}${labelText} color`);
-    const update = (value) => {
-      const color = normalizeHex(value);
-      if (!color) {
-        textInput.value = colors()[index];
-        return;
-      }
+    const update = () => {
+      const color = normalizeHex(picker.value);
+      if (!color) return;
       colors()[index] = color;
       if (channel === "fill") synchronizeButtonThemeGradientEndpoints();
-      picker.value = color;
-      textInput.value = color;
       schedulePersistence();
       redrawGradientChannel(channel);
     };
-    picker.addEventListener("input", () => update(picker.value));
-    picker.addEventListener("change", () => update(picker.value));
-    textInput.addEventListener("change", () => update(textInput.value));
-    inputs.append(picker, textInput);
-    control.append(inputs);
+    picker.addEventListener("input", update);
+    picker.addEventListener("change", update);
+    control.append(picker);
     return control;
   }
 
@@ -1855,8 +1841,16 @@
     sample.title = "Sample layout: how the Fill and Text gradients, curves and angles fall across a grid of Buttons in one window. Scatter is not shown.";
     const chips = [];
     for (let row = 0; row < 3; row += 1) {
-      for (let column = 0; column < 8; column += 1) {
-        const chip = element("span", "button-theme-sample__button", "Aa");
+      for (let column = 0; column < 4; column += 1) {
+        const chip = element("span", "button-theme-sample__button");
+        const bullseye = svgElement("svg", {
+          viewBox: "0 0 16 16", width: 16, height: 16, "aria-hidden": "true"
+        });
+        bullseye.append(
+          svgElement("circle", { cx: 8, cy: 8, r: 6, fill: "none", stroke: "currentColor", "stroke-width": 1.5 }),
+          svgElement("circle", { cx: 8, cy: 8, r: 2, fill: "currentColor" })
+        );
+        chip.append(bullseye);
         chips.push({ chip, center: { x: column * 58, y: row * 28 } });
         sample.append(chip);
       }
@@ -1887,6 +1881,15 @@
       ? "button-theme-gradient"
       : "button-theme-gradient button-theme-gradient--text");
     const stops = renderGradientStops(channel);
+    const reverse = curveToolButton("Reverse Colors", `Reverse the order of the ${spec.title} colors from Start to End.`, () => {
+      model.buttonTheme[spec.colorsKey].reverse();
+      if (channel === "fill") synchronizeButtonThemeGradientEndpoints();
+      schedulePersistence();
+      populateGradientStops(channel, stops);
+      redrawGradientChannel(channel);
+    });
+    registerGradientRedraw(channel, () => setCurveControlDisabled(reverse, model.buttonTheme[spec.colorsKey].length < 2));
+    heading.append(reverse);
     controls.append(stops, renderGradientColorCountControl(channel, stops));
     if (channel === "fill") {
       controls.append(
@@ -1906,27 +1909,24 @@
     return box;
   }
 
-  function updateButtonThemeBucketColor(bucket, value, picker, textInput) {
+  function updateButtonThemeBucketColor(bucket, value) {
     bucket = model.buttonTheme.buckets.find((entry) => entry.id === bucket.id) || bucket;
     const color = normalizeHex(value);
-    if (!color) {
-      textInput.value = bucket.color || "";
-      return false;
-    }
+    if (!color) return null;
     bucket.kind = "surface";
     bucket.color = color;
-    picker.value = color;
-    textInput.value = color;
     schedulePersistence();
-    return true;
+    return color;
   }
 
-  function commitButtonThemeColor(bucket, value, picker, textInput) {
-    if (busy || !updateButtonThemeBucketColor(bucket, value, picker, textInput)) return;
+  function commitButtonThemeColor(bucket, value) {
+    if (busy) return;
+    const color = updateButtonThemeBucketColor(bucket, value);
+    if (!color) return;
     const placement = model.buttonTheme.placements.find((entry) => entry.bucketId === bucket.id);
     if (!placement) return;
     return queueButtonThemeUpdate(buttonThemeActions.edit, {
-      edits: [{ placementId: placement.placementId, color: normalizeHex(value) }]
+      edits: [{ placementId: placement.placementId, color }]
     }, placement.placementId);
   }
 
@@ -1951,27 +1951,15 @@
     }
     node.append(labels);
     node.title = `${names}\nEdit only this Button's color, whether its checkbox is checked or unchecked.`;
-    const controls = element("div", "button-theme-bucket__controls");
     const picker = document.createElement("input");
     picker.type = "color";
-    // A material-only skin has no single current Surface color. The blank hex
-    // remains unset until the user explicitly chooses one; no color is inferred.
+    // A material-only skin has no Surface color until the user selects one.
     picker.value = bucket.color || opaqueButtonThemeColor(bucket.materialColors[0]) || "#FFFFFF";
     picker.setAttribute("aria-label", `${names} color picker`);
-    const textInput = document.createElement("input");
-    textInput.type = "text";
-    textInput.value = bucket.color || "";
-    textInput.placeholder = "Set color";
-    textInput.setAttribute("aria-label", `${names} color`);
-    for (const input of [picker, textInput]) input.dataset.paletteEdit = "true";
-    picker.addEventListener("input", () => updateButtonThemeBucketColor(bucket, picker.value, picker, textInput));
-    picker.addEventListener("change", () => void commitButtonThemeColor(bucket, picker.value, picker, textInput));
-    textInput.addEventListener("input", () => {
-      if (normalizeHex(textInput.value)) updateButtonThemeBucketColor(bucket, textInput.value, picker, textInput);
-    });
-    textInput.addEventListener("change", () => void commitButtonThemeColor(bucket, textInput.value, picker, textInput));
-    controls.append(picker, textInput);
-    node.append(controls);
+    picker.dataset.paletteEdit = "true";
+    picker.addEventListener("input", () => updateButtonThemeBucketColor(bucket, picker.value));
+    picker.addEventListener("change", () => void commitButtonThemeColor(bucket, picker.value));
+    node.append(picker);
     return node;
   }
 

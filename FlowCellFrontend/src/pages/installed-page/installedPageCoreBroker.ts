@@ -391,6 +391,7 @@ interface LiveProgramPopoutPaletteGroup {
 interface LiveProgramPopoutPaletteScope {
   groups: LiveProgramPopoutPaletteGroup[];
   windowCount: number;
+  desktopPositions: Map<string, { x: number; y: number }>;
   screenPositions: ProgramPopoutPaletteGradientItem[] | null;
 }
 
@@ -663,6 +664,7 @@ async function liveProgramPopoutPaletteScope(
   }));
 
   const groups = new Map<string, LiveProgramPopoutPaletteGroup>();
+  const desktopPositions = new Map<string, { x: number; y: number }>();
   const screenPositions: ProgramPopoutPaletteGradientItem[] = [];
   let windowCount = 0;
   await Promise.all(candidates.map(async (candidate) => {
@@ -709,11 +711,10 @@ async function liveProgramPopoutPaletteScope(
       })
     );
     group.targets.push(...targets);
-    if (screenTopToBottom && targets.length > 0) {
+    if (targets.length > 0) {
       let visibleBounds: FlowCellBounds | null = null;
       let envelope: { x?: number; y: number; width?: number; height: number } | null = null;
       let collapsedOwner: { paletteId: string; bounds: FlowCellBounds } | null = null;
-      const items = programPopoutPaletteTargetPositions(document, programName, targets);
       if (candidate.windowKind === "button-popout") {
         const unit = popoutUnit;
         if (!unit) {
@@ -766,6 +767,21 @@ async function liveProgramPopoutPaletteScope(
       if (!usableFlowCellBounds(visibleBounds) || !envelope) {
         return;
       }
+      if (envelope.x !== undefined && envelope.width !== undefined && envelope.width > 0 && envelope.height > 0) {
+        const scaleX = visibleBounds.Width / envelope.width;
+        const scaleY = visibleBounds.Height / envelope.height;
+        for (const { paletteId, placementId } of targets) {
+          const placement = document.placements[placementId];
+          desktopPositions.set(paletteId, collapsedOwner?.paletteId === paletteId
+            ? { x: collapsedOwner.bounds.Left, y: collapsedOwner.bounds.Top }
+            : {
+              x: Math.round(visibleBounds.Left + (placement.x - envelope.x) * scaleX),
+              y: Math.round(visibleBounds.Top + (placement.y - envelope.y) * scaleY)
+            });
+        }
+      }
+      if (!screenTopToBottom) return;
+      const items = programPopoutPaletteTargetPositions(document, programName, targets);
       const centerX = visibleBounds.Left + visibleBounds.Width / 2;
       const centerY = visibleBounds.Top + visibleBounds.Height / 2;
       const monitorRequest = monitorFromPoint(centerX, centerY).catch(() => null);
@@ -818,6 +834,7 @@ async function liveProgramPopoutPaletteScope(
   return {
     groups: [...groups.values()].sort((left, right) => left.backingId.localeCompare(right.backingId)),
     windowCount,
+    desktopPositions,
     screenPositions: screenTopToBottom ? screenPositions.sort((left, right) => left.paletteId.localeCompare(right.paletteId)) : null
   };
 }
@@ -829,6 +846,12 @@ function scanLiveProgramPopoutPalette(
   const placements = scope.groups.flatMap((group) =>
     scanProgramPopoutPaletteTargets(group.document, programName, group.targets, scope.screenPositions ?? undefined).placements
   );
+  placements.sort((left, right) => {
+    const leftPosition = scope.desktopPositions.get(left.placementId);
+    const rightPosition = scope.desktopPositions.get(right.placementId);
+    if (!leftPosition || !rightPosition) return Number(Boolean(rightPosition)) - Number(Boolean(leftPosition));
+    return leftPosition.y - rightPosition.y || leftPosition.x - rightPosition.x;
+  });
   const colors = new Set(placements.flatMap(({ color, materialColors = [] }) =>
     color ? [color] : materialColors
   ));

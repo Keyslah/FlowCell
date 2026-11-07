@@ -18,6 +18,7 @@ import type {
   JsonValue
 } from "./types";
 import { ButtonRenderer } from "./ButtonRenderer";
+import { orderRaisedKeyPaintSlots } from "./geometry/buttonGeometry";
 import type { ProgramPopoutThemeScreenGeometry } from "../theme/programPopoutTheme";
 import {
   executeButtonToolField,
@@ -81,6 +82,7 @@ export interface ButtonSurfaceProps {
   surfaceId: string;
   mode?: ButtonEditorMode;
   selectedPlacementIds?: ReadonlySet<string>;
+  liftedPlacementId?: string;
   ownerPlacementId?: string;
   fields?: readonly ButtonToolField[];
   fieldValues?: Readonly<Record<string, JsonValue>>;
@@ -288,6 +290,7 @@ export function ButtonSurface({
   surfaceId,
   mode = "run",
   selectedPlacementIds,
+  liftedPlacementId,
   ownerPlacementId,
   fields = EMPTY_TOOL_FIELDS,
   fieldValues,
@@ -399,14 +402,20 @@ export function ButtonSurface({
     void pumpRangeService(fieldId);
   }, [pumpRangeService]);
 
-  const orderedPlacementIds = useMemo(() => {
+  const buttonPaintSlots = useMemo(() => {
     if (!surface) return [];
-    return [...surface.placementIds].sort((left, right) => {
-      const leftPlacement = document.placements[left];
-      const rightPlacement = document.placements[right];
-      return (leftPlacement?.zIndex ?? 0) - (rightPlacement?.zIndex ?? 0) || left.localeCompare(right);
+    const slots = surface.placementIds.flatMap((id) => {
+      const placement = document.placements[id];
+      if (!placement) return [];
+      const button = document.buttons[placement.buttonId];
+      const structure = button && document.skins[placement.skinOverrideId ?? button.defaultSkinId]?.structure;
+      const raisedKey = id !== liftedPlacementId && Boolean(structure && /data-anim="(?:cc|cm)"/.test(structure));
+      return [{ placement, raisedKey }];
     });
-  }, [surface, document.placements]);
+    slots.sort(({ placement: left }, { placement: right }) =>
+      left.zIndex - right.zIndex || left.id.localeCompare(right.id));
+    return orderRaisedKeyPaintSlots(slots);
+  }, [surface, document.placements, document.buttons, document.skins, liftedPlacementId]);
 
   const documentRef = useRef(document);
   const activationResultApplyQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -640,7 +649,7 @@ export function ButtonSurface({
           })}
         </label>
       ))}
-      {orderedPlacementIds.map((placementId) => {
+      {buttonPaintSlots.map(({ id: placementId, zIndex }) => {
         const placement = document.placements[placementId];
         const button = placement ? document.buttons[placement.buttonId] : undefined;
         const selected = (mode === "edit" && selectedPlacementIds?.has(placementId)) || (
@@ -653,6 +662,7 @@ export function ButtonSurface({
             programPopoutThemeScreenGeometry={programPopoutThemeScreenGeometry}
             programPopoutThemeSourcePlacementId={programPopoutThemeSourcePlacementId}
             placementId={placementId}
+            paintZIndex={zIndex}
             mode={mode}
             selected={selected}
             ownerPlacement={placementId === ownerPlacementId}

@@ -163,7 +163,8 @@ test("individual unchecked Buttons retain participation and direct-color editing
   const request = root.requests.find(({ actionId }) => actionId === "button-theme.participation");
   assert.deepEqual(request.payload.placementIds, ["second"]); assert.equal(request.payload.enabled, true); assert.equal(request.payload.expectedRevision, 7);
   const rows = root.querySelectorAll("div").filter(node => node.dataset.placementId === "second");
-  const color = rows.flatMap(row => row.querySelectorAll("input")).find(node => node.type === "text");
+  const color = rows.flatMap(row => row.querySelectorAll("input")).find(node => node.type === "color");
+  assert.ok(rows.every(row => row.querySelectorAll("input").every(node => node.type === "checkbox" || node.type === "color")));
   assert.ok(color); color.value = "#ABCDEF"; await dispatch(color);
   assert.ok(root.requests.some(({ actionId }) => actionId === "button-theme.edit"));
 });

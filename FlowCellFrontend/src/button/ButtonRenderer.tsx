@@ -22,6 +22,7 @@ import type { ButtonExecutionResult } from "./runtime/ButtonRuntimeAdapter";
 export interface ButtonRendererProps {
   document: ButtonStateDocument;
   placementId: string;
+  paintZIndex: number;
   programPopoutThemeScreenGeometry?: ProgramPopoutThemeScreenGeometry;
   programPopoutThemeSourcePlacementId?: string;
   mode?: ButtonEditorMode;
@@ -61,6 +62,7 @@ export interface ButtonRendererProps {
 export function ButtonRenderer({
   document,
   placementId,
+  paintZIndex,
   programPopoutThemeScreenGeometry,
   programPopoutThemeSourcePlacementId,
   mode = "run",
@@ -116,7 +118,7 @@ export function ButtonRenderer({
         top: placement.y,
         width: placement.width,
         height: placement.height,
-        zIndex: selectExpanded ? 2_147_000_000 : placement.zIndex,
+        zIndex: selectExpanded ? 2_147_000_000 : paintZIndex,
         overflow: "visible",
         pointerEvents: "none"
       }}

@@ -22,6 +22,10 @@ import { compileButtonSkin, type CompiledButtonSkin } from "./skinCompiler";
 import { DEFAULT_BUTTON_SKIN } from "./defaultButtonSkin";
 import { BUTTON_SKIN_LABEL_TOKEN } from "./buttonSkinFormat";
 import {
+  mountChippedConcreteKeyTravel,
+  readChippedConcreteKeyTravel
+} from "./chippedConcreteKeyTravel";
+import {
   buttonTextFitAllowsMultipleLines,
   computeButtonTextFitPlan
 } from "../text/textFit";
@@ -97,6 +101,7 @@ export interface ButtonSkinRendererProps {
   hovered?: boolean;
   pressed?: boolean;
   pointerPressed?: boolean;
+  interactiveKeyTravel?: boolean;
   held?: boolean;
   play?: boolean;
   release?: boolean;
@@ -1024,6 +1029,7 @@ export function ButtonSkinRenderer({
   hovered = false,
   pressed = false,
   pointerPressed = pressed,
+  interactiveKeyTravel = false,
   held = false,
   play = false,
   release = false,
@@ -1137,6 +1143,11 @@ export function ButtonSkinRenderer({
   const sourceKey = compiled
     ? `${compiled.skinId}:${compiled.sourceFingerprint}`
     : "uncompiled";
+  const keyTravel = useMemo(
+    () => interactiveKeyTravel && compileResult.ok ? readChippedConcreteKeyTravel(renderedSkin.base) : null,
+    [interactiveKeyTravel, compileResult.ok, renderedSkin.base]
+  );
+  const keyTravelRef = useRef<ReturnType<typeof mountChippedConcreteKeyTravel> | null>(null);
   const desiredSamplingState: ButtonVisualState = {
     hovered: (samplingState?.hovered ?? hovered) || hovered,
     pressed: (samplingState?.pressed ?? pressed) || pressed,
@@ -1421,6 +1432,28 @@ export function ButtonSkinRenderer({
     // fingerprint), not object identities: a re-cloned document or a re-created
     // callback must never rebuild the shadow DOM.
   }, [compiled?.skinId, compiled?.sourceFingerprint, hasMeasurementConsumer]);
+
+  useLayoutEffect(() => {
+    const core = mountedRef.current?.core;
+    if (!core || !keyTravel) return;
+    const travel = mountChippedConcreteKeyTravel(core, keyTravel);
+    keyTravelRef.current = travel;
+    return () => {
+      travel.dispose();
+      keyTravelRef.current = null;
+    };
+  }, [sourceKey, hasMeasurementConsumer, keyTravel]);
+
+  const pointerReleased = samplingState?.release ?? release;
+  useLayoutEffect(() => {
+    keyTravelRef.current?.update({
+      hovered: rawHovered,
+      pressed: pointerPressed,
+      released: pointerReleased,
+      selected: activeHighlight,
+      disabled: disabled || error
+    });
+  }, [sourceKey, hasMeasurementConsumer, keyTravel, rawHovered, pointerPressed, pointerReleased, activeHighlight, disabled, error]);
 
   const textGlowEnabled = Boolean(textGlow);
   const textGlowCurveRef = useRef(textGlowCurve);

@@ -98,6 +98,33 @@
   mask-repeat: no-repeat;
 }
 
+.main-page__panel-buttons {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: flex-start;
+  gap: var(--panel-button-gap);
+  padding: var(--panel-button-gap);
+  overflow: hidden auto;
+  scrollbar-gutter: stable;
+}
+
+.main-page__panel-buttons > [data-main-button-host] {
+  flex: none;
+}
+
+.main-page__panel-buttons::-webkit-scrollbar {
+  width: var(--panel-button-gap);
+}
+
+.main-page__panel-buttons::-webkit-scrollbar-thumb {
+  background: #80808080;
+  border-radius: 4px;
+}
+
 .main-page__poptype-control {
   position: absolute;
   display: flex;

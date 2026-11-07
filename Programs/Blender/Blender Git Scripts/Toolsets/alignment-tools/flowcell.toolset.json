@@ -11,8 +11,8 @@
   "children": [
     {
       "slot": "x_min",
-      "label": "X Min",
-      "tooltip": "Align to the active object; Shift: world origin; Control: 3D cursor.",
+      "label": "│X",
+      "tooltip": "Align X minimum to the active object; Shift: world origin; Control: 3D cursor.",
       "payload": {
         "command": "x_min",
         "action": "x_min"
@@ -20,8 +20,8 @@
     },
     {
       "slot": "x_center",
-      "label": "Center",
-      "tooltip": "Center bounds; Alt: align object origins to the active origin. Shift: world; Control: cursor.",
+      "label": "◎",
+      "tooltip": "Center X bounds; Alt: align object origins to the active origin. Shift: world; Control: cursor.",
       "payload": {
         "command": "x_center",
         "action": "x_center"
@@ -29,8 +29,8 @@
     },
     {
       "slot": "x_max",
-      "tooltip": "Align to the active object; Shift: world origin; Control: 3D cursor.",
-      "label": "X Max",
+      "tooltip": "Align X maximum to the active object; Shift: world origin; Control: 3D cursor.",
+      "label": "X│",
       "payload": {
         "command": "x_max",
         "action": "x_max"
@@ -56,8 +56,8 @@
     },
     {
       "slot": "y_min",
-      "label": "Y Min",
-      "tooltip": "Align to the active object; Shift: world origin; Control: 3D cursor.",
+      "label": "Y̲",
+      "tooltip": "Align Y minimum to the active object; Shift: world origin; Control: 3D cursor.",
       "payload": {
         "command": "y_min",
         "action": "y_min"
@@ -65,8 +65,8 @@
     },
     {
       "slot": "y_center",
-      "label": "Center",
-      "tooltip": "Center bounds; Alt: align object origins to the active origin. Shift: world; Control: cursor.",
+      "label": "◎",
+      "tooltip": "Center Y bounds; Alt: align object origins to the active origin. Shift: world; Control: cursor.",
       "payload": {
         "command": "y_center",
         "action": "y_center"
@@ -74,8 +74,8 @@
     },
     {
       "slot": "y_max",
-      "tooltip": "Align to the active object; Shift: world origin; Control: 3D cursor.",
-      "label": "Y Max",
+      "tooltip": "Align Y maximum to the active object; Shift: world origin; Control: 3D cursor.",
+      "label": "Y̅",
       "payload": {
         "command": "y_max",
         "action": "y_max"
@@ -101,8 +101,8 @@
     },
     {
       "slot": "z_min",
-      "label": "Z Min",
-      "tooltip": "Align to the active object; Shift: world origin; Control: 3D cursor.",
+      "label": "Z̲",
+      "tooltip": "Align Z minimum to the active object; Shift: world origin; Control: 3D cursor.",
       "payload": {
         "command": "z_min",
         "action": "z_min"
@@ -110,8 +110,8 @@
     },
     {
       "slot": "z_center",
-      "label": "Center",
-      "tooltip": "Center bounds; Alt: align object origins to the active origin. Shift: world; Control: cursor.",
+      "label": "◎",
+      "tooltip": "Center Z bounds; Alt: align object origins to the active origin. Shift: world; Control: cursor.",
       "payload": {
         "command": "z_center",
         "action": "z_center"
@@ -119,8 +119,8 @@
     },
     {
       "slot": "z_max",
-      "tooltip": "Align to the active object; Shift: world origin; Control: 3D cursor.",
-      "label": "Z Max",
+      "tooltip": "Align Z maximum to the active object; Shift: world origin; Control: 3D cursor.",
+      "label": "Z̅",
       "payload": {
         "command": "z_max",
         "action": "z_max"

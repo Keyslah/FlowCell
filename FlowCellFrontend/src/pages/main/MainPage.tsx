@@ -141,6 +141,7 @@ import {
 import { showOpenFileDialog } from "../../lib/tauri";
 import mainBackground from "../../assets/backgrounds/main-background.jpeg";
 import type { FlowCellBounds, LayoutSnapshot, LayoutSnapshotWindow } from "../../types";
+import { orderButtonRectsByVisualRows } from "../../button/geometry/buttonGeometry";
 import {
   buildButtonsSurfaceButtons,
   buildPanelRailButtons,
@@ -148,6 +149,8 @@ import {
   MAIN_PAGE_BASE_OFFSET,
   page,
   pageFrame,
+  PANEL_BUTTON_GAP,
+  panelButtonViewport,
   rails,
   staticButtons,
   type ButtonRecord
@@ -1526,25 +1529,27 @@ export default function MainPage() {
 
   const allButtons = baseButtons;
   const topLeftActionButtons = useMemo(
-    () => allButtons.filter((button) => button.groupId === "top-left-actions"),
+    () => orderButtonRectsByVisualRows(allButtons.filter((button) => button.groupId === "top-left-actions")),
     [allButtons]
   );
   const topRightActionButtons = useMemo(
-    () => allButtons.filter((button) => button.groupId === "top-right-actions"),
+    () => orderButtonRectsByVisualRows(allButtons.filter((button) => button.groupId === "top-right-actions")),
     [allButtons]
   );
   const independentlyPositionedButtons = useMemo(
     () =>
-      allButtons.filter(
-        (button) =>
+      orderButtonRectsByVisualRows(allButtons.filter(
+        (button) => !button.scriptFileName &&
           button.groupId !== "top-left-actions" && button.groupId !== "top-right-actions"
-      ),
+      )),
     [allButtons]
   );
   const resolvedButtonsById = useMemo(
     () => new Map(allButtons.map((button) => [button.id, button])),
     [allButtons]
   );
+  const panelButtons = allButtons.filter((button) => button.scriptFileName);
+  const panelViewport = panelButtonViewport(resolvedButtonsById.get("buttons-add-script")?.x);
   const contextMenuButton = contextMenu ? (resolvedButtonsById.get(contextMenu.buttonId) ?? null) : null;
   const isScriptContextMenu =
     contextMenuButton &&
@@ -3520,6 +3525,41 @@ export default function MainPage() {
       resolveFlowCellMainPagePresentation(buttonDocument, button);
   };
 
+  const renderIndependentButton = (button: ButtonRecord) => {
+    const presentation = canonicalPresentationForMainButton(button);
+    const inPanel = Boolean(button.scriptFileName);
+    if (!presentation) {
+      return inPanel ? null : (
+        <MainControlHost
+          key={button.id}
+          control={button}
+          onActivate={handleButtonActivate}
+          onRequestContextMenu={handleButtonContextMenu}
+        />
+      );
+    }
+    const { placement } = presentation;
+    const scale = inPanel ? Math.min(
+      1,
+      panelViewport.maxButtonWidth / placement.width,
+      panelViewport.maxButtonHeight / placement.height
+    ) : 1;
+    return (
+      <MainButtonHost
+        key={button.id}
+        button={button}
+        absolute={!inPanel}
+        canonicalPresentation={scale === 1 ? presentation : {
+          ...presentation,
+          placement: { ...placement, width: placement.width * scale, height: placement.height * scale }
+        }}
+        onActivate={handleButtonActivate}
+        onDoubleActivate={handleButtonDoubleActivate}
+        onRequestContextMenu={handleButtonContextMenu}
+      />
+    );
+  };
+
   return (
     <main
       className={[
@@ -3615,27 +3655,25 @@ export default function MainPage() {
               ))}
             </div>
           ) : null}
-          {buttonDocument ? independentlyPositionedButtons.map((button) => {
-            const canonicalPresentation = canonicalPresentationForMainButton(button);
-            const requiresCanonicalPresentation = Boolean(button.scriptFileName);
-            return canonicalPresentation ? (
-              <MainButtonHost
-                key={button.id}
-                button={button}
-                canonicalPresentation={canonicalPresentation}
-                onActivate={handleButtonActivate}
-                onDoubleActivate={handleButtonDoubleActivate}
-                onRequestContextMenu={handleButtonContextMenu}
-              />
-            ) : requiresCanonicalPresentation ? null : (
-              <MainControlHost
-                key={button.id}
-                control={button}
-                onActivate={handleButtonActivate}
-                onRequestContextMenu={handleButtonContextMenu}
-              />
-            );
-          }) : null}
+          {buttonDocument ? independentlyPositionedButtons.map(renderIndependentButton) : null}
+          {buttonDocument && panelButtons.length > 0 ? (
+            <section
+              key={canonicalProgramPanelKey(selectedProgramName ?? "", selectedPanelName ?? "")}
+              className="main-page__panel-buttons"
+              aria-label="Panel Buttons"
+              tabIndex={0}
+              style={{
+                left: panelViewport.x,
+                top: panelViewport.y,
+                width: panelViewport.width,
+                height: panelViewport.height,
+                paddingLeft: panelViewport.paddingLeft,
+                "--panel-button-gap": `${PANEL_BUTTON_GAP}px`
+              } as CSSProperties}
+            >
+              {panelButtons.map(renderIndependentButton)}
+            </section>
+          ) : null}
           </div>
           {fanSetupMenu ? (
             <>

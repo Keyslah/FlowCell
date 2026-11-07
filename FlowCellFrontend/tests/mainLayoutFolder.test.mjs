@@ -5,12 +5,60 @@ import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 import { fileURLToPath } from "node:url";
-import { buildPanelRailButtons } from "./.compiled-button-system/pages/main/mainLayout.js";
-import { buttonRectsOverlap } from "./.compiled-button-system/button/geometry/buttonGeometry.js";
+import {
+  buildButtonsSurfaceButtons,
+  buildPanelRailButtons,
+  buttonsSurfaceContentOrigin,
+  PANEL_BUTTON_GAP,
+  panelButtonViewport,
+  rails
+} from "./.compiled-button-system/pages/main/mainLayout.js";
+import {
+  buttonRectsOverlap,
+  orderButtonRectsByVisualRows,
+  orderRaisedKeyPaintSlots
+} from "./.compiled-button-system/button/geometry/buttonGeometry.js";
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readSource = (...segments) =>
   readFileSync(path.join(frontendRoot, ...segments), "utf8");
+
+test("the Buttons rail follows saved visual rows and includes every panel Button", () => {
+  const script = (id, x, y, width) => ({
+    canonicalButtonId: id,
+    fileName: `${id}.ps1`,
+    label: id,
+    canonicalPlacement: { x, y, width, height: 37.294964 }
+  });
+  const scripts = [
+    script("shortcycle", 710, 11.352518, 100),
+    script("Minimize", 38, 59.352518, 100),
+    script("Odyssey", 36, 13.352518, 88),
+    ...Array.from({ length: 35 }, (_, index) => script(`Extra ${index}`, 36, 110 + 50 * index, 88))
+  ];
+  const original = structuredClone(scripts);
+  const buttons = buildButtonsSurfaceButtons(scripts).filter((button) => button.scriptFileName);
+
+  assert.deepEqual(buttons.slice(0, 3).map((button) => button.id), ["Odyssey", "shortcycle", "Minimize"]);
+  assert.equal(buttons.length, 38);
+  assert.equal(buttons[0].width, 88);
+  assert.equal(buttons[0].height, 37.294964);
+  assert.deepEqual(scripts, original);
+});
+
+test("the panel Button viewport aligns with Add Button inside the Buttons rail", () => {
+  const rail = rails.find((entry) => entry.id === "buttons-rail");
+  const addButtonX = rail.x + 6;
+  const viewport = panelButtonViewport(addButtonX);
+
+  assert.equal(PANEL_BUTTON_GAP, 8);
+  assert.equal(viewport.x + viewport.paddingLeft, addButtonX);
+  assert.equal(viewport.y + PANEL_BUTTON_GAP, buttonsSurfaceContentOrigin.y);
+  assert.equal(viewport.x + viewport.width, rail.x + rail.width);
+  assert.equal(viewport.y + viewport.height, rail.y + rail.height);
+  assert.equal(viewport.maxButtonWidth + viewport.paddingLeft + 2 * PANEL_BUTTON_GAP, viewport.width);
+  assert.equal(viewport.maxButtonHeight + 2 * PANEL_BUTTON_GAP, viewport.height);
+});
 
 for (const unavailable of [false, true]) {
   test(`layout connects its programs once before restoring panels, unavailable=${unavailable}`, async () => {
@@ -206,6 +254,43 @@ test("multiple newly discovered panel fallbacks reserve each other's free slots"
     }
   }
   assert.deepEqual(savedPanels[0].rect, { x: 199, y: 125, width: 132, height: 90 });
+});
+
+test("Panel rail paint order follows saved visual rows instead of folder names", () => {
+  const savedPanels = [
+    { panelName: "Utility", rect: { x: 210, y: 175.485611, width: 58, height: 37.294964 } },
+    { panelName: "Files", rect: { x: 276, y: 174, width: 58, height: 37.294964 } },
+    { panelName: "Test", rect: { x: 237.010806, y: 225.212229, width: 56, height: 37.294964 } }
+  ];
+  const buttons = orderButtonRectsByVisualRows(buildPanelRailButtons(["Files", "Test", "Utility"], "Test", savedPanels));
+
+  assert.deepEqual(buttons.map((button) => button.label), ["Utility", "Files", "Test", "Add Panel"]);
+  assert.equal(buttons[2].isSelected, true);
+  for (const [index, { rect }] of savedPanels.entries()) {
+    const { x, y, width, height } = buttons[index];
+    assert.deepEqual({ x, y, width, height }, rect);
+  }
+});
+
+test("raised key paint order reuses stack slots and leaves other placements in place", () => {
+  const slot = (id, y, zIndex, raisedKey) => ({
+    placement: { id, x: 0, y, width: 88, height: 37.294964, zIndex },
+    raisedKey
+  });
+  const slots = [
+    slot("Test", 225.212229, 1, true),
+    slot("custom", 100, 2, false),
+    slot("Utility", 175.485611, 3, true),
+    slot("lifted", 125.758993, 19_999, false)
+  ];
+  const original = structuredClone(slots);
+  assert.deepEqual(orderRaisedKeyPaintSlots(slots), [
+    { id: "Utility", zIndex: 1 },
+    { id: "custom", zIndex: 2 },
+    { id: "Test", zIndex: 3 },
+    { id: "lifted", zIndex: 19_999 }
+  ]);
+  assert.deepEqual(slots, original);
 });
 
 test("layout capture omits live Fan display mode but keeps Pop-out mode and semantic bounds", async () => {

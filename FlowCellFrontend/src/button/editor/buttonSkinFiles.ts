@@ -1,4 +1,5 @@
 import type { ButtonSkin } from "../types.js";
+import { buttonSkinFamilyFromPath } from "../skins/buttonSkinFamily.js";
 import {
   BUTTON_SKIN_SECTION_ORDER,
   buttonSkinNameFromPath,
@@ -17,7 +18,8 @@ export interface ButtonSkinFileResult {
 export function createButtonSkinFromFile(
   source: string,
   path: string,
-  skinId: string
+  skinId: string,
+  skinDirectory?: string
 ): ButtonSkin {
   const parsed = parseButtonSkinPaste(source);
   if (!parsed.ok) {
@@ -35,11 +37,12 @@ export function createButtonSkinFromFile(
     createEmptyButtonSkinSections(),
     parsed
   );
+  const family = skinDirectory ? buttonSkinFamilyFromPath(path, skinDirectory) : null;
   return {
     id: skinId,
     name: buttonSkinNameFromPath(path) || "Button Skin",
     ...sections,
-    metadata: {},
+    metadata: family ? { buttonSkinFamily: family.name } : {},
     compileCache: null
   };
 }

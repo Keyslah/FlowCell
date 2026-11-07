@@ -1,5 +1,5 @@
 import type { PanelButtonEventsRecord } from "../../lib/programRails.js";
-import { buttonRectsOverlap } from "../../button/geometry/buttonGeometry.js";
+import { buttonRectsOverlap, inferButtonPlacementRows } from "../../button/geometry/buttonGeometry.js";
 
 export type PageRecord = {
   id: string;
@@ -187,8 +187,6 @@ const buttonsSurfaceGeometry = {
   scriptStartY: 276.49239,
   stepX: 146.568346,
   stepY: 49.726618,
-  columnCount: 4,
-  scriptRowCount: 9,
   width: 131.568346,
   height: 37.294964,
   radius: 18.647463
@@ -198,6 +196,26 @@ export const buttonsSurfaceContentOrigin = {
   x: buttonsSurfaceGeometry.scriptStartX,
   y: buttonsSurfaceGeometry.scriptStartY
 } as const;
+
+export const PANEL_BUTTON_GAP = 8;
+
+export function panelButtonViewport(addButtonX: number = buttonsSurfaceContentOrigin.x) {
+  const rail = rails.find((entry) => entry.id === "buttons-rail")!;
+  const left = Math.max(rail.x + rail.strokeWidth, Math.min(addButtonX, buttonsSurfaceContentOrigin.x));
+  const top = buttonsSurfaceContentOrigin.y - PANEL_BUTTON_GAP;
+  const height = rail.y + rail.height - top;
+  const paddingLeft = left - rail.x;
+  return {
+    x: rail.x,
+    y: top,
+    width: rail.width,
+    height,
+    paddingLeft,
+    // Leave room for the right inset and scrollbar, both one gap wide.
+    maxButtonWidth: rail.width - paddingLeft - 2 * PANEL_BUTTON_GAP,
+    maxButtonHeight: height - 2 * PANEL_BUTTON_GAP
+  };
+}
 
 export const buttonsSurfacePopTypeControlGeometry = {
   x: buttonsSurfaceGeometry.addButtonX + buttonsSurfaceGeometry.stepX * 2,
@@ -596,11 +614,13 @@ export function buildButtonsSurfaceButtons(
     }
   ];
 
-  const visibleScripts = scripts.slice(
-    0,
-    buttonsSurfaceGeometry.columnCount * buttonsSurfaceGeometry.scriptRowCount
-  );
-  visibleScripts.forEach((script) => {
+  const scriptsById = new Map(scripts.map((script) => [script.canonicalButtonId, script]));
+  const orderedPlacements = inferButtonPlacementRows(scripts.map((script) => ({
+    id: script.canonicalButtonId,
+    rect: script.canonicalPlacement
+  }))).flatMap((row) => row.placements);
+  orderedPlacements.forEach(({ id }) => {
+    const script = scriptsById.get(id)!;
     const isMacro = script.kind?.trim().toLowerCase() === "macro" && Boolean(script.macroId?.trim());
     const canonicalPlacement = script.canonicalPlacement;
     buttons.push({

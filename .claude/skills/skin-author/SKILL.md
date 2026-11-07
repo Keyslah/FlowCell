@@ -327,6 +327,14 @@ background: transparent;
 
 ### Scope and output
 
+Store each label-length skin family in its own folder directly inside `Button editor/Skins`.
+Use the folder's name followed immediately by the number of label characters, including spaces,
+and the canonical extension. For example, the `Chipped Concrete` folder contains
+`chipped concrete7.flowcell-button-skin.txt` and `chipped concrete8.flowcell-button-skin.txt`.
+Assigning a numbered member enables automatic selection by the saved Button label. Use the
+nearest available count when an exact member is missing. Keep alternate artwork that does not
+represent a distinct count outside the numbered family. Keep individual skins at the library root.
+
 This format applies to single-script Buttons, panel owners, tool-set owners, every tool-set child button, regular-popout members, and fan members. Assigned private appearances persist in `flowcellbackend/local/button-system/button-state.json`; they are not reusable file-library entries. The assignment order is `Assign Skin`, `Assign Skin to Selection`, then `Assign Skin to Panel`: the first targets the focused placement, Selection targets only the selected placements on its current surface, and Panel targets every placement on that surface. All three use the isolated working skin, preserve Button identity, text, action bindings, geometry, and row structure, and fork edited shared source before assignment. Selecting a Button copies its effective appearance into the editor with no file association. Load skin opens the native picker directly in `flowcellbackend/local/Button editor/Skins`, shows only real `.flowcell-button-skin.txt` files, and never assigns. Save skin and Save as new skin both immediately prompt for a filename in that folder and export canonical paste-ready source without assigning or creating an unassigned runtime record; Save retains the working identity while Save as new creates a fresh one. Update skin file is the explicit no-prompt overwrite for a file loaded or saved in the current editor session, and Open skins folder reveals the reusable-file folder for cleanup. File paths never enter canonical Button metadata. Before editing a skin, inspect whether the focused placement inherits a shared `defaultSkinId`. Default to forking and assigning a focused-placement override, and warn which placements or tool-set children would change before any explicit selection-wide, panel-wide, or shared mutation.
 
 ### Required preflight

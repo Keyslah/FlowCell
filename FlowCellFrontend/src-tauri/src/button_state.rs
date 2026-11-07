@@ -316,24 +316,41 @@ pub(crate) fn get_button_skin_directory() -> Result<String, String> {
 }
 
 fn list_button_skin_files_in(directory: &Path) -> Result<Vec<String>, String> {
-    let mut paths = fs::read_dir(directory)
+    let entries = fs::read_dir(directory)
         .map_err(|error| {
             format!(
                 "Failed to read Button skin folder at {}: {error}",
                 directory.display()
             )
-        })?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .to_string_lossy()
-                    .to_lowercase()
-                    .ends_with(BUTTON_SKIN_FILE_EXTENSION)
-        })
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>();
+        })?;
+    let mut paths = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if path.is_file() && name.ends_with(BUTTON_SKIN_FILE_EXTENSION) {
+            paths.push(path.display().to_string());
+        }
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let Ok(variants) = fs::read_dir(&path) else {
+            continue;
+        };
+        for variant in variants.flatten() {
+            let file_name = variant.file_name().to_string_lossy().to_lowercase();
+            let count = file_name
+                .strip_suffix(BUTTON_SKIN_FILE_EXTENSION)
+                .and_then(|stem| stem.strip_prefix(&name));
+            if count.is_some_and(|count| {
+                count == "0"
+                    || (!count.is_empty()
+                        && !count.starts_with('0')
+                        && count.bytes().all(|byte| byte.is_ascii_digit()))
+            }) && variant.file_type().is_ok_and(|kind| kind.is_file()) {
+                paths.push(variant.path().display().to_string());
+            }
+        }
+    }
     paths.sort_by(|left, right| {
         left.to_lowercase()
             .cmp(&right.to_lowercase())
@@ -2277,13 +2294,22 @@ mod tests {
         fs::write(root.join(format!("alpha{BUTTON_SKIN_FILE_EXTENSION}")), "a")
             .expect("write alpha skin");
         fs::write(root.join("ignored.txt"), "ignored").expect("write ignored file");
+        let family = root.join("Chipped Concrete");
+        fs::create_dir(&family).expect("create skin family directory");
+        for name in ["chipped concrete30", "chipped concrete08", "backup8"] {
+            fs::write(family.join(format!("{name}{BUTTON_SKIN_FILE_EXTENSION}")), "c")
+                .expect("write skin family test file");
+        }
 
         let listed = list_button_skin_files_in(&root).expect("list Button skins");
-        assert_eq!(listed.len(), 2);
+        assert_eq!(listed.len(), 3);
         assert!(listed[0]
             .to_lowercase()
             .contains("alpha.flowcell-button-skin.txt"));
         assert!(listed[1]
+            .to_lowercase()
+            .contains("chipped concrete30.flowcell-button-skin.txt"));
+        assert!(listed[2]
             .to_lowercase()
             .contains("zebra.flowcell-button-skin.txt"));
         fs::remove_dir_all(&root).expect("remove skin list test root");

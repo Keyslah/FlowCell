@@ -10,6 +10,7 @@ import {
 import { listPanelFolders, listProgramFolders } from "../../lib/programRails.js";
 import { showOpenFileDialog } from "../../lib/tauri.js";
 import {
+  getButtonSkinDirectory,
   listButtonSkinFiles,
   loadButtonSkinFile,
   loadButtonStateDocument,
@@ -387,6 +388,8 @@ function mergeCanonicalIntoDraft(
 }
 
 function skinSourcesMatch(left: ButtonSkin, right: ButtonSkin): boolean {
+  if (left.metadata.buttonSkinFamily !== right.metadata.buttonSkinFamily ||
+      left.metadata.buttonSkinFamilyBaseline !== right.metadata.buttonSkinFamilyBaseline) return false;
   return [
     "structure",
     "keyframes",
@@ -575,13 +578,17 @@ export default function ThemeEditorPage({
   useEffect(() => {
     let cancelled = false;
     void listButtonSkinFiles()
-      .then(async (paths) => Promise.all(paths.map(async (path) => {
-        const source = await loadButtonSkinFile(path);
-        return {
-          path,
-          skin: createButtonSkinFromFile(source, path, stableSkinId(path, source))
-        } satisfies SavedSkinChoice;
-      })))
+      .then(async (paths) => {
+        if (paths.length === 0) return [];
+        const skinDirectory = await getButtonSkinDirectory();
+        return Promise.all(paths.map(async (path) => {
+          const source = await loadButtonSkinFile(path);
+          return {
+            path,
+            skin: createButtonSkinFromFile(source, path, stableSkinId(path, source), skinDirectory)
+          } satisfies SavedSkinChoice;
+        }));
+      })
       .then((choices) => {
         if (cancelled) return;
         setSavedSkins(choices);

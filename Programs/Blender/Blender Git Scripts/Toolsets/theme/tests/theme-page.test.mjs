@@ -203,7 +203,7 @@ function channelBox(root, channel) {
 function channelStops(root, channel) {
   return channelBox(root, channel).querySelectorAll("div")
     .find((node) => classes(node).includes("button-theme-gradient__stops"))
-    .querySelectorAll("input").filter((input) => input.type === "text");
+    .querySelectorAll("input").filter((input) => input.type === "color");
 }
 
 function labelledInput(container, label) {
@@ -244,7 +244,7 @@ function selectCurvePoint(container, index) {
 function bucketColors(root) {
   return root.querySelectorAll("div")
     .filter((node) => classes(node).includes("button-theme-bucket--surface"))
-    .map((node) => node.querySelectorAll("input").find(({ type }) => type === "text").value)
+    .map((node) => node.querySelectorAll("input").find(({ type }) => type === "color").value)
     .sort();
 }
 
@@ -344,7 +344,7 @@ test("Theme owns its Blender lifecycle and generic deletion owns its sidecar", (
   assert.ok(registryPrune > 0 && registryPrune < runtimeRecycle);
 });
 
-test("gradient swatches retain color editing without separate eyedropper buttons", async () => {
+test("theme roles and gradient stops use the original native color popups for numeric color editing", async () => {
   const root = await renderThemePage({}, {
     "button-theme.settings": { configured: true, settings: poppedSettings({
       colors: ["#123456", "#234567", "#345678"], textColors: ["#AAAAAA", "#BBBBBB"]
@@ -353,12 +353,23 @@ test("gradient swatches retain color editing without separate eyedropper buttons
   assert.equal(root.querySelectorAll("button").some(node => /eyedropper/i.test(`${node.textContent} ${node["aria-label"] || ""}`)), false);
   assert.equal(page.actions.some(action => action.id === "button-theme.pick-color"), false);
   assert.equal(page.capabilities.includes("color.pick-screen"), false);
+  const roleNodes = root.querySelectorAll("div").filter((node) => classes(node).includes("theme-role"));
+  assert.equal(roleNodes.length, page.config.roles.length);
+  for (const role of roleNodes) {
+    assert.deepEqual(role.querySelectorAll("input").map(({ type }) => type).filter((type) => type !== "checkbox"), ["color"]);
+  }
+  const tabs = roleNodes.find(({ title }) => title === "Tab Fill");
+  setInput(labelledInput(tabs, "Tab Fill color picker"), "#c0ffee", "input");
+  tabs.querySelectorAll("button")[0].click();
+  await settlePageAction();
+  const appliedBucket = root.requests.find(({ actionId }) => actionId === "theme.apply-bucket").payload;
+  assert.equal(appliedBucket.bucket, "tabs_hex");
+  assert.equal(appliedBucket.bucket_hex, "#C0FFEE");
   for (const name of ["Color 2", "Text End"]) {
     const picker = root.querySelectorAll("input").find(node => node["aria-label"] === `${name} color picker`);
     assert.equal(picker.type, "color", "the swatch keeps the original browser color popup");
     setInput(picker, "#a1b2c3", "input");
-    assert.equal(root.querySelectorAll("input").find(node => node["aria-label"] === `${name} color`).value, "#A1B2C3");
-    assert.equal(root.querySelectorAll("input").find(node => node["aria-label"] === `${name} color picker`).value, "#A1B2C3");
+    assert.equal(root.querySelectorAll("input").some(node => node["aria-label"] === `${name} color`), false);
   }
   await root.flushTimers();
   const saved = root.requests.filter(({ actionId }) => actionId === "owner-state.write").at(-1).payload.state.buttonTheme;
@@ -571,8 +582,9 @@ test("every Button has its own named color row through scan, apply, rename and s
     .map((node) => [...new Set(node.querySelectorAll("span").map(({ textContent }) => textContent))].join(", "));
   assert.deepEqual(names(), ["Cube", "Sphere", "Cube", "Bevel <Preview> & Edges", "Fill Gear"]);
   assert.equal(buckets().length, placements.length, "equal colors never combine Button identities");
-  assert.equal(root.querySelectorAll("input").filter((input) => input["aria-label"] === "Cube color").length, 2, "duplicate names remain separate rows");
-  assert.equal(labelledInput(root, "Sphere color").value, "#224466");
+  assert.equal(root.querySelectorAll("input").filter((input) => input["aria-label"] === "Cube color picker").length, 2, "duplicate names remain separate rows");
+  assert.equal(labelledInput(root, "Sphere color picker").value, "#224466");
+  assert.ok(buckets().every((node) => node.querySelectorAll("input").every(({ type }) => type === "checkbox" || type === "color")));
   assert.equal(labelledInput(root, "Bevel <Preview> & Edges color picker").value, "#99BBDD");
   assert.equal(root.querySelectorAll("Preview").length, 0, "names are literal text, not markup");
   assert.deepEqual(bucketColors(root), ["#224466", "#224466", "#224466", "#99BBDD"]);
@@ -614,7 +626,7 @@ test("same-color Buttons edit independently, including while unchecked", async (
   });
   assert.equal(labelledInput(root, "Apply theme to Cube").checked, true);
   assert.equal(labelledInput(root, "Apply theme to Sphere").checked, true);
-  setInput(labelledInput(root, "Sphere color"), "#ABCDEF");
+  setInput(labelledInput(root, "Sphere color picker"), "#ABCDEF");
   await settlePageAction();
   assert.deepEqual(plain(root.requests.find(({ actionId }) => actionId === "button-theme.edit").payload.edits), [{ placementId: "two", color: "#ABCDEF" }]);
   const checkbox = labelledInput(root, "Apply theme to Cube");
@@ -623,10 +635,10 @@ test("same-color Buttons edit independently, including while unchecked", async (
   await settlePageAction();
   assert.equal(labelledInput(root, "Apply theme to Cube").checked, false);
   assert.equal(labelledInput(root, "Apply theme to Sphere").checked, true);
-  assert.equal(labelledInput(root, "Cube color").value, "#224466");
-  assert.equal(labelledInput(root, "Sphere color").value, "#ABCDEF");
-  assert.equal(labelledInput(root, "Cube color").disabled, false, "unchecked protects global changes, not explicit edits");
-  setInput(labelledInput(root, "Cube color"), "#556677");
+  assert.equal(labelledInput(root, "Cube color picker").value, "#224466");
+  assert.equal(labelledInput(root, "Sphere color picker").value, "#ABCDEF");
+  assert.equal(labelledInput(root, "Cube color picker").disabled, false, "unchecked protects global changes, not explicit edits");
+  setInput(labelledInput(root, "Cube color picker"), "#556677");
   await settlePageAction();
   assert.deepEqual(plain(root.requests.filter(({ actionId }) => actionId === "button-theme.edit").at(-1).payload.edits), [{ placementId: "one", color: "#556677" }]);
   await clickPageButton(root, "Apply Buckets");
@@ -643,11 +655,11 @@ test("same-color Buttons edit independently, including while unchecked", async (
   other.checked = false;
   dispatch(other, "change");
   await settlePageAction();
-  assert.equal(labelledInput(root, "Cube color").disabled, false);
-  assert.equal(labelledInput(root, "Sphere color").disabled, false);
+  assert.equal(labelledInput(root, "Cube color picker").disabled, false);
+  assert.equal(labelledInput(root, "Sphere color picker").disabled, false);
 });
 
-test("material Buttons have an independent blank color field and only explicit color commits write", async () => {
+test("material Button pickers apply a Surface color only on change", async () => {
   let placements = [
     { placementId: "material-one", label: "Fill Gear", materialColors: ["#369D8D", "#3DCD9E"] },
     { placementId: "material-two", label: "Other Gear", materialColors: ["#369D8D", "#3DCD9E"] }
@@ -659,26 +671,25 @@ test("material Buttons have an independent blank color field and only explicit c
       return { revision: 2, placements };
     }
   });
-  const input = labelledInput(root, "Fill Gear color");
-  assert.equal(input.value, "", "no Surface color is invented from the skin's materials");
-  assert.equal(labelledInput(root, "Other Gear color").value, "");
-  assert.equal(root.requests.some(({ actionId }) => actionId === "button-theme.edit"), false);
   const picker = labelledInput(root, "Fill Gear color picker");
+  assert.equal(picker.value, "#369D8D");
+  assert.deepEqual(bucketColors(root), [], "no Surface color is invented from the skin's materials");
+  assert.equal(root.requests.some(({ actionId }) => actionId === "button-theme.edit"), false);
   setInput(picker, "#123456", "input");
-  assert.equal(input.value, "#123456");
   assert.equal(root.requests.some(({ actionId }) => actionId === "button-theme.edit"), false, "picker motion stages without flooding writes");
   dispatch(picker, "change");
   await settlePageAction();
   assert.deepEqual(plain(root.requests.find(({ actionId }) => actionId === "button-theme.edit").payload.edits), [
     { placementId: "material-one", color: "#123456" }
   ]);
-  assert.equal(labelledInput(root, "Other Gear color").value, "");
-  assert.equal(labelledInput(root, "Fill Gear color"), input, "material-to-Surface conversion keeps the editable node");
+  assert.deepEqual(bucketColors(root), ["#123456"]);
+  assert.equal(labelledInput(root, "Other Gear color picker").value, "#369D8D");
+  assert.equal(labelledInput(root, "Fill Gear color picker"), picker, "material-to-Surface conversion keeps the editable node");
   assert.equal(root.querySelectorAll("div").find((node) => node.dataset.placementId === "material-one").className,
     "button-theme-bucket button-theme-bucket--surface");
-  setInput(input, "#ABCDEF");
+  setInput(picker, "#ABCDEF");
   await settlePageAction();
-  assert.equal(input.value, "#ABCDEF", "a second edit uses the current palette record, not the captured pre-response bucket");
+  assert.equal(picker.value, "#ABCDEF", "a second edit uses the current palette record, not the captured pre-response bucket");
   assert.deepEqual(plain(root.requests.filter(({ actionId }) => actionId === "button-theme.edit").at(-1).payload.edits), [
     { placementId: "material-one", color: "#ABCDEF" }
   ]);
@@ -711,7 +722,7 @@ test("checkbox requests run in the background, serialize fresh revisions and sav
   });
   const checkbox = labelledInput(root, "Apply theme to Cube");
   const otherCheckbox = labelledInput(root, "Apply theme to Sphere");
-  const input = labelledInput(root, "Cube color");
+  const input = labelledInput(root, "Cube color picker");
   const spread = poppedControl(root, "spread");
   const curve = curveBox(root);
   checkbox.checked = false;
@@ -724,7 +735,7 @@ test("checkbox requests run in the background, serialize fresh revisions and sav
   assert.equal(input.disabled, false);
   assert.equal(spread.disabled, false);
   root.focusInput(input);
-  setInput(input, "#AB", "input");
+  setInput(input, "#ABCD12", "input");
   setInput(spread, "62", "input");
   otherCheckbox.checked = false;
   dispatch(otherCheckbox, "change");
@@ -734,8 +745,8 @@ test("checkbox requests run in the background, serialize fresh revisions and sav
   await settlePageAction();
   assert.equal(pending.length, 2);
   assert.equal(pending[1].payload.expectedRevision, 11);
-  assert.equal(input.value, "#AB", "even a partial hex being typed while another request runs is retained");
-  assert.equal(labelledInput(root, "Cube color"), input, "background responses do not remount focused inputs");
+  assert.equal(input.value, "#ABCD12", "a staged swatch color survives a background request");
+  assert.equal(labelledInput(root, "Cube color picker"), input, "background responses do not remount focused inputs");
   assert.equal(curveBox(root), curve, "curve editing nodes survive background responses");
   assert.equal(spread.value, "62");
   setInput(input, "#ABCDEF");
@@ -760,7 +771,7 @@ test("failed checkbox update rolls back only its checkbox and leaves manual colo
     "button-theme.participation": () => new Promise((_resolve, reject) => { fail = reject; })
   });
   const checkbox = labelledInput(root, "Apply theme to Cube");
-  const color = labelledInput(root, "Cube color");
+  const color = labelledInput(root, "Cube color picker");
   checkbox.checked = false;
   dispatch(checkbox, "change");
   await settlePageAction();
@@ -892,9 +903,6 @@ test("popped Button controls share one row and refill or scatter stable hidden p
   const stopLabels = () => stopControls().map((control) =>
     control.querySelectorAll("span").map(({ textContent }) => textContent).find(Boolean) || ""
   );
-  const stopTextInputs = () => stopControls().map((control) =>
-    control.querySelectorAll("input").find(({ type }) => type === "text")
-  );
   const stopColorInputs = () => stopControls().map((control) =>
     control.querySelectorAll("input").find(({ type }) => type === "color")
   );
@@ -906,11 +914,10 @@ test("popped Button controls share one row and refill or scatter stable hidden p
     "Gradient Colors, Spread, and Scatter must follow the ordered stop row"
   );
   assert.deepEqual(stopLabels(), ["Start", "Color 2", "Color 3", "End"]);
-  assert.deepEqual(stopTextInputs().map(({ value }) => value), ["#8FDB0A", "#70A000", "#406000", "#141414"]);
   assert.deepEqual(stopColorInputs().map(({ value }) => value), ["#8FDB0A", "#70A000", "#406000", "#141414"]);
   assert.deepEqual(
-    stopTextInputs().map((input) => input["aria-label"]),
-    ["Start color", "Color 2 color", "Color 3 color", "End color"]
+    stopColorInputs().map((input) => input["aria-label"]),
+    ["Start color picker", "Color 2 color picker", "Color 3 color picker", "End color picker"]
   );
   const colorCountControl = gradient.children.find(
     (candidate) => String(candidate.className || "").split(/\s+/).includes("button-theme-gradient__color-count")
@@ -935,12 +942,7 @@ test("popped Button controls share one row and refill or scatter stable hidden p
   assert.equal(rangeInput.value, "3");
   assert.deepEqual(stopLabels(), ["Start", "Color 2", "End"]);
   const editedMiddlePicker = stopColorInputs()[1];
-  editedMiddlePicker.value = "#0BADF0";
-  dispatch(editedMiddlePicker, "input");
-  assert.equal(stopTextInputs()[1].value, "#0BADF0", "an intermediate picker must update its visible hex field");
-  const editedMiddleStop = stopTextInputs()[1];
-  editedMiddleStop.value = "#ABCDEF";
-  dispatch(editedMiddleStop, "change");
+  setInput(editedMiddlePicker, "#ABCDEF", "input");
 
   const screenCheckboxControl = () => root.querySelectorAll("label").find(
     (candidate) => String(candidate.className || "").split(/\s+/).includes("button-theme-gradient__screen-toggle")
@@ -1014,10 +1016,10 @@ test("popped Button controls share one row and refill or scatter stable hidden p
   const endpointControls = gradientAfterRefill.querySelectorAll("div").filter(
     (candidate) => String(candidate.className || "").split(/\s+/).includes("button-theme-gradient__color")
   );
-  const endpointText = (control) => control.querySelectorAll("input").find(({ type }) => type === "text")?.value;
-  assert.equal(endpointText(endpointControls[0]), sampledColors[0], "Refill must update the visible Top color");
-  assert.equal(endpointText(endpointControls[1]), sampledColors[1], "Refill must update the visible intermediate color");
-  assert.equal(endpointText(endpointControls[2]), sampledColors[2], "Refill must update the visible Bottom color");
+  const endpointColor = (control) => control.querySelectorAll("input").find(({ type }) => type === "color")?.value;
+  assert.equal(endpointColor(endpointControls[0]), sampledColors[0], "Refill must update the visible Top color");
+  assert.equal(endpointColor(endpointControls[1]), sampledColors[1], "Refill must update the visible intermediate color");
+  assert.equal(endpointColor(endpointControls[2]), sampledColors[2], "Refill must update the visible Bottom color");
 
   const samplesBeforeReapply = root.requests.filter(({ actionId }) => actionId === "theme.image.sample").length;
   await clickPageButton(root, "Apply Gradient");
@@ -1105,8 +1107,8 @@ test("popped Button gradient migrates the legacy count and keeps edited endpoint
   const endpointControls = channelBox(root, "fill").querySelectorAll("div").filter(
     (candidate) => String(candidate.className || "").split(/\s+/).includes("button-theme-gradient__color")
   );
-  const topInput = endpointControls[0].querySelectorAll("input").find(({ type }) => type === "text");
-  const bottomInput = endpointControls.at(-1).querySelectorAll("input").find(({ type }) => type === "text");
+  const topInput = endpointControls[0].querySelectorAll("input").find(({ type }) => type === "color");
+  const bottomInput = endpointControls.at(-1).querySelectorAll("input").find(({ type }) => type === "color");
   topInput.value = "#ABCDEF";
   dispatch(topInput, "change");
   bottomInput.value = "#FEDCBA";
@@ -1142,7 +1144,7 @@ test("changing popped gradient color count preserves chosen stops and sends the 
   });
   const stopInputs = () => root.querySelectorAll("div")
     .find((node) => node.className === "button-theme-gradient__stops")
-    .querySelectorAll("input").filter(({ type }) => type === "text");
+    .querySelectorAll("input").filter(({ type }) => type === "color");
   const changeCount = (value) => {
     const count = root.querySelectorAll("input")
       .find((input) => input.type === "number" && input["aria-label"] === "Gradient Colors");
@@ -1417,7 +1419,7 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
   const root = await renderThemePage();
   const buttons = root.querySelectorAll("button");
   // Grid visibility and spacing apply directly through their inputs.
-  assert.equal(buttons.length, 27 + 5 + 2 * 17 + 2 * 19 + page.config.roles.length + page.config.environment.valueFields.length);
+  assert.equal(buttons.length, 27 + 5 + 2 * 18 + 2 * 19 + page.config.roles.length + page.config.environment.valueFields.length);
   assert.deepEqual(
     buttons.flatMap((button, index) => button.title.trim() ? [] : [`${index}: ${button.textContent}`]),
     []
@@ -1536,7 +1538,7 @@ test("package page is headerless and keeps Theme plus Place Picture compact", ()
   assert.equal((pageCss.match(/\.theme-role-grid\s*\{/g) || []).length, 1);
   assert.match(
     pageCss,
-    /\.theme-role\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 22px 58px 36px;[\s\S]*min-height:\s*40px;/
+    /\.theme-role\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 22px 36px;[\s\S]*min-height:\s*40px;/
   );
   assert.match(pageCss, /\.theme-role__label-row\s*\{[\s\S]*display:\s*flex;/);
   assert.match(pageCss, /\.theme-role__label\s*\{[\s\S]*word-break:\s*normal;/);
@@ -2346,8 +2348,31 @@ test("the Individual Buttons list is gone and Fill and Text each get their own g
   assert.ok(toolButton(channelBox(root, "text"), "Apply Text Gradient"));
   assert.deepEqual(channelStops(root, "text").map(({ value }) => value), ["#FFFFFF"], "text starts as one solid color");
   const sample = root.querySelectorAll("div").find((node) => node.className === "button-theme-sample");
-  assert.equal(sample.children.length, 24);
-  assert.ok(sample.children.every((chip) => chip.style.backgroundColor && chip.style.color));
+  assert.equal(sample.children.length, 12);
+  assert.match(pageCss, /\.button-theme-sample\s*\{[^}]*grid-template-columns:\s*repeat\(4,/);
+  assert.ok(sample.children.every((chip) =>
+    chip.style.backgroundColor && chip.style.color && chip.querySelectorAll("circle").length === 2
+  ));
+});
+
+test("Reverse Colors reverses every stop independently and a second click restores the original order", async () => {
+  const fill = ["#112233", "#445566", "#778899", "#AABBCC"];
+  const text = ["#012345", "#6789AB", "#CDEF01"];
+  const root = await renderThemePage({}, {
+    "button-theme.settings": () => ({ settings: poppedSettings({ colors: fill, textColors: text }), configured: true })
+  });
+  const read = (channel) => channelStops(root, channel).map(({ value }) => value);
+  for (const [channel, original, otherChannel, other] of [
+    ["fill", fill, "text", text],
+    ["text", text, "fill", fill]
+  ]) {
+    const reverse = toolButton(channelBox(root, channel), "Reverse Colors");
+    reverse.click();
+    assert.deepEqual(read(channel), [...original].reverse());
+    assert.deepEqual(read(otherChannel), other);
+    reverse.click();
+    assert.deepEqual(read(channel), original);
+  }
 });
 
 test("Apply Text Gradient sends an independent text gradient and leaves the staged fill untouched", async () => {

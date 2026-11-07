@@ -819,8 +819,8 @@
 
 .button-color-row {
   display: grid;
-  grid-template-columns: 42px minmax(72px, 1fr) auto;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  align-items: center;
   gap: 6px;
   min-width: 0;
   padding: 7px;
@@ -829,20 +829,53 @@
 }
 
 .button-color-row__label {
-  grid-column: 1 / -1;
   color: #aeb9c6;
   font-size: 11px;
 }
 
-.button-color-row input[type="color"] {
+.button-editor-page .button-color-row__swatch,
+.button-color-row__popup input[type="color"] {
   width: 42px;
   min-width: 42px;
   height: 30px;
+  min-height: 30px;
   padding: 3px;
   cursor: pointer;
 }
 
-.button-color-row input[type="text"] {
+.button-color-row__swatch > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.button-color-row__popup {
+  box-sizing: border-box;
+  width: min(260px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  padding: 8px;
+  border: 1px solid #3b4552;
+  border-radius: 8px;
+  background: #20262d;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .25);
+  position-area: bottom span-right;
+  position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline, --button-color-popup-center;
+}
+
+@position-try --button-color-popup-center {
+  position-area: none;
+  inset: 0;
+  margin: auto;
+}
+
+.button-color-row__popup:popover-open {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.button-color-row__popup input[type="text"] {
   min-width: 0;
   height: 30px;
   font-family: "Cascadia Mono", Consolas, monospace;

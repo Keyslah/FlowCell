@@ -65,6 +65,7 @@
     "src/pages/window-grid/windowGridDetails.ts",
     "src/button/text/textFit.ts",
     "src/button/skins/buttonVisualSampling.ts",
+    "src/button/skins/chippedConcreteKeyTravel.ts",
     "src/button/skins/buttonTextOffset.ts",
     "src/button/skins/buttonSkinColors.ts",
     "src/button/skins/buttonSkinFormat.ts",

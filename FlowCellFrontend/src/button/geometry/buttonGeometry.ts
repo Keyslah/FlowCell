@@ -297,6 +297,24 @@ export function inferButtonPlacementRows(
   }));
 }
 
+export function orderButtonRectsByVisualRows<T extends ButtonRect & { id: string }>(buttons: readonly T[]): T[] {
+  const byId = new Map(buttons.map((button) => [button.id, button]));
+  return inferButtonPlacementRows(buttons.map((button) => ({ id: button.id, rect: button })))
+    .flatMap((row) => row.placements.map(({ id }) => byId.get(id)!));
+}
+
+/** Exchange only raised keys' paint slots, keeping the rest of the surface's stack intact. */
+export function orderRaisedKeyPaintSlots(
+  slots: readonly { placement: ButtonRect & { id: string; zIndex: number }; raisedKey: boolean }[]
+): { id: string; zIndex: number }[] {
+  const keys = orderButtonRectsByVisualRows(slots.filter(({ raisedKey }) => raisedKey).map(({ placement }) => placement));
+  let nextKey = 0;
+  return slots.map(({ placement, raisedKey }) => ({
+    id: raisedKey ? keys[nextKey++].id : placement.id,
+    zIndex: placement.zIndex
+  }));
+}
+
 export function inferButtonPlacementRowProfile(
   placements: readonly NamedButtonRect[]
 ): ButtonPlacementRowProfile {

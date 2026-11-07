@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   BUTTON_SKIN_COMPILER_VERSION,
   type ButtonCycleAdvanceTrigger,
@@ -26,6 +26,7 @@ import {
 } from "../skins/skinPasteParser";
 import { compileButtonSkin, diagnosticsBySkinSection } from "../skins/skinCompiler";
 import { ButtonSkinRenderer } from "../skins/ButtonSkinRenderer";
+import { withButtonSkinFamily } from "../skins/buttonSkinFamily";
 import { BUTTON_TEXT_GLOW_DEFAULT_CURVE, buttonSkinHasTextGlowTarget } from "../skins/buttonTextGlow";
 import {
   buttonSkinColorWithPreservedAlpha,
@@ -216,7 +217,9 @@ function skinSections(skin: ButtonSkin): ButtonSkinSectionSource {
 }
 
 function withSections(skin: ButtonSkin, sections: ButtonSkinSectionSource): ButtonSkin {
-  const next = { ...skin, ...sections };
+  const edited = skin.metadata.buttonSkinFamily &&
+    BUTTON_SKIN_SECTION_ORDER.some((section) => skin[section] !== sections[section]);
+  const next = { ...(edited ? withButtonSkinFamily(skin, null) : skin), ...sections };
   const compiled = compileButtonSkin(next);
   next.compileCache = compiled.ok
     ? {
@@ -254,6 +257,7 @@ function ButtonColorPickerRow({
   onColorChange,
   onUseSkinColor
 }: ButtonColorPickerRowProps) {
+  const popupId = useId();
   const colorInputRef = useRef<HTMLInputElement | null>(null);
   const commitTextColor = (input: HTMLInputElement) => {
     const normalized = normalizeButtonSkinColor(input.value);
@@ -288,42 +292,54 @@ function ButtonColorPickerRow({
   return (
     <div className="button-color-row" title={title}>
       <span className="button-color-row__label">{label}</span>
-      <input
-        ref={colorInputRef}
-        type="color"
-        aria-label={`${label} color picker`}
-        value={buttonSkinPickerColor(value)}
-        disabled={disabled}
-        onInput={(event) => {
-          const next = colorFromOpaquePicker(event.currentTarget.value);
-          if (next) onColorChange(next);
-        }}
-      />
-      <input
-        key={value}
-        type="text"
-        aria-label={`${label} color value`}
-        defaultValue={value}
-        disabled={disabled}
-        spellCheck={false}
-        onBlur={(event) => commitTextColor(event.currentTarget)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") {
-            event.currentTarget.value = value;
-            event.currentTarget.blur();
-          }
-        }}
-      />
       <button
         type="button"
-        className="button-color-row__pick"
-        title="Pick a color from the screen. Falls back to the native color picker when the direct eyedropper is unavailable."
+        className="button-color-row__swatch"
+        aria-label={`Edit ${label} color`}
+        aria-haspopup="dialog"
+        popoverTarget={popupId}
         disabled={disabled}
-        onClick={() => void pickScreenColor()}
       >
-        Pick
+        <span aria-hidden="true" style={{ backgroundColor: buttonSkinPickerColor(value) }} />
       </button>
+      <div className="button-color-row__popup" id={popupId} popover="auto" role="dialog" aria-label={`${label} color`}>
+        <input
+          ref={colorInputRef}
+          type="color"
+          aria-label={`${label} color picker`}
+          value={buttonSkinPickerColor(value)}
+          disabled={disabled}
+          onInput={(event) => {
+            const next = colorFromOpaquePicker(event.currentTarget.value);
+            if (next) onColorChange(next);
+          }}
+        />
+        <input
+          key={value}
+          type="text"
+          aria-label={`${label} color value`}
+          defaultValue={value}
+          disabled={disabled}
+          spellCheck={false}
+          onBlur={(event) => commitTextColor(event.currentTarget)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") {
+              event.currentTarget.value = value;
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="button-color-row__pick"
+          title="Pick a color from the screen. Falls back to the native color picker when the direct eyedropper is unavailable."
+          disabled={disabled}
+          onClick={() => void pickScreenColor()}
+        >
+          Pick
+        </button>
+      </div>
       {onUseSkinColor ? (
         <button
           type="button"

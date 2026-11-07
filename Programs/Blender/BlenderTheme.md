@@ -40,9 +40,9 @@ Theme 3.0.37 renames the top-left `Browse` Button to `Find Picture`. It fills
 the theme buckets from the chosen picture and places that picture in the
 viewport background; `Place Picture` still only places a picture.
 
-Theme 3.0.36 uses the original eyedropper inside each color swatch's popup.
-The separate buttons labeled `Eyedropper` under Fill/Text gradient stops have
-been removed. Swatches, hex fields and existing Apply behavior are unchanged.
+Theme color swatches open the original native picker for numeric color entry
+and desktop eyedropper sampling. This includes Blender buckets, Fill and Text
+gradient stops, individual popped Buttons, and effect colors.
 
 ## Install And Ownership
 
@@ -129,8 +129,9 @@ Theme controls:
 - Each box has ordered Start-to-End color stops, a curve box, an Angle and a
   `Whole Layout` checkbox. Button Fill needs 2-16 stops and keeps Spread and
   Scatter; Button Text takes 1-16 stops, where one stop is a solid label color.
-  `Apply Gradient` (fill) and `Apply Text Gradient` apply each box independently;
-  a sample grid above the boxes previews both together.
+  Each box has a `Reverse Colors` control for its full stop sequence.
+  `Apply Gradient` (fill) and `Apply Text Gradient` apply each box independently.
+  A half-width preview shows both gradients on 12 bullseyes in 4 columns.
 - The curve box maps position along the gradient (left to right) to progress
   through the stops (bottom to top); its left strip shows the stops and its
   bottom strip the result. The default bottom-left to top-right line is linear.

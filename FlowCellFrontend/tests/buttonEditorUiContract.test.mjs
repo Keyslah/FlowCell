@@ -785,7 +785,11 @@ test("Button Color follows Button Text with semantic profile parts, visible Text
   assert.match(editor, /workingMaterialProfile\.length/);
   assert.match(editor, /workingMaterialProfile\.map\(\(profileColor\) =>/);
   assert.match(editor, /label=\{profileColor\.label\}/);
-  assert.match(editor, /type="color"[\s\S]{0,500}type="text"/);
+  assert.match(editor, /className="button-color-row__swatch"[\s\S]{0,200}popoverTarget=\{popupId\}/);
+  const popup = editor.match(/<div className="button-color-row__popup" id=\{popupId\} popover="auto"[\s\S]*?<\/div>/)?.[0];
+  assert.ok(popup);
+  assert.match(popup, /type="color"[\s\S]*type="text"[\s\S]*>\s*Pick\s*<\/button>/);
+  assert.match(popup, /onBlur=\{\(event\) => commitTextColor\(event\.currentTarget\)\}/);
   assert.match(editor, /new EyeDropper\(\)\.open\(\)/);
   assert.match(editor, /buttonSkinColorWithPreservedAlpha/);
   assert.match(editor, /label="Text Color"/);
@@ -800,8 +804,8 @@ test("Button Color follows Button Text with semantic profile parts, visible Text
   assert.doesNotMatch(editor, /onHighlightOnHoverChange/);
   assert.match(editor, /This skin has no authored color profile/);
   assert.doesNotMatch(editor, /workingColorBuckets|label=\{`Color \$\{index \+ 1\}`\}|replaceButtonSkinColor/);
-  assert.match(css, /\.button-color-row\s*\{[\s\S]{0,180}grid-template-columns:\s*42px minmax\(72px, 1fr\) auto/);
-  assert.match(css, /\.button-color-row input\[type="color"\]/);
+  assert.match(css, /\.button-color-row\s*\{[\s\S]{0,180}grid-template-columns:\s*minmax\(0, 1fr\) 42px/);
+  assert.match(css, /\.button-color-row__popup:popover-open\s*\{[\s\S]{0,180}grid-template-columns:\s*42px minmax\(0, 1fr\) auto/);
   assert.match(css, /\.button-color-profile-empty/);
 });
 

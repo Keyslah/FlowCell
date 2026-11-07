@@ -24,6 +24,7 @@ import type {
   JsonValue
 } from "./types";
 import { ButtonSkinRenderer } from "./skins/ButtonSkinRenderer";
+import { useButtonSkinFamily } from "./skins/useButtonSkinFamily";
 import { ButtonSelectFieldFanout } from "./ButtonSelectFieldFanout";
 import {
   executeButtonRecord,
@@ -142,7 +143,7 @@ function isButtonSelectValue(
 export function ButtonHost({
   button: canonicalButton,
   placement,
-  skin,
+  skin: assignedSkin,
   themeOverride,
   mode = "run",
   selected = false,
@@ -170,6 +171,11 @@ export function ButtonHost({
   onNaturalMeasurement
 }: ButtonHostProps) {
   const button = useMemo(() => resolveButtonPlacementPresentation(canonicalButton, placement), [canonicalButton, placement]);
+  const skin = useButtonSkinFamily(assignedSkin, placement.id, button.label);
+  // A different authored width must fit inside the saved placement, including in uniform rows.
+  const skinPlacement = useMemo(() => skin === assignedSkin || placement.matchHitboxToSkin
+    ? placement
+    : { ...placement, matchHitboxToSkin: true }, [assignedSkin, placement, skin]);
   const [coreElement, setCoreElement] = useState<HTMLElement | SVGElement | null>(null);
   const [labelElement, setLabelElement] = useState<HTMLElement | SVGElement | null>(null);
   const [shadowRoot, setShadowRoot] = useState<ShadowRoot | null>(null);
@@ -1257,7 +1263,7 @@ export function ButtonHost({
         width={placement.width}
         height={placement.height}
         constrained={constrained}
-        matchHitboxToSkin={placement.matchHitboxToSkin}
+        matchHitboxToSkin={skinPlacement.matchHitboxToSkin}
         allowStretching={placement.allowStretching}
         textFitMode={placement.textFitMode}
         textAlignment={placement.textAlignment}
@@ -1270,6 +1276,7 @@ export function ButtonHost({
         hovered={resolvedAppearance.flags.hovered}
         pressed={resolvedAppearance.flags.pressed}
         pointerPressed={pressed}
+        interactiveKeyTravel={mode === "run"}
         held={resolvedAppearance.flags.held}
         play={resolvedAppearance.flags.play}
         release={resolvedAppearance.flags.release}
@@ -1292,7 +1299,7 @@ export function ButtonHost({
       {mode === "run" && selectExpanded && selectField ? (
         <ButtonSelectFieldFanout
           field={selectField}
-          placement={placement}
+          placement={skinPlacement}
           skin={skin}
           listboxId={selectListboxId}
           selectedValue={selectValue === undefined ? selectField.defaultValue : selectValue}

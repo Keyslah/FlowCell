@@ -1060,6 +1060,7 @@ export function ButtonWorkspace({
               surfaceId={surfaceId}
               mode={mode}
               selectedPlacementIds={selectedPlacementIds}
+              liftedPlacementId={reorderPreview?.movingPlacementId}
               fields={unit?.kind === "tool-set" ? unit.fields : EMPTY_TOOL_FIELDS}
               onSelectPlacement={onSelectPlacement}
               onActivate={onActivate}
