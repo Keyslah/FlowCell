@@ -89,7 +89,7 @@
     },
     {
       "id": "illustrator.send-svg-to-blender",
-      "version": "1.3.0",
+      "version": "1.3.2",
       "panelName": "Files",
       "sourcePath": "Illustrator Git Scripts/Files/Send SVG to Blender/18_Prepare_Selected_OBJ_Export.jsx",
       "importKind": "script",
@@ -147,7 +147,7 @@
     },
     {
       "id": "illustrator.clip",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "panelName": "Utility",
       "sourcePath": "Illustrator Git Scripts/Utility/clip/clip.jsx",
       "importKind": "script",
@@ -183,7 +183,7 @@
     },
     {
       "id": "illustrator.lithophane",
-      "version": "1.0.2",
+      "version": "1.0.4",
       "panelName": "Utility",
       "sourcePath": "Illustrator Git Scripts/Utility/Lithophane/Lithophane.jsx",
       "importKind": "script",

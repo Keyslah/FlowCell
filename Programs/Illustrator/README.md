@@ -14,6 +14,23 @@ Tool sets are self-contained packages under `Illustrator Git Scripts/Toolsets/`
 with `flowcell.toolset.json` plus their JSX source. There are no generated
 button wrappers or program-level pre-baked Button entries.
 
+## Clip and vacuum
+
+`clip` trims selected editable strokes to the topmost selected closed path or
+compound path. Put the cutter above the strokes, then select both. It retains
+the cutter, restores an originally unfilled cutter, keeps compound holes, and
+leaves surviving strokes in their original groups or sublayers with their
+stroke appearance. Intersection positions use the script's 0.25-point
+approximation tolerance; both straight paths with collapsed handles and curved
+Bezier paths retain their editable geometry. This changes the selected strokes;
+use Illustrator Undo to reverse it.
+
+`vacuum` moves selected artwork smaller than 0.1 mm in both visible dimensions
+into `Trash > vacuum bin`. Stroke width counts toward visible size. Groups,
+compound paths and clipping groups stay intact; larger or unselected artwork
+stays in place. The Trash layer finishes hidden and locked, and its contents
+remain recoverable in the document.
+
 ## Send SVG to Blender
 
 The Illustrator Files panel exposes `Send SVG to Blender` and `Ill Orca`.
@@ -28,6 +45,12 @@ SVG, and is handed to the active Blender instance; if Blender is not running,
 the package resolves and starts the newest installed copy. The post-export
 cleanup supplies the SVG 1.0 doctype and removes Illustrator's unresolved Adobe
 namespace entities before Blender reads the file.
+
+After export, selection restoration checks the exact ordered item identities
+first. An unchanged selection is left alone, so exporting a saved document does
+not mark it modified merely by clearing and reapplying that selection. A changed
+selection is still restored; the exporter never saves the original document to
+hide a modified flag.
 
 Illustrator converts the cleaned artwork bounds and every sublayer center's
 offset from the combined selection center from points to millimeters. The
@@ -53,11 +76,12 @@ destination. The existing Orca package discovers or prompts for that computer's
 executable and performs its normal first-run single-instance setup. Text and
 live vector appearances are processed automatically; raster artwork must be
 manually Image Traced/expanded with the user's intended tracing settings rather
-than being converted with an arbitrary preset. Clipping groups also fail closed;
-before stopping, both handoff Buttons show a warning that names the affected layer
-and explains that its clipping mask must be expanded or released. Convert the
-result into explicit closed filled paths when its clipped appearance is intended
-to become printable geometry.
+than being converted with an arbitrary preset. Clipping masks are baked in the
+temporary export copy with Pathfinder Crop and expansion, processing nested masks
+from the inside out and keeping compound mask holes intact. The original artwork
+is unchanged. If Illustrator cannot bake a mask into closed, filled paths, the
+handoff stops with an error naming the affected layer instead of exporting
+unresolved clipping geometry.
 
 A positive number at the absolute beginning of the sublayer name sets the
 finished Blender thickness in millimeters, with parentheses optional:
@@ -96,6 +120,19 @@ Blender receives their actual Illustrator appearance instead of stretching the
 untransformed source bitmap. The source document and selection are not edited,
 and the temporary document is closed without saving.
 
+Lithophane 1.0.4 uses compact request-specific PNG filenames because Illustrator's
+native image capture silently fails beyond the Windows legacy path limit. If the
+owned runtime export path is still too long, it uses the persistent
+`FlowCell/lithophane-exports` cache under Illustrator's user application-data folder.
+Those PNGs are retained because Blender image/material references can outlive the
+handoff and be saved in a project. Existing files are never overwritten; layer
+names and requested physical dimensions are independent of the cached filename.
+The handoff helper uses Windows extended paths for request/image reads and terminal
+status writes, including its longer temporary status filename. This lets Illustrator
+receive success or failure instead of timing out after Blender has already completed
+the work. Its short-lived bridge diagnostic is exclusively reserved at a compact
+path, using the Windows temporary folder when the owner directory is too deep.
+
 The package resolves that installation's single active Blender Utility
 `blender.lithophane` owner and sends the PNG path plus explicit X/Y millimeter
 dimensions through its normal managed action. Bridge readiness recognizes the
@@ -107,9 +144,10 @@ faces below the alpha cutoff are removed before the remaining silhouette is
 solidified, so a transparent background does not become a thin rectangular
 sheet. Opaque images retain the established rectangular modifier path. Both
 paths apply their generated modifiers and re-fit the finished mesh to the
-requested X/Y dimensions. The established Blender Solidify thickness and
-Displace strength behavior is retained unchanged; this handoff controls only
-the source appearance and finished X/Y dimensions.
+requested X/Y dimensions. Blender Lithophane 1.1.4 defaults to a physical
+0.1–17.0 mm thickness range, with dark at the minimum and light at the maximum,
+independent of scene unit scale. Existing Illustrator requests use those defaults;
+the native Blender image picker also offers editable minimum/maximum controls.
 
 ## Illustrator bridge
 

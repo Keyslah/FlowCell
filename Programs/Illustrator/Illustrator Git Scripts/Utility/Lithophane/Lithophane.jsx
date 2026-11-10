@@ -387,6 +387,7 @@
             readGeometricBounds: readGeometricBounds,
             inspectPngSource: inspectPngSource,
             resolveSelectedPng: resolveSelectedPng,
+            exportSelectedPng: exportSelectedPng,
             mapAuthorityBoundsToDuplicate: mapAuthorityBoundsToDuplicate,
             pointsToMillimeters: pointsToMillimeters,
             buildRequestJson: buildRequestJson,
@@ -449,11 +450,23 @@
         var duplicateBounds;
         var captureBounds;
         var captureOptions;
-        var baseName = sanitizeFileName(selectedPng.source.fileName.replace(/\.png$/i, ""));
-        var outputName = baseName + "-" + requestId;
-        var outputStem = new File(exportFolder.fsName + "/" + outputName);
-        var expectedOutput = new File(exportFolder.fsName + "/" + outputName + ".png");
-        var rawOutput = new File(exportFolder.fsName + "/" + outputName);
+        // imageCapture silently creates nothing beyond Windows' legacy path
+        // limit. Object naming comes from the layer, not this cached filename.
+        var outputName = sanitizeFileName(requestId.replace(/^illustrator-lithophane-/, ""));
+        var captureFolder = exportFolder;
+        var cacheRoot;
+        if (new File(captureFolder.fsName + "/" + outputName + ".png").fsName.length > 259) {
+            cacheRoot = ensureFolder(new Folder(Folder.userData.fsName + "/FlowCell"));
+            // Persistent application cache: Blender materials may still refer
+            // to this PNG after the request and saved project have completed.
+            captureFolder = ensureFolder(new Folder(cacheRoot.fsName + "/lithophane-exports"));
+        }
+        var outputStem = new File(captureFolder.fsName + "/" + outputName);
+        var expectedOutput = new File(captureFolder.fsName + "/" + outputName + ".png");
+        var rawOutput = new File(captureFolder.fsName + "/" + outputName);
+        if (expectedOutput.fsName.length > 259) {
+            throw new Error("The FlowCell PNG cache path is too long for Illustrator image capture.");
+        }
 
         if (expectedOutput.exists || rawOutput.exists) {
             throw new Error("A unique temporary Lithophane PNG export path already exists.");

@@ -7,6 +7,7 @@
       "../public/themes/main/": "themes/main/",
       "../../dist/installer-resources/flowcellbackend/": "flowcellbackend/",
       "../../dist/installer-resources/tools/": "tools/",
+      "../../dist/installer-resources/bundled-programs/Programs/": "bundled-programs/",
       "../../dist/installer-resources/flowcell-installed.json": "flowcell-installed.json",
       "../../LICENSE": "LICENSE"
     },

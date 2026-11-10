@@ -1939,9 +1939,15 @@ fn rewrite_binding_sections(
 }
 
 #[tauri::command]
-pub(crate) fn load_binds_workspace() -> Result<BindsWorkspaceResponse, String> {
+pub(crate) async fn load_binds_workspace() -> Result<BindsWorkspaceResponse, String> {
+    tauri::async_runtime::spawn_blocking(load_binds_workspace_sync)
+        .await
+        .map_err(|error| format!("Binds workspace load worker failed: {error}"))?
+}
+
+fn load_binds_workspace_sync() -> Result<BindsWorkspaceResponse, String> {
     let (bindings, _document, _bindings_path) = read_bindings_file_state()?;
-    let button_state_document = crate::button_state::load_button_state()?;
+    let button_state_document = crate::button_state::load_button_state_sync()?;
     let button_state = parse_bindable_button_state(button_state_document.as_ref())?;
     let (shortcut_profiles, warnings) = read_shortcut_profile_documents()?;
     let program_names = list_program_folders()?;
@@ -2068,7 +2074,16 @@ pub(crate) fn save_program_action_shortcut(
 }
 
 #[tauri::command]
-pub(crate) fn save_bind_shortcut(
+pub(crate) async fn save_bind_shortcut(
+    app: AppHandle,
+    request: SaveBindShortcutRequest,
+) -> Result<SaveBindShortcutResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || save_bind_shortcut_sync(app, request))
+        .await
+        .map_err(|error| format!("Binds shortcut save worker failed: {error}"))?
+}
+
+fn save_bind_shortcut_sync(
     app: AppHandle,
     request: SaveBindShortcutRequest,
 ) -> Result<SaveBindShortcutResponse, String> {
@@ -2108,7 +2123,7 @@ pub(crate) fn save_bind_shortcut(
     // one and occurs while Button state, source ownership, and bindings are all
     // locked in their canonical order.
     if is_tool_set_binding_kind(target_kind) {
-        let _ = crate::button_state::load_button_state()?;
+        let _ = crate::button_state::load_button_state_sync()?;
     }
     let button_state_guard = crate::button_state::button_state_commit_guard()?;
     let source_guard = crate::program_sources::source_quarantine_guard()?;

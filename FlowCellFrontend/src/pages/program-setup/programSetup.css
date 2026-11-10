@@ -9,6 +9,40 @@
   font: 14px/1.45 Inter, "Segoe UI", sans-serif;
 }
 
+.windows-setup {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #49637e;
+  border-radius: 14px;
+}
+
+.windows-setup::backdrop {
+  background: rgba(5, 10, 16, 0.8);
+}
+
+.windows-setup__panels {
+  display: grid;
+  gap: 16px;
+}
+
+.windows-setup__panel {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.windows-setup__description {
+  display: block;
+  margin-top: 3px;
+  color: #a9bdd0;
+}
+
+.windows-setup__error {
+  color: #ffc6c6;
+  white-space: pre-wrap;
+}
+
 .program-setup button,
 .program-setup input,
 .program-setup select {

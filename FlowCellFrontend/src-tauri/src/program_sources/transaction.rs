@@ -125,7 +125,14 @@ fn remove_staged_artifact(path: &Path) -> Result<(), String> {
 
 fn recycle_backup_artifacts(paths: &[PathBuf]) {
     if !paths.is_empty() {
-        let _ = crate::recycle_file_paths(paths);
+        if let Err(error) = crate::recycle_file_paths(paths) {
+            // The durable value is already committed. Preserve its backups
+            // for recovery, but do not silently report cleanup as complete.
+            crate::append_flowcell_local_log(
+                "program-source-cleanup.log",
+                &format!("Atomic backup cleanup is pending for {} item(s): {error}", paths.len()),
+            );
+        }
     }
 }
 

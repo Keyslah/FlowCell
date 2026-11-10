@@ -101,7 +101,7 @@ try {
     $desktopTarget = $shell.CreateShortcut($desktopLink)
     if ($desktopTarget.TargetPath -ne (Join-Path $env:SystemRoot 'System32/wscript.exe') -or $desktopTarget.Arguments -ne ('"' + (Join-Path $toggleDirectory 'Toggle-AutoHotkey.vbs') + '"') -or $desktopTarget.WorkingDirectory -ne $toggleDirectory) { throw 'Default desktop toggle is not independent of FlowCell UI and AutoHotkey.' }
     if ($desktopTarget.IconLocation -notlike ($toggleDirectory + '\Toggle-AutoHotkey-*.ico,*')) { throw 'Desktop toggle icon does not use the installed icon resources.' }
-    if (-not (Test-Path -LiteralPath (Join-Path $local 'Programs/Windows/Panels/Startup') -PathType Container)) { throw 'Installer did not make the Windows Startup panel available.' }
+    if (Test-Path -LiteralPath (Join-Path $local 'Programs/Windows')) { throw 'Background registration created a Windows program or panel before native panel selection.' }
     $uncheckedDesktop = Join-Path $root 'Unchecked Desktop'
     & $register -ResourceRoot $root -StartupDirectory $startup -RegistryPath $registry -DesktopDirectory $uncheckedDesktop -DesktopToggle Skip
     if (Test-Path -LiteralPath (Join-Path $uncheckedDesktop 'Toggle AutoHotkey.lnk')) { throw 'Unchecked desktop option created a shortcut.' }
@@ -110,16 +110,39 @@ try {
     if ([IO.File]::ReadAllText($config) -ne $firstConfig) { throw 'Repeat registration overwrote established runtime config.' }
     if ((Get-Item -LiteralPath $installerRegistry).GetValue('') -ne $root -or (Get-ItemProperty -LiteralPath $registry).ExistingUserSetting -ne 'preserve') { throw 'Repeat registration changed existing installer registry metadata.' }
     $fixtureWindows = Join-Path $local 'Programs/Windows'
+    [IO.Directory]::CreateDirectory($fixtureWindows) | Out-Null
     $fixtureManifest = Join-Path $fixtureWindows 'flowcell.program.json'
     $manifestBytes = [Text.Encoding]::UTF8.GetBytes('{"programId":"windows","panelsFolder":"Custom Panels","defaultPanels":["Existing"]}')
     [IO.File]::WriteAllBytes($fixtureManifest, $manifestBytes)
+    $existingPanel = Join-Path $fixtureWindows 'Custom Panels/Existing'
+    [IO.Directory]::CreateDirectory($existingPanel) | Out-Null
+    $existingScript = Join-Path $existingPanel 'keep.ps1'
+    $existingScriptBytes = [Text.Encoding]::UTF8.GetBytes('# preserve the selected existing panel exactly')
+    [IO.File]::WriteAllBytes($existingScript, $existingScriptBytes)
     $fixtureState = Join-Path $local 'button-system/button-state.json'
     [IO.Directory]::CreateDirectory((Split-Path -Parent $fixtureState)) | Out-Null
     $stateBytes = [Text.Encoding]::UTF8.GetBytes('{"fixture":"existing scripts, bindings and panel selection are preserved"}')
     [IO.File]::WriteAllBytes($fixtureState, $stateBytes)
     & $register @registrationArguments
-    if (-not (Test-Path -LiteralPath (Join-Path $fixtureWindows 'Custom Panels/Startup') -PathType Container)) { throw 'Startup registration ignored the existing Windows panel folder role.' }
+    $fixtureStartup = Join-Path $fixtureWindows 'Custom Panels/Startup'
+    if (Test-Path -LiteralPath $fixtureStartup) { throw 'Background registration created an unchecked Startup panel.' }
+    if (Test-Path -LiteralPath (Join-Path $fixtureWindows 'Panels')) { throw 'Background registration created the default panel root beside a custom panel selection.' }
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($existingScript)) -ne [Convert]::ToBase64String($existingScriptBytes)) { throw 'Background registration modified an existing selected panel.' }
     if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($fixtureManifest)) -ne [Convert]::ToBase64String($manifestBytes) -or [Convert]::ToBase64String([IO.File]::ReadAllBytes($fixtureState)) -ne [Convert]::ToBase64String($stateBytes)) { throw 'Upgrade modified existing program or Button settings.' }
+    [IO.Directory]::CreateDirectory($fixtureStartup) | Out-Null
+    $startupScript = Join-Path $fixtureStartup 'keep-startup.ps1'
+    $startupScriptBytes = [Text.Encoding]::UTF8.GetBytes('# preserve an explicitly selected Startup panel')
+    [IO.File]::WriteAllBytes($startupScript, $startupScriptBytes)
+    & $register @registrationArguments
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($startupScript)) -ne [Convert]::ToBase64String($startupScriptBytes)) { throw 'Background registration modified an existing Startup panel.' }
+    # Simulate deleting only the temporary Startup fixture created immediately above.
+    $resolvedStartup = [IO.Path]::GetFullPath($fixtureStartup)
+    $fixturePrefix = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
+    if (-not $resolvedStartup.StartsWith($fixturePrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Startup deletion fixture escaped the temporary test root.' }
+    Remove-Item -LiteralPath $resolvedStartup -Recurse -Force
+    & $register @registrationArguments
+    if (Test-Path -LiteralPath $fixtureStartup) { throw 'Background registration recreated a deleted Startup panel.' }
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($existingScript)) -ne [Convert]::ToBase64String($existingScriptBytes)) { throw 'Repeat registration changed a surviving panel.' }
     # Replace only this temporary fixture launcher to verify installer call/error handling.
     @'
 param([string]$Role, [switch]$Logon)
@@ -148,7 +171,7 @@ if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'simulate-start-failure')) {
     if ([IO.File]::ReadAllText($config) -ne $firstConfig) { throw 'Startup removal modified data configuration.' }
     $hooks = [IO.File]::ReadAllText((Join-Path $repo 'release-tools/installer-hooks.nsh'))
     if ($hooks -notmatch '\$\{NSD_Check\} \$FlowCellToggleCheckbox' -or $hooks -notmatch 'StrCpy \$1 "Install"' -or $hooks -notmatch '\-DesktopToggle \$1') { throw 'Installer desktop toggle option is not checked by default for UI and silent installation.' }
-    Write-Output 'PASS: role/root isolation, startup logon registration, default desktop toggle and opt-out, installed icons, custom Startup panel and settings preservation, ordinary upgrade launch, reported startup failure, legacy migration and scoped uninstall removal.'
+    Write-Output 'PASS: role/root isolation, startup logon registration, default desktop toggle and opt-out, installed icons, no implicit program/panel creation or deleted Startup resurrection, existing panel and settings preservation, ordinary upgrade launch, reported startup failure, legacy migration and scoped uninstall removal.'
 } finally {
     foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key,$saved[$key]) }
     if (Test-Path -LiteralPath $registry) { Remove-Item -LiteralPath $registry -Recurse }

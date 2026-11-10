@@ -298,6 +298,10 @@ fn normalize_layout_file_path(path: &Path) -> PathBuf {
         return PathBuf::from(path_text);
     }
 
+    if lower_path.ends_with(".flowlayout") {
+        return PathBuf::from(format!("{path_text}.json"));
+    }
+
     PathBuf::from(format!("{path_text}.flowlayout.json"))
 }
 
@@ -429,8 +433,9 @@ pub(crate) fn show_save_layout_dialog(
             .set_title("Save Layout")
             .set_directory(initial_directory)
             .set_file_name(&file_name)
-            .add_filter("FlowCell Layout", &["flowlayout.json"])
-            .add_filter("Legacy FlowCell Layout", &["json"]),
+            // Windows appends this extension to an edited filename. A multipart
+            // default repeats `.flowlayout` when the user includes it already.
+            .add_filter("FlowCell Layout", &["json"]),
         parent_label,
     )
     .save_file();
@@ -921,6 +926,33 @@ mod tests {
             Some("C:/FlowCell/other-layers.flowcell-button-settings.json".to_string());
         snapshot.windows.push(same_owner_different_settings_file);
         assert!(validate_layout_snapshot(&snapshot).is_err());
+    }
+
+    #[test]
+    fn layout_file_paths_normalize_partial_suffix_without_rewriting_json_names() {
+        for (input, expected) in [
+            ("layout", "layout.flowlayout.json"),
+            ("layout.flowlayout", "layout.flowlayout.json"),
+            ("layout.FLOWLAYOUT", "layout.FLOWLAYOUT.json"),
+            ("layout.flowlayout.json", "layout.flowlayout.json"),
+            ("layout.FLOWLAYOUT.JSON", "layout.FLOWLAYOUT.JSON"),
+            ("legacy.json", "legacy.json"),
+            ("legacy.JSON", "legacy.JSON"),
+            (
+                "layout.flowlayout.flowlayout.json",
+                "layout.flowlayout.flowlayout.json",
+            ),
+            (
+                "folder.json/layout.flowlayout",
+                "folder.json/layout.flowlayout.json",
+            ),
+        ] {
+            assert_eq!(
+                normalize_layout_file_path(Path::new(input)),
+                PathBuf::from(expected),
+                "input: {input}"
+            );
+        }
     }
 
     #[test]

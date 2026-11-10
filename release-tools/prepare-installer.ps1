@@ -1,7 +1,7 @@
 <#
-Purpose: Stage only tracked core runtime resources for a Tauri Windows installer build.
+Purpose: Stage tracked core runtime resources and the Windows catalog for a Tauri installer.
 Context: Clean committed release worktree. Inputs: AutoHotkey runtime and its GPL license.
-Writes: dist/installer-resources only; no program/user state copied. Existing staging is recycled.
+Writes: dist/installer-resources only; no mutable program/user state copied. Existing staging is recycled.
 Constraints: Build-time tool only. No install, restart, program registration or Git mutation.
 #>
 [CmdletBinding()]
@@ -65,4 +65,7 @@ $version=(Get-Item -LiteralPath $AutoHotkeyExe).VersionInfo.ProductVersion
 "AutoHotkey $version is GPL-2.0 software. Corresponding source: https://github.com/AutoHotkey/AutoHotkey/tree/v$version . Full source archive: https://github.com/AutoHotkey/AutoHotkey/archive/refs/tags/v$version.zip" | Set-Content -LiteralPath (Join-Path $runtime 'AutoHotkey-SOURCE.txt') -Encoding UTF8
 $commit=(& git -C $repo rev-parse HEAD).Trim()
 @{schemaVersion=1;distribution='installed';commit=$commit} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'flowcell-installed.json') -Encoding UTF8
+. (Join-Path $PSScriptRoot 'installer-windows-program.ps1')
+$windows=Copy-InstallerWindowsProgram -RepositoryRoot $repo -DestinationRoot (Join-Path $stage 'bundled-programs')
+Write-Output "Staged mandatory Windows catalog: $($windows.Files) files ($($windows.CatalogFiles) catalog files)."
 Write-Output "Staged $($tracked.Count) tracked core files, AutoHotkey $version and license/source notices."

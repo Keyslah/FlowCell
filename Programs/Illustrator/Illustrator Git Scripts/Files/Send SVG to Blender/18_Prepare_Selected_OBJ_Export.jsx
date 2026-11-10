@@ -568,6 +568,8 @@
             validateVectorArtwork: validateVectorArtwork,
             bakeVisibleClippingGroups: bakeVisibleClippingGroups,
             exportGroup: exportGroup,
+            snapshotSelection: snapshotSelection,
+            restoreOriginalState: restoreOriginalState,
             showBlockingWarning: showBlockingWarning,
             removeNonRenderingStrokedPaths: removeNonRenderingStrokedPaths,
             selectVisibleStrokedArtwork: selectVisibleStrokedArtwork,
@@ -701,6 +703,24 @@
         return rawSelection;
     }
 
+    function selectionMatchesSnapshot(current, snapshot) {
+        var i;
+        if (current === snapshot) {
+            return true;
+        }
+        if (!current || !snapshot || current.typename || snapshot.typename ||
+            typeof current.length !== "number" || typeof snapshot.length !== "number" ||
+            current.length !== snapshot.length) {
+            return false;
+        }
+        for (i = 0; i < current.length; i += 1) {
+            if (current[i] !== snapshot[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     function restoreOriginalState(documentRef, activeLayer, selectionSnapshot) {
         var fallbackItems;
         var i;
@@ -718,6 +738,11 @@
         }
 
         try {
+            // Clearing an already-correct selection marks a saved Illustrator
+            // document dirty. Only restore when ordered item identities differ.
+            if (selectionMatchesSnapshot(documentRef.selection, selectionSnapshot)) {
+                return;
+            }
             documentRef.selection = null;
             if (selectionSnapshot) {
                 documentRef.selection = selectionSnapshot;
@@ -1103,6 +1128,7 @@
         var mask;
         var child;
         var paths;
+        var releasedSelection;
         var previousCount = null;
         var i;
 
@@ -1159,11 +1185,20 @@
             // compound mask intact: releasing its subpaths would fill its holes.
             if (safeString(mask.typename) === "CompoundPathItem") {
                 // Illustrator's clipped setter rejects a compound mask even
-                // when setting false. Release it through the native command,
-                // which places the mask outside the remaining content group.
+                // when setting false. Release it through the native command.
+                // That command can dissolve the group while leaving its old
+                // scripting reference readable. Regroup the live released
+                // operands and reacquire their actual GroupItem before Crop.
                 clearSelection(documentRef);
                 group.selected = true;
                 executeRequiredVectorCleanup(documentRef, "releaseMask", "clipping mask release", layerName);
+                executeRequiredVectorCleanup(documentRef, "group", "released clipping mask grouping", layerName);
+                releasedSelection = documentRef.selection;
+                if (!releasedSelection || releasedSelection.length !== 1 ||
+                    safeString(releasedSelection[0].typename) !== "GroupItem") {
+                    throwNormalizationError(layerName, "Illustrator did not group the released clipping mask and artwork.");
+                }
+                group = releasedSelection[0];
                 mask.move(group, ElementPlacement.PLACEATBEGINNING);
             } else {
                 group.clipped = false;

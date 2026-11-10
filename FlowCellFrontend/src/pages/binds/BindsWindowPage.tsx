@@ -11,8 +11,7 @@ import { deriveBindsPanelMacroScope } from "../../lib/bindsMacroScope";
 import { formatShortcutForDisplay, parseShortcutInput } from "../../lib/bindings";
 import {
   MACRO_PANEL_CHANGED_EVENT,
-  saveMacroShortcut,
-  type MacroPanelChangedPayload
+  saveMacroShortcut
 } from "../../lib/macros";
 import {
   buildShortcutPickerOptions,
@@ -22,6 +21,7 @@ import {
   validateShortcutInput
 } from "../../lib/shortcutProfiles";
 import { openMacroLabWindow } from "../../lib/coreWindows";
+import { PROGRAM_SETUP_COMMITTED_EVENT } from "../../lib/programRails";
 import { BINDS_PREFILL_EVENT } from "../../lib/windowContext";
 import type { BindsButtonPrefill, BindsWindowContext } from "../../lib/windowContext";
 import type {
@@ -120,14 +120,27 @@ export default function BindsWindowPage({
   const [isSaving, setIsSaving] = useState(false);
   const [isShortcutMenuOpen, setIsShortcutMenuOpen] = useState(false);
   const shortcutMenuRef = useRef<HTMLDivElement | null>(null);
+  const workspaceMountedRef = useRef(false);
+  const workspaceLoadSequenceRef = useRef(0);
 
   const reloadWorkspace = async (nextSelection?: BindsSelection) => {
-    const nextWorkspace = await loadBindsWorkspace();
+    const sequence = ++workspaceLoadSequenceRef.current;
+    let nextWorkspace: BindsWorkspaceData;
+    try {
+      nextWorkspace = await loadBindsWorkspace();
+    } catch (error) {
+      if (!workspaceMountedRef.current || sequence !== workspaceLoadSequenceRef.current) return null;
+      setLoadError(formatErrorMessage(error));
+      throw error;
+    }
+    if (!workspaceMountedRef.current || sequence !== workspaceLoadSequenceRef.current) return null;
+    const firstLoad = workspaceRef.current === null;
     const resolvedSelection = reconcileSelection(
       nextWorkspace,
-      nextSelection ?? selectionRef.current
+      nextSelection ?? (firstLoad && context.prefill ? context.prefill : selectionRef.current)
     );
     selectionRef.current = resolvedSelection;
+    workspaceRef.current = nextWorkspace;
     setWorkspace(nextWorkspace);
     setSelection(resolvedSelection);
     setSelectedMacroId(
@@ -141,6 +154,10 @@ export default function BindsWindowPage({
         ).selectedMacroId
     );
     setLoadError("");
+    if (firstLoad && context.prefill) {
+      setTargetMode("button");
+      window.setTimeout(() => shortcutInputRef.current?.focus(), 0);
+    }
     return {
       workspace: nextWorkspace,
       selection: resolvedSelection
@@ -149,63 +166,35 @@ export default function BindsWindowPage({
 
   useEffect(() => {
     let cancelled = false;
+    workspaceMountedRef.current = true;
+    const unlisteners: Array<() => void> = [];
 
     void (async () => {
       try {
-        const nextWorkspace = await loadBindsWorkspace();
-        if (cancelled) {
-          return;
+        // Subscribe before reading: setup can commit while the first native
+        // read is waiting for the source transaction lock.
+        for (const eventName of [MACRO_PANEL_CHANGED_EVENT, PROGRAM_SETUP_COMMITTED_EVENT]) {
+          const unlisten = await listen(eventName, () => {
+            if (!cancelled) void reloadWorkspace().catch(() => {});
+          });
+          if (cancelled) {
+            unlisten();
+            return;
+          }
+          unlisteners.push(unlisten);
         }
-
-        const seed = context.prefill
-          ? {
-              programName: context.prefill.programName,
-              panelName: context.prefill.panelName,
-              buttonId: context.prefill.buttonId
-            }
-          : { programName: "", panelName: "", buttonId: "" };
-        const nextSelection = reconcileSelection(nextWorkspace, seed);
-        selectionRef.current = nextSelection;
-        setWorkspace(nextWorkspace);
-        setSelection(nextSelection);
-        setSelectedMacroId(
-          deriveBindsPanelMacroScope(
-            nextWorkspace.macros,
-            nextWorkspace.bindings.actionHotkeys,
-            nextSelection.programName,
-            nextSelection.panelName,
-            ""
-          ).selectedMacroId
-        );
-        setLoadError("");
-        if (context.prefill) {
-          setTargetMode("button");
-          window.setTimeout(() => shortcutInputRef.current?.focus(), 0);
-        }
+        // reloadWorkspace owns read errors and ignores superseded requests.
+        await reloadWorkspace().catch(() => {});
       } catch (error) {
-        if (cancelled) {
-          return;
-        }
-
-        setLoadError(formatErrorMessage(error));
+        if (!cancelled) setLoadError(formatErrorMessage(error));
       }
     })();
 
     return () => {
       cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    const unlistenPromise = listen<MacroPanelChangedPayload>(
-      MACRO_PANEL_CHANGED_EVENT,
-      () => {
-        void reloadWorkspace();
-      }
-    );
-
-    return () => {
-      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+      workspaceMountedRef.current = false;
+      workspaceLoadSequenceRef.current += 1;
+      unlisteners.forEach((unlisten) => unlisten());
     };
   }, []);
 

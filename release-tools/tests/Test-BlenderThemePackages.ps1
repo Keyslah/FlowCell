@@ -3,6 +3,7 @@ Purpose: Verify automatic Blender theme collection using disposable package libr
 Writes: Only one unique temporary fixture tree; no ZIPs or live application state.
 Deletion: Only that task-created temporary tree is removed after verifying its boundary.
 #>
+param([string]$ReparseWorkingDirectory)
 $ErrorActionPreference = 'Stop'
 $helperRoot = Split-Path -Parent $PSScriptRoot
 $temporaryParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
@@ -211,6 +212,18 @@ try {
     $junctionPath = Join-Path $fixtureRoot 'linked-library'
     New-Item -ItemType Junction -Path $junctionPath -Target $active | Out-Null
     Assert-Rejected { Copy-BlenderThemePackages -SourceLibrary $junctionPath -Destination (Join-Path $fixtureRoot 'linked-stage') } 'reparse library roots are rejected'
+
+    # A cloud-directory or junction CWD must not become the C:\ ancestor of
+    # an unrelated absolute library. With a trimmed C: root it did exactly that.
+    $reparseCwd = if ($ReparseWorkingDirectory) { $ReparseWorkingDirectory } else { $junctionPath }
+    Assert (((Get-Item -LiteralPath $reparseCwd -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) 'working-directory regression uses an actual reparse point'
+    Push-Location -LiteralPath $reparseCwd
+    try {
+        $volumeRoot = [IO.Path]::GetPathRoot($active)
+        Assert-NoReparsePathComponents $volumeRoot $volumeRoot 'Drive root'
+        Assert ((Resolve-BlenderThemePackageLibrary $active) -eq $active) 'absolute theme library is independent of a reparse working directory'
+        Assert-Rejected { Assert-NoReparsePathComponents $volumeRoot $junctionPath 'Linked candidate' } 'actual candidate junctions remain rejected with a reparse working directory' 'reparse'
+    } finally { Pop-Location }
 
     Write-Output "PASS: $($script:checks) Blender theme packaging assertions; required source folder, added/removed themes, current images, portability, source preservation and invalid-library handling. No ZIP created."
 } finally {

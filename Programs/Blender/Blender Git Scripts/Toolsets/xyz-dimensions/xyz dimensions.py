@@ -110,6 +110,7 @@ def _dimension_payload(context=None, data=None):
             dimensionsInches={axis_key: None},
             display=display,
             displayDimensions={axis_key: "-- in"},
+            fieldPatch={f"dimension_{axis_key}_display": display},
             data=response_data,
         )
 
@@ -140,6 +141,7 @@ def _dimension_payload(context=None, data=None):
         dimensionsInches={axis_key: value},
         display=display,
         displayDimensions={axis_key: value_display},
+        fieldPatch={f"dimension_{axis_key}_display": display},
         unitScaleLength=unit_scale,
         data=response_data,
     )

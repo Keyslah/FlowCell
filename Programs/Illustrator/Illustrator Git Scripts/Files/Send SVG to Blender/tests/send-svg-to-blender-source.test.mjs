@@ -373,7 +373,10 @@ test("mask baking processes nested masks first and keeps compound mask subpaths 
     groupItems: [outer, inner], pathItems: [outerMask, boundary, hole], pageItems: [], layers: [],
     activate() { appMock.activeDocument = document; }
   };
-  Object.defineProperty(document, "selection", { set() { outer.selected = inner.selected = false; } });
+  Object.defineProperty(document, "selection", {
+    set() { outer.selected = inner.selected = false; },
+    get() { return [inner.selected ? inner : outer]; }
+  });
   const appMock = {
     activeDocument: document,
     executeMenuCommand(command) {
@@ -390,9 +393,57 @@ test("mask baking processes nested masks first and keeps compound mask subpaths 
   };
   loadTestApi(undefined, appMock).bakeVisibleClippingGroups(document, "Stencil");
   assert.deepEqual(calls, [
-    ["inner", "releaseMask"], ["inner", "Live Pathfinder Crop"], ["inner", "expandStyle"],
+    ["inner", "releaseMask"], ["inner", "group"], ["inner", "Live Pathfinder Crop"], ["inner", "expandStyle"],
     ["outer", "Live Pathfinder Crop"], ["outer", "expandStyle"]
   ]);
+});
+
+test("compound mask release reacquires a live crop group after Illustrator dissolves the original", () => {
+  const layer = mockLayer("Stencil"), calls = [];
+  const original = { typename: "GroupItem", parent: layer, clipped: true };
+  const regrouped = { typename: "GroupItem", parent: layer, clipped: false };
+  const artwork = normalizedPath(original);
+  const mask = { typename: "CompoundPathItem", parent: original, zOrder() {}, move(parent) { this.parent = parent; } };
+  const boundary = normalizedPath(mask, { clipping: true });
+  const hole = normalizedPath(mask, { clipping: true, evenodd: true });
+  mask.pathItems = [boundary, hole];
+  let selection = [];
+  const document = {
+    groupItems: [original], pathItems: [boundary, hole, artwork], pageItems: [], layers: [],
+    activate() { appMock.activeDocument = document; }
+  };
+  Object.defineProperty(document, "selection", {
+    get() { return selection; }, set(value) { selection = value ?? []; }
+  });
+  for (const group of [original, regrouped]) {
+    Object.defineProperty(group, "selected", {
+      set(value) { if (value && document.groupItems.includes(group)) selection = [group]; }
+    });
+  }
+  const appMock = {
+    activeDocument: document,
+    executeMenuCommand(command) {
+      calls.push(command);
+      if (command === "releaseMask") {
+        assert.deepEqual(selection, [original]);
+        document.groupItems = [];
+        mask.parent = artwork.parent = layer;
+        selection = [mask, artwork];
+      } else if (command === "group") {
+        assert.deepEqual(selection, [mask, artwork]);
+        document.groupItems = [regrouped];
+        mask.parent = artwork.parent = regrouped;
+        selection = [regrouped];
+      } else if (command === "Live Pathfinder Crop") {
+        assert.deepEqual(selection, [regrouped], "Crop must never target the dissolved group reference");
+        assert.equal(mask.parent, regrouped);
+        assert.equal(hole.clipping, false);
+        assert.equal(hole.evenodd, true);
+      }
+    }
+  };
+  loadTestApi(undefined, appMock).bakeVisibleClippingGroups(document, "Stencil");
+  assert.deepEqual(calls, ["releaseMask", "group", "Live Pathfinder Crop", "expandStyle"]);
 });
 
 test("distinct owner layers may not collide after Windows filename sanitation", () => {
@@ -791,6 +842,61 @@ test("Illustrator bridge does not replay DoJavaScriptFile runtime failures throu
     /catch \{\s*if \(Test-IsStaleIllustratorComError[^}]+\}\s*if \(-not \(Test-IsUnavailableDoJavaScriptFileMember -ErrorRecord \$_\)\) \{ throw \}/
   );
   assert.doesNotMatch(bridgeSource, /DoJavaScriptFile failed[^\r\n]*retrying from script text/);
+});
+
+test("selection restoration leaves exact ordered identities untouched and preserves saved state", () => {
+  const api = loadTestApi();
+  const a = { typename: "PathItem", name: "a" }, b = { typename: "PathItem", name: "b" };
+  const textRange = { typename: "TextRange", length: 3 };
+  for (const selected of [[a, b], [], textRange, null]) {
+    let writes = 0, activations = 0, saved = true;
+    const document = {
+      activate() { activations++; },
+      get selection() { return Array.isArray(selected) ? [...selected] : selected; },
+      set selection(_) { writes++; saved = false; }
+    };
+    const layer = {};
+    api.restoreOriginalState(document, layer, api.snapshotSelection(selected));
+    assert.equal(writes, 0);
+    assert.equal(saved, true);
+    assert.equal(activations, 1);
+    assert.equal(document.activeLayer, layer);
+  }
+});
+
+test("selection restoration still restores reordered, replaced, missing and changed selections", () => {
+  const api = loadTestApi();
+  const a = { typename: "PathItem", name: "a" }, b = { typename: "PathItem", name: "b" };
+  const expected = [a, b];
+  for (const current of [[b, a], [{ ...a }, b], [a], [], null]) {
+    let selected = current;
+    const writes = [];
+    const document = {
+      activate() {},
+      get selection() { return selected; },
+      set selection(value) { writes.push(value); selected = value; }
+    };
+    api.restoreOriginalState(document, null, expected);
+    assert.equal(writes.length, 2, "changed identities must take the existing restore path");
+    assert.equal(writes[0], null);
+    assert.equal(selected, expected);
+  }
+});
+
+test("selection restoration clears a genuinely changed empty selection and distinguishes text ranges", () => {
+  const api = loadTestApi();
+  const originalRange = { typename: "TextRange", length: 3 };
+  for (const expected of [null, originalRange]) {
+    let selected = { typename: "TextRange", length: 3 }, writes = 0;
+    const document = {
+      activate() {},
+      get selection() { return selected; },
+      set selection(value) { writes++; selected = value; }
+    };
+    api.restoreOriginalState(document, null, expected);
+    assert.equal(selected, expected);
+    assert.equal(writes, expected ? 2 : 1);
+  }
 });
 
 test("all temporary documents close unsaved and original document state is restored in finally", () => {

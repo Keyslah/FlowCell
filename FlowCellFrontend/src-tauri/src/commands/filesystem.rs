@@ -1,6 +1,10 @@
 use crate::*;
 use std::io::Read;
 
+#[cfg(windows)]
+#[path = "recycle.rs"]
+mod native_recycle;
+
 pub(crate) fn resolve_flowcell_local_root() -> Result<PathBuf, String> {
     if let Some(resource) = installed_resource_root() {
         let local = env::var_os("APPDATA")
@@ -464,46 +468,10 @@ pub(crate) fn wait_for_child_output_with_timeout(
 }
 
 pub(crate) fn recycle_file_paths(paths: &[PathBuf]) -> Result<(), String> {
-    if paths.is_empty() {
-        return Ok(());
-    }
-
-    let encoded_paths = paths
-        .iter()
-        .map(|path| {
-            format!(
-                "'{}'",
-                escape_powershell_single_quoted(&path.to_string_lossy())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let command = format!(
-        concat!(
-            "Add-Type -AssemblyName Microsoft.VisualBasic; ",
-            "$paths = @({encoded_paths}); ",
-            "foreach ($path in $paths) {{ ",
-            "if (Test-Path -LiteralPath $path -PathType Leaf) {{ ",
-            "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(",
-            "$path, ",
-            "[Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, ",
-            "[Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin",
-            ") ",
-            "}} ",
-            "}}"
-        ),
-        encoded_paths = encoded_paths
-    );
-    let arguments = vec!["-Command".to_string(), command];
-    let output = spawn_powershell_output(&arguments)?;
-    if !output.status.success() {
-        return Err(format_process_failure(
-            &output,
-            "Failed to move one or more files to the Recycle Bin.",
-        ));
-    }
-
-    Ok(())
+    #[cfg(windows)]
+    { native_recycle::recycle_paths(paths, false) }
+    #[cfg(not(windows))]
+    { if paths.is_empty() { Ok(()) } else { Err("Recycle Bin is only supported on Windows.".into()) } }
 }
 
 pub(crate) fn recycle_file_path(path: &Path) -> Result<(), String> {
@@ -511,46 +479,10 @@ pub(crate) fn recycle_file_path(path: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn recycle_directory_paths(paths: &[PathBuf]) -> Result<(), String> {
-    if paths.is_empty() {
-        return Ok(());
-    }
-
-    let encoded_paths = paths
-        .iter()
-        .map(|path| {
-            format!(
-                "'{}'",
-                escape_powershell_single_quoted(&path.to_string_lossy())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let command = format!(
-        concat!(
-            "Add-Type -AssemblyName Microsoft.VisualBasic; ",
-            "$paths = @({encoded_paths}); ",
-            "foreach ($path in $paths) {{ ",
-            "if (Test-Path -LiteralPath $path -PathType Container) {{ ",
-            "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(",
-            "$path, ",
-            "[Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, ",
-            "[Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin",
-            ") ",
-            "}} ",
-            "}}"
-        ),
-        encoded_paths = encoded_paths
-    );
-    let arguments = vec!["-Command".to_string(), command];
-    let output = spawn_powershell_output(&arguments)?;
-    if !output.status.success() {
-        return Err(format_process_failure(
-            &output,
-            "Failed to move one or more folders to the Recycle Bin.",
-        ));
-    }
-
-    Ok(())
+    #[cfg(windows)]
+    { native_recycle::recycle_paths(paths, true) }
+    #[cfg(not(windows))]
+    { if paths.is_empty() { Ok(()) } else { Err("Recycle Bin is only supported on Windows.".into()) } }
 }
 
 pub(crate) fn recycle_directory_path(path: &Path) -> Result<(), String> {

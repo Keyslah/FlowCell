@@ -21,7 +21,9 @@ function loadHelpers() {
         "isClosedCutter: isClosedCutter, " +
         "beginTemporaryCutterFill: beginTemporaryCutterFill, " +
         "restoreTemporaryCutterFill: restoreTemporaryCutterFill, " +
-        "createPathFromCubics: createPathFromCubics " +
+        "createPathFromCubics: createPathFromCubics, " +
+        "findCubicBoundaryIntersections: findCubicBoundaryIntersections, " +
+        "cubicPoint: cubicPoint, pointInsideBoundary: pointInsideBoundary " +
         "}; return;"
     );
   const context = {
@@ -45,6 +47,44 @@ test("clip package keeps its requested identity and concise cutter instructions"
   assert.doesNotMatch(source, /does not have to be a circle/i);
   assert.doesNotMatch(source, /cutter must have a fill/i);
   assert.match(source, /finally\s*\{\s*cutterFillRestored\s*=\s*restoreTemporaryCutterFill/s);
+});
+
+test("straight strokes with collapsed handles intersect the cutter at the correct positions", () => {
+  const helpers = loadHelpers();
+  const cubic = { p0: [50, 350], p1: [50, 350], p2: [250, 350], p3: [250, 350] };
+  const boundary = [[[100, 400], [200, 400], [200, 300], [100, 300], [100, 400]]];
+  const cuts = helpers.findCubicBoundaryIntersections(cubic, boundary, 0.25, 12);
+  assert.equal(cuts.length, 2);
+  for (const [index, expected] of [100, 200].entries()) {
+    const point = helpers.cubicPoint(cubic, cuts[index]);
+    assert.ok(Math.abs(point[0] - expected) <= 0.25,
+      `intersection ${point[0]} must be within 0.25 pt of ${expected}`);
+    assert.equal(point[1], 350);
+  }
+});
+
+test("a compound cutter hole leaves both straight-stroke runs instead of dropping them", () => {
+  const helpers = loadHelpers();
+  const cubic = { p0: [50, 400], p1: [50, 400], p2: [350, 400], p3: [350, 400] };
+  const boundary = [
+    [[100, 500], [300, 500], [300, 300], [100, 300], [100, 500]],
+    [[150, 450], [150, 350], [250, 350], [250, 450], [150, 450]]
+  ];
+  const hits = helpers.findCubicBoundaryIntersections(cubic, boundary, 0.25, 12);
+  assert.equal(hits.length, 4);
+  const cuts = [0, ...hits, 1];
+  const retained = [];
+  for (let index = 0; index < cuts.length - 1; index += 1) {
+    const start = cuts[index], end = cuts[index + 1];
+    if (helpers.pointInsideBoundary(helpers.cubicPoint(cubic, (start + end) / 2), boundary)) {
+      retained.push([helpers.cubicPoint(cubic, start)[0], helpers.cubicPoint(cubic, end)[0]]);
+    }
+  }
+  assert.equal(retained.length, 2);
+  for (const [index, expected] of [[100, 150], [250, 300]].entries()) {
+    assert.ok(Math.abs(retained[index][0] - expected[0]) <= 0.25);
+    assert.ok(Math.abs(retained[index][1] - expected[1]) <= 0.25);
+  }
 });
 
 test("an unfilled closed path receives a temporary default fill and restores NoColor", () => {

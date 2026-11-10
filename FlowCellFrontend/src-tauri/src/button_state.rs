@@ -1722,8 +1722,23 @@ where
     }
 }
 
+async fn run_button_state_blocking<T: Send + 'static>(
+    action: &'static str,
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    // Add Program holds the source lock while its adapters run. State readers
+    // and writers must wait outside the WebView event thread.
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("Button state {action} worker failed: {error}"))?
+}
+
 #[tauri::command]
-pub(crate) fn load_button_state() -> Result<Option<Value>, String> {
+pub(crate) async fn load_button_state() -> Result<Option<Value>, String> {
+    run_button_state_blocking("load", load_button_state_sync).await
+}
+
+pub(crate) fn load_button_state_sync() -> Result<Option<Value>, String> {
     let lock = BUTTON_STATE_COMMIT_LOCK.get_or_init(|| Mutex::new(()));
     let guard = lock
         .lock()
@@ -1790,7 +1805,14 @@ pub(crate) fn canonical_state_references_source_owner_while_source_locked(
 }
 
 #[tauri::command]
-pub(crate) fn commit_button_state(
+pub(crate) async fn commit_button_state(
+    app: tauri::AppHandle,
+    request: CommitButtonStateRequest,
+) -> Result<(), String> {
+    run_button_state_blocking("commit", move || commit_button_state_sync(app, request)).await
+}
+
+fn commit_button_state_sync(
     app: tauri::AppHandle,
     request: CommitButtonStateRequest,
 ) -> Result<(), String> {
@@ -2092,6 +2114,43 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn button_state_worker_yields_while_source_quarantine_is_locked() {
+        use std::future::Future;
+        use std::sync::mpsc;
+        use std::task::{Context, Waker};
+        use std::time::Duration;
+
+        fn assert_async_load<F: Future<Output = Result<Option<Value>, String>> + Send>(_: F) {}
+        fn assert_async_commit<F, R>(_: F)
+        where
+            F: Fn(tauri::AppHandle, super::CommitButtonStateRequest) -> R,
+            R: Future<Output = Result<(), String>> + Send,
+        {}
+        assert_async_load(super::load_button_state());
+        assert_async_commit(super::commit_button_state);
+
+        let source_guard = crate::program_sources::source_quarantine_guard().unwrap();
+        let caller = std::thread::current().id();
+        let (started_tx, started_rx) = mpsc::channel();
+        let mut operation = std::pin::pin!(super::run_button_state_blocking("test", move || {
+            started_tx.send(std::thread::current().id()).unwrap();
+            let _guard = crate::program_sources::source_quarantine_guard()?;
+            Ok(42)
+        }));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(operation.as_mut().poll(&mut context).is_pending(),
+            "waiting for the source lock must yield to the caller");
+        assert_ne!(started_rx.recv_timeout(Duration::from_secs(5)).unwrap(), caller);
+        drop(source_guard);
+        assert_eq!(tauri::async_runtime::block_on(operation), Ok(42));
+
+        let failure = tauri::async_runtime::block_on(super::run_button_state_blocking(
+            "test", || Err::<(), _>("state revision changed".to_string()),
+        ));
+        assert_eq!(failure, Err("state revision changed".to_string()));
+    }
 
     fn button_placement_test_root(label: &str) -> PathBuf {
         let token = SystemTime::now()

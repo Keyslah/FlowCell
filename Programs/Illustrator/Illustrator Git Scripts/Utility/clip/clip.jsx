@@ -1068,7 +1068,7 @@ Smaller values increase precision but require more processing.
 
         if (
             depth >= maxDepth ||
-            cubicFlatEnough(
+            cubicParameterFlatEnough(
                 p0,
                 p1,
                 p2,
@@ -1374,6 +1374,18 @@ Smaller values increase precision but require more processing.
     // =========================================================================
     // FLATNESS TEST
     // =========================================================================
+
+    // Intersection fractions are interpolated in t, not arc length. Even a
+    // perfectly straight cubic can have nonuniform speed (Illustrator's normal
+    // straight paths have handles collapsed onto the anchors). Compare its
+    // controls with a linearly parameterized chord before interpolating t.
+    function cubicParameterFlatEnough(p0, p1, p2, p3, tolerance) {
+        return (
+            distanceBetween(p1, lerpPoint(p0, p3, 1 / 3)) <= tolerance &&
+            distanceBetween(p2, lerpPoint(p0, p3, 2 / 3)) <= tolerance
+        );
+    }
+
 
     function cubicFlatEnough(
         p0,

@@ -1061,7 +1061,14 @@ pub(crate) fn rollback_quarantined_transaction(
 }
 
 #[tauri::command]
-pub(crate) fn uninstall_button_source(
+pub(crate) async fn uninstall_button_source(
+    app: tauri::AppHandle,
+    request: UninstallButtonSourceRequest,
+) -> Result<UninstallButtonSourceResponse, String> {
+    super::run_source_blocking("uninstall", move || uninstall_button_source_sync(app, request)).await
+}
+
+pub(crate) fn uninstall_button_source_sync(
     app: tauri::AppHandle,
     request: UninstallButtonSourceRequest,
 ) -> Result<UninstallButtonSourceResponse, String> {

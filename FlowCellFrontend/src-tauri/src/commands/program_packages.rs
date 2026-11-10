@@ -33,14 +33,56 @@ struct ExtractedPackage {
     program_name: String,
 }
 
-fn plain_path(path: &Path) -> Result<(), String> {
+#[cfg(any(windows, test))]
+fn is_cloud_directory_tag(attributes: u32, tag: u32) -> bool {
+    attributes & 0x410 == 0x410 && tag & 0xffff0fff == 0x9000001a
+}
+
+#[cfg(windows)]
+fn cloud_directory(path: &Path) -> Result<bool, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::{
+        Foundation::INVALID_HANDLE_VALUE,
+        Storage::FileSystem::{FindClose, FindFirstFileW, WIN32_FIND_DATAW},
+    };
+    let absolute = std::path::absolute(path).map_err(|e| e.to_string())?;
+    let wide = absolute.as_os_str().encode_wide().collect::<Vec<_>>();
+    let extended = "\\\\?\\".encode_utf16().collect::<Vec<_>>();
+    let mut name = if wide.starts_with(&extended) {
+        wide
+    } else if wide.starts_with(&[92, 92]) {
+        "\\\\?\\UNC\\"
+            .encode_utf16()
+            .chain(wide.into_iter().skip(2))
+            .collect()
+    } else {
+        extended.into_iter().chain(wide).collect()
+    };
+    name.push(0);
+    let mut data = std::mem::MaybeUninit::<WIN32_FIND_DATAW>::zeroed();
+    let handle = unsafe { FindFirstFileW(name.as_ptr(), data.as_mut_ptr()) };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    let data = unsafe {
+        let result = data.assume_init();
+        FindClose(handle);
+        result
+    };
+    Ok(is_cloud_directory_tag(
+        data.dwFileAttributes,
+        data.dwReserved0,
+    ))
+}
+
+pub(super) fn plain_path(path: &Path) -> Result<(), String> {
     for ancestor in path.ancestors() {
         match fs::symlink_metadata(ancestor) {
             Ok(metadata) => {
                 #[cfg(windows)]
                 let reparse = {
                     use std::os::windows::fs::MetadataExt;
-                    metadata.file_attributes() & 0x400 != 0
+                    metadata.file_attributes() & 0x400 != 0 && !cloud_directory(ancestor)?
                 };
                 #[cfg(not(windows))]
                 let reparse = false;
@@ -291,6 +333,16 @@ fn commit_package_with(
     name: &str,
     recycle: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Result<ImportedProgramPackage, String> {
+    commit_package_with_options(staged, programs, name, true, recycle)
+}
+
+fn commit_package_with_options(
+    staged: &Path,
+    programs: &Path,
+    name: &str,
+    preserve_placeholder: bool,
+    recycle: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<ImportedProgramPackage, String> {
     let _source_guard = crate::program_sources::source_quarantine_guard()?;
     plain_path(programs)?;
     let target = programs.join(name);
@@ -310,7 +362,7 @@ fn commit_package_with(
             if before != after {
                 return Err("Program placeholder changed during ZIP import; try again.".into());
             }
-            for relative in after_move {
+            for relative in after_move.into_iter().filter(|_| preserve_placeholder) {
                 let directory = staged.join(relative);
                 plain_path(&directory)?;
                 fs::create_dir_all(directory).map_err(|e| e.to_string())?;
@@ -351,6 +403,64 @@ fn commit_package_with(
         package_path: target.to_string_lossy().into(),
         cleanup_warning,
     })
+}
+
+/// Copy the immutable installer catalog through the same validated commit used by
+/// ZIP imports. This installs catalog data only; the selected panels and Buttons
+/// are created by the normal Add Program transaction after the user chooses them.
+pub(super) fn seed_installed_windows_catalog(
+    resource: &Path,
+    programs: &Path,
+) -> Result<(), String> {
+    let _guard = IMPORT_LOCK.lock().map_err(|_| "Program import lock is unavailable.")?;
+    let target = programs.join("Windows");
+    plain_path(&target)?;
+    if target.join("flowcell.program.json").is_file() {
+        return Ok(()); // Never overwrite an existing catalog or user changes.
+    }
+    let preserve_placeholder = if target.exists() {
+        let directories = placeholder_directories(&target)?;
+        // Older Core installers created this exact empty tree for the background
+        // service. It must not force Startup into an unchecked installation plan.
+        !directories.iter().all(|path| path == Path::new("Panels")
+            || path == Path::new("Panels").join("Startup").as_path())
+    } else { false };
+    let bundled = resource.join("bundled-programs").join("Windows");
+    validate_staged_package(&bundled, "Windows")
+        .map_err(|error| format!("The installed Windows tools package is incomplete: {error}"))?;
+    plain_path(programs)?;
+    fs::create_dir_all(programs).map_err(|e| e.to_string())?;
+    let stage = programs.join(unique_name("flowcell-windows-default"));
+    fs::create_dir(&stage).map_err(|e| e.to_string())?;
+    let result = (|| {
+        for source in tree_paths(&bundled)? {
+            let relative = source.strip_prefix(&bundled).map_err(|e| e.to_string())?;
+            let destination = stage.join(relative);
+            if source.is_dir() {
+                fs::create_dir_all(&destination).map_err(|e| e.to_string())?;
+            } else {
+                if let Some(parent) = destination.parent() {
+                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                fs::copy(&source, &destination).map_err(|e| e.to_string())?;
+            }
+        }
+        validate_staged_package(&stage, "Windows")?;
+        let imported = commit_package_with_options(&stage, programs, "Windows",
+            preserve_placeholder, super::filesystem::recycle_directory_path)?;
+        if let Some(warning) = imported.cleanup_warning {
+            crate::append_flowcell_local_log("windows-setup.log", &warning);
+        }
+        Ok(())
+    })();
+    if stage.exists() {
+        // This is only the uncommitted temporary copy created above.
+        let cleanup = tree_paths(&stage).and_then(|_| fs::remove_dir_all(&stage).map_err(|e| e.to_string()));
+        if let Err(error) = cleanup {
+            return Err(format!("Windows catalog setup: {result:?}. Temporary cleanup failed: {error}"));
+        }
+    }
+    result
 }
 
 fn import_from_zip(zip_path: &Path, programs: &Path) -> Result<ImportedProgramPackage, String> {
@@ -445,6 +555,84 @@ pub(crate) async fn import_program_package(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn windows_bundle(resource: &Path) -> PathBuf {
+        let bundle = resource.join("bundled-programs/Windows");
+        fs::create_dir_all(bundle.join("Catalog")).unwrap();
+        fs::create_dir_all(bundle.join("Support")).unwrap();
+        let manifest = serde_json::json!({"schemaVersion":1,"programId":"windows","label":"Windows","programType":"local-script",
+            "processNames":["explorer"],"gitScriptsFolder":"Catalog","panelsFolder":"Panels","localScriptsFolder":"Owned",
+            "supportScriptsFolder":"Support","allowedScriptExtensions":["ps1"],"runner":{"kind":"windows-script"}});
+        fs::write(bundle.join("flowcell.program.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        fs::write(bundle.join("Catalog/action.ps1"), "throw 'catalog scripts must not execute at startup'").unwrap();
+        bundle
+    }
+
+    #[test]
+    fn bundled_windows_catalog_is_seeded_as_inert_data_and_existing_edits_survive() {
+        let root = temporary();
+        let bundle = windows_bundle(&root);
+        let programs = root.join("user/Programs");
+        seed_installed_windows_catalog(&root, &programs).unwrap();
+        let target = programs.join("Windows");
+        assert_eq!(fs::read(bundle.join("flowcell.program.json")).unwrap(), fs::read(target.join("flowcell.program.json")).unwrap());
+        assert!(!target.join("Panels").exists());
+        assert!(!target.join("Owned").exists());
+        fs::write(target.join("Catalog/action.ps1"), "user change").unwrap();
+        seed_installed_windows_catalog(&root, &programs).unwrap();
+        assert_eq!(fs::read_to_string(target.join("Catalog/action.ps1")).unwrap(), "user change");
+        assert!(fs::read_to_string(bundle.join("Catalog/action.ps1")).unwrap().starts_with("throw"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bundled_windows_rejects_incomplete_payload_and_preserves_unrecognized_user_files() {
+        let root = temporary();
+        let programs = root.join("user/Programs");
+        assert!(seed_installed_windows_catalog(&root, &programs).is_err());
+        assert!(!programs.exists());
+        windows_bundle(&root);
+        fs::create_dir_all(programs.join("Windows/Panels/Startup")).unwrap();
+        fs::write(programs.join("Windows/Panels/Startup/personal.txt"), "keep").unwrap();
+        assert!(seed_installed_windows_catalog(&root, &programs).is_err());
+        assert_eq!(fs::read_to_string(programs.join("Windows/Panels/Startup/personal.txt")).unwrap(), "keep");
+        assert!(!programs.join("Windows/flowcell.program.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn windows_default_commit_does_not_install_an_unselected_legacy_startup_panel() {
+        let root = temporary();
+        let programs = root.join("Programs");
+        fs::create_dir_all(programs.join("Windows/Panels/Startup")).unwrap();
+        let staged = windows_bundle(&root);
+        let mut recycled_placeholder = false;
+        commit_package_with_options(&staged, &programs, "Windows", false, |backup| {
+            assert!(backup.join("Panels/Startup").is_dir());
+            recycled_placeholder = true;
+            fs::remove_dir_all(backup).map_err(|e| e.to_string())
+        }).unwrap();
+        assert!(recycled_placeholder);
+        assert!(!programs.join("Windows/Panels").exists());
+        assert!(programs.join("Windows/flowcell.program.json").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn cloud_directory_tags_allow_placeholders_but_not_links_or_files() {
+        for variant in 0..16 {
+            let tag = 0x9000001a | (variant << 12);
+            assert!(is_cloud_directory_tag(0x410, tag));
+            assert!(
+                !is_cloud_directory_tag(0x400, tag),
+                "cloud files remain rejected"
+            );
+            assert!(!is_cloud_directory_tag(0x10, tag));
+        }
+        for tag in [0xa0000003, 0xa000000c, 0x8000001b, 0, 0x9001001a] {
+            assert!(!is_cloud_directory_tag(0x410, tag));
+        }
+    }
+
     fn temporary() -> PathBuf {
         let root = std::env::temp_dir().join(unique_name("flowcell-package-test"));
         fs::create_dir(&root).unwrap();

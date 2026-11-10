@@ -64,6 +64,7 @@ class XyzDimensionsTests(unittest.TestCase):
                 self.assertAlmostEqual(result["dimensionInches"], expected_value)
                 self.assertEqual(set(result["dimensionsInches"]), {axis_key})
                 self.assertEqual(set(result["displayDimensions"]), {axis_key})
+                self.assertEqual(result["fieldPatch"], {f"dimension_{axis_key}_display": result["display"]})
                 self.assertEqual(result["data"]["label"], axis_label)
                 self.assertEqual(result["message"], f"Cube: {result['display']}")
 
@@ -95,6 +96,23 @@ class XyzDimensionsTests(unittest.TestCase):
         self.assertEqual(result["axis"], "Z")
         self.assertEqual(result["display"], "Z -- in")
         self.assertEqual(result["dimensionsInches"], {"z": None})
+        self.assertEqual(result["fieldPatch"], {"dimension_z_display": "Z -- in"})
+
+    def test_physical_twenty_millimeters_updates_readout_without_mutation(self):
+        for scale, size in ((1.0, 0.02), (0.001, 20.0)):
+            with self.subTest(scale=scale):
+                context = fake_context()
+                context.scene.unit_settings.scale_length = scale
+                context.active_object.dimensions.x = size
+                before = vars(context.active_object.dimensions).copy()
+                module = load_module(context)
+
+                result = module.run_flowcell_action(data={"command": "dimension_x"})
+
+                self.assertEqual(result["fieldPatch"], {"dimension_x_display": "X 0.787 in"})
+                self.assertEqual(result["changed"], 0)
+                self.assertEqual(vars(context.active_object.dimensions), before)
+                self.assertEqual(context.scene.unit_settings.scale_length, scale)
 
 
 if __name__ == "__main__":

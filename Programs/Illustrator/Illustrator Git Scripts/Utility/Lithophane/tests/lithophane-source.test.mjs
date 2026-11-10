@@ -16,8 +16,9 @@ const powershellSource = fs.readFileSync(powershellPath, "utf8");
 const vbsSource = fs.readFileSync(vbsPath, "utf8");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
-function loadApi() {
+function loadApi(host = {}) {
   const context = {
+    ...host,
     __FLOWCELL_ILLUSTRATOR_LITHOPHANE_TEST__: true,
   };
   context.$ = {
@@ -28,6 +29,91 @@ function loadApi() {
   vm.runInContext(executable, context, { filename: jsxPath });
   return context.__FLOWCELL_ILLUSTRATOR_LITHOPHANE_TEST_API__;
 }
+
+function captureHarness({ extension = "raw", failCapture = false, failRename = false, userDataPath = "C:/Users/QA/AppData/Roaming" } = {}) {
+  const files = new Set();
+  const calls = { captured: [], closed: 0, activated: 0 };
+  function File(filePath) {
+    this.fsName = filePath;
+    this.name = filePath.split("/").at(-1);
+    Object.defineProperty(this, "exists", { get: () => files.has(this.fsName) });
+    this.rename = (name) => {
+      if (failRename) return false;
+      files.delete(this.fsName);
+      this.fsName = this.fsName.slice(0, this.fsName.lastIndexOf("/") + 1) + name;
+      this.name = name;
+      files.add(this.fsName);
+      return true;
+    };
+  }
+  function Folder(folderPath) { this.fsName = folderPath; this.exists = true; }
+  Folder.userData = { fsName: userDataPath };
+  const original = { documentColorSpace: "RGB", activate() { calls.activated += 1; } };
+  const temporary = {
+    layers: [{}],
+    imageCapture(file) {
+      calls.captured.push(file.fsName);
+      // Matches Illustrator's observed silent MAX_PATH failure.
+      if (!failCapture && file.fsName.length < 260) files.add(file.fsName + (extension === "png" ? ".png" : ""));
+    },
+    close() { calls.closed += 1; },
+  };
+  const selected = {
+    source: { fileName: "a-very-long-original-white-image-file-name-for-a-physical-lithophane.png" },
+    item: { duplicate() { return { geometricBounds: [0, 72, 144, 0] }; } },
+    itemBounds: [0, 72, 144, 0], bounds: [0, 72, 144, 0],
+  };
+  const api = loadApi({ File, Folder, app: { documents: { add() { return temporary; } } },
+    ImageCaptureOptions: function () {}, ElementPlacement: { PLACEATEND: 1 }, SaveOptions: { DONOTSAVECHANGES: 0 } });
+  return { api, original, selected, calls, files };
+}
+
+test("native capture keeps a long owned runtime path usable despite the original PNG name", () => {
+  for (const extension of ["raw", "png"]) {
+    const h = captureHarness({ extension });
+    const folder = { fsName: "C:/" + "a".repeat(222) };
+    const first = h.api.exportSelectedPng(h.original, h.selected, folder, "illustrator-lithophane-1794284061153-123456");
+    const second = h.api.exportSelectedPng(h.original, h.selected, folder, "illustrator-lithophane-1794284061153-123457");
+    assert.notEqual(first, second);
+    assert.ok(first.length < 260);
+    assert.equal(h.files.has(first), true);
+    assert.equal(h.files.has(second), true);
+    assert.deepEqual([h.calls.closed, h.calls.activated], [2, 2]);
+  }
+});
+
+test("a deeper owner path uses persistent application PNG cache without losing request uniqueness", () => {
+  const h = captureHarness();
+  const result = h.api.exportSelectedPng(h.original, h.selected, { fsName: "C:/" + "a".repeat(280) }, "illustrator-lithophane-1794284061153-123456");
+  assert.equal(result, "C:/Users/QA/AppData/Roaming/FlowCell/lithophane-exports/1794284061153-123456.png");
+  assert.equal(h.files.has(result), true);
+  assert.deepEqual([h.calls.closed, h.calls.activated], [1, 1]);
+});
+
+test("an unusably deep fallback fails clearly before opening a temporary document", () => {
+  const h = captureHarness({ userDataPath: "C:/" + "u".repeat(280) });
+  assert.throws(() => h.api.exportSelectedPng(h.original, h.selected, { fsName: "C:/" + "a".repeat(280) }, "illustrator-lithophane-1794284061153-123456"), /PNG cache path is too long/);
+  assert.equal(h.calls.captured.length, 0);
+  assert.equal(h.calls.closed, 0);
+});
+
+test("capture collisions preserve prior PNG files without opening a temporary document", () => {
+  const h = captureHarness();
+  const folder = { fsName: "C:/runtime/png-exports" };
+  const id = "illustrator-lithophane-1794284061153-123456";
+  const existing = h.api.exportSelectedPng(h.original, h.selected, folder, id);
+  assert.throws(() => h.api.exportSelectedPng(h.original, h.selected, folder, id), /already exists/);
+  assert.equal(h.files.has(existing), true);
+  assert.equal(h.calls.captured.length, 1);
+});
+
+test("capture and rename failures still close only the temporary document and reactivate the original", () => {
+  for (const options of [{ failCapture: true }, { failRename: true }]) {
+    const h = captureHarness(options);
+    assert.throws(() => h.api.exportSelectedPng(h.original, h.selected, { fsName: "C:/runtime/png-exports" }, "illustrator-lithophane-1794284061153-123456"), /did not create|could not rename/);
+    assert.deepEqual([h.calls.closed, h.calls.activated], [1, 1]);
+  }
+});
 
 function layer(name = "Owning Sublayer") {
   return { typename: "Layer", name, parent: null };

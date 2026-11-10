@@ -50,9 +50,13 @@ function Assert-NoReparsePathComponents(
   [string]$Candidate,
   [string]$Description
 ) {
-  $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+  $rootFull = [System.IO.Path]::GetFullPath($Root)
+  $volumeRoot = [System.IO.Path]::GetPathRoot($rootFull)
+  $rootFull = $rootFull.TrimEnd('\', '/')
+  # Keep volume roots absolute: C: resolves against that drive's current folder.
+  if ($rootFull.Length -lt $volumeRoot.Length) { $rootFull = $volumeRoot }
   $candidateFull = [System.IO.Path]::GetFullPath($Candidate)
-  $rootPrefix = "$rootFull$([System.IO.Path]::DirectorySeparatorChar)"
+  $rootPrefix = $rootFull.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
   if (
     -not $candidateFull.Equals($rootFull, [System.StringComparison]::OrdinalIgnoreCase) -and
     -not $candidateFull.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)

@@ -18,3 +18,14 @@ pub(crate) use delete::{
 };
 pub(crate) use migrate::finalize_migration_token_locked;
 pub(crate) use records::validate_owner_button_id;
+
+pub(crate) async fn run_source_blocking<T: Send + 'static>(
+    action: &'static str,
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    // Installing a Program owns the source lock across host-adapter calls.
+    // IPC callers must wait for that lane outside the WebView event thread.
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("Program source {action} worker failed: {error}"))?
+}

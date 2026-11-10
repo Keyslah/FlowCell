@@ -22,6 +22,7 @@ import { RailSurface } from "../../components/RailSurface";
 import {
   beginProgramUnregistration,
   connectRunningLayoutPrograms,
+  emitProgramSetupCommitted,
   finalizePanelDeletion,
   finalizeProgramUnregistration,
   finalizeProgramRename,
@@ -161,6 +162,7 @@ import {
   type ButtonRecord
 } from "./mainLayout";
 import { MainButtonHost, MainControlHost } from "./MainButtonHost";
+import WindowsSetup from "../program-setup/WindowsSetup";
 import {
   resolveFlowCellMainPageButtonLayout,
   resolveFlowCellMainPagePresentation,
@@ -787,6 +789,8 @@ export default function MainPage() {
   const [hoveredRailId, setHoveredRailId] = useState<string | null>(null);
   const [buttonDocument, setButtonDocument] = useState<ButtonStateDocument | null>(null);
   const [buttonBootstrapError, setButtonBootstrapError] = useState<string | null>(null);
+  const [buttonBootstrapReady, setButtonBootstrapReady] = useState(false);
+  const [windowsSetupComplete, setWindowsSetupComplete] = useState(false);
   const buttonDocumentRef = useRef<ButtonStateDocument | null>(null);
   const previousButtonDocumentRef = useRef<ButtonStateDocument | null>(null);
   const mainPopDraftSessionsRef = useRef<Map<string, MainPopDraftSession>>(new Map());
@@ -960,6 +964,7 @@ export default function MainPage() {
           ? `FlowCell loaded the canonical Button document, but live Button updates are unavailable.\n\n${formatErrorMessage(commitSubscriptionError)}`
           : null
         );
+        setButtonBootstrapReady(true);
       } catch (error) {
         if (!disposed) {
           if (retainedCanonicalDocument || buttonDocumentRef.current) {
@@ -968,6 +973,9 @@ export default function MainPage() {
               `FlowCell kept the last valid canonical Button document and its skins. ` +
               `Automatic Button source synchronization failed.\n\n${formatErrorMessage(error)}`
             );
+            // Recovery already supplied a usable document. Optional source sync
+            // must not block Windows setup or the program navigation behind it.
+            setButtonBootstrapReady(true);
           } else {
             console.error("Failed to load canonical Button state.", error);
             setButtonBootstrapError(
@@ -1993,7 +2001,7 @@ export default function MainPage() {
 
   useEffect(() => {
     const currentWindow = getCurrentWindow();
-    if (currentWindow.label !== "main") {
+    if (currentWindow.label !== "main" || !windowsSetupComplete) {
       return;
     }
 
@@ -2049,7 +2057,7 @@ export default function MainPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [windowsSetupComplete]);
 
   const activateToolSetOwner = useCallback(async (
     ownerButtonId: string,
@@ -2657,6 +2665,14 @@ export default function MainPage() {
         throw canonicalError;
       }
       await finalizePanelDeletion(transactionToken);
+      // Notify only after native deletion succeeds. Omit the deleted panel as a
+      // navigation target so Main retains its current valid panel selection.
+      await emitProgramSetupCommitted({
+        kind: "panel",
+        programName: selectedProgramName
+      }).catch((error) => {
+        console.error("Panel was deleted, but its cross-window refresh event failed.", error);
+      });
       await closeRemovedButtonWindows(currentDocument, savedDocument);
       const nextPanelNames = await listPanelFolders(selectedProgramName);
       const selectedPanelWasDeleted = areFolderNamesEqual(selectedPanelName, currentName);
@@ -3605,7 +3621,7 @@ export default function MainPage() {
   };
 
   return (
-    <main
+    <><main
       className={[
         "main-page",
         spaceDragActive ? "main-page--space-drag" : "",
@@ -3930,5 +3946,9 @@ export default function MainPage() {
         </div>
       </ExactPageFrame>
     </main>
+    {buttonBootstrapReady && !windowsSetupComplete ? (
+      <WindowsSetup onComplete={() => setWindowsSetupComplete(true)} />
+    ) : null}
+    </>
   );
 }

@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
     "id":  "blender.xyz-dimensions",
-    "version":  "1.0.2",
+    "version":  "1.0.3",
     "label":  "xyz",
     "tooltip":  "Show live X, Y, and Z dimensions for the active selected object in inches.",
     "kind":  "toolset",
@@ -46,6 +46,52 @@
         "padding": 8,
         "width": 464,
         "height": 120,
+        "fields": [
+            {
+                "id": "dimension_x_display",
+                "kind": "display",
+                "label": "X dimension",
+                "payloadKey": "dimensionReadouts.x",
+                "defaultValue": "X -- in",
+                "x": 8,
+                "y": 8,
+                "width": 144,
+                "height": 42,
+                "zIndex": 1,
+                "hidden": true
+            },
+            {
+                "id": "dimension_y_display",
+                "kind": "display",
+                "label": "Y dimension",
+                "payloadKey": "dimensionReadouts.y",
+                "defaultValue": "Y -- in",
+                "x": 160,
+                "y": 8,
+                "width": 144,
+                "height": 42,
+                "zIndex": 1,
+                "hidden": true
+            },
+            {
+                "id": "dimension_z_display",
+                "kind": "display",
+                "label": "Z dimension",
+                "payloadKey": "dimensionReadouts.z",
+                "defaultValue": "Z -- in",
+                "x": 312,
+                "y": 8,
+                "width": 144,
+                "height": 42,
+                "zIndex": 1,
+                "hidden": true
+            }
+        ],
+        "childBehaviors": {
+            "dimension_x": { "labelField": "dimension_x_display" },
+            "dimension_y": { "labelField": "dimension_y_display" },
+            "dimension_z": { "labelField": "dimension_z_display" }
+        },
         "placements": {
             "dimension_x": {
                 "x": 8,
