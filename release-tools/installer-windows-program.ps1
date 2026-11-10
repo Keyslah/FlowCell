@@ -35,7 +35,14 @@ function Copy-InstallerWindowsProgram {
     foreach ($path in $tracked) {
         if ($path.StartsWith($prefix, [StringComparison]::Ordinal)) {
             $relative = $path.Substring($prefix.Length)
-            $hashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $destination "$catalog/$relative") -Algorithm SHA256).Hash.ToLowerInvariant()
+            $stream = [IO.File]::OpenRead((Join-Path $destination "$catalog/$relative"))
+            $hasher = [Security.Cryptography.SHA256]::Create()
+            try {
+                $hashes[$relative] = ([BitConverter]::ToString($hasher.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+            } finally {
+                $stream.Dispose()
+                $hasher.Dispose()
+            }
         }
     }
     if ($hashes.Count -eq 0) { Stop-Package 'Windows catalog is empty.' }

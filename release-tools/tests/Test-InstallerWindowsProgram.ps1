@@ -24,7 +24,13 @@ function Expect-Rejection([scriptblock]$Action, [string]$Pattern) {
     Assert ($message -like $Pattern) "Expected '$Pattern'; received '$message'."
 }
 try {
-    $actual = Copy-InstallerWindowsProgram -RepositoryRoot $sourceRoot -DestinationRoot (Join-Path $fixtureRoot 'actual')
+    $actual = & {
+        # Installer preparation must work even when Get-FileHash is unavailable
+        # in its Windows PowerShell host. Keep the independent hash check below.
+        function Get-FileHash { throw 'Get-FileHash is deliberately unavailable in this staging test.' }
+        Copy-InstallerWindowsProgram -RepositoryRoot $sourceRoot -DestinationRoot (Join-Path $fixtureRoot 'actual')
+    }
+    Assert ($null -ne $actual) 'Real payload staging does not depend on Get-FileHash.'
     $manifest = Get-Content -LiteralPath (Join-Path $actual.Destination 'flowcell.program.json') -Raw | ConvertFrom-Json
     Assert ($manifest.programId -ceq 'windows') 'Real Windows manifest is present.'
     Assert (@($manifest.panels | Where-Object { $_.label -in @('Files','Utility','Startup') }).Count -eq 3) 'All three panel choices are bundled.'
