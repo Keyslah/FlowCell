@@ -1,5 +1,6 @@
 2026-11-10 GitHub sync and Main rail centering:
 - Main program and panel rails center the measured button core horizontally. When a label selects a different skin family member, the renderer centers it vertically on those rails and on both axes in other placements. This avoids adding a second horizontal offset for narrower keys. Rail regression tests cover the centering handoff and retained placement geometry.
+- The native Button bootstrap status command writes or recycles its diagnostic file on the existing blocking executor so the WebView event thread stays responsive during Windows Shell file operations.
 
 2026-11-09 New panels and programs center in their rail slot; Theme Editor Apply no longer bloats button-state.json:
 - Off-center cause: a new panel owner or program Button gets document.settings.defaultSkinId (the Chipped Concrete family default) and a rect as wide as its whole slot (131.57 px). ButtonHost swaps in the family member for the label, which is narrower, and Proportional fitting pinned it to the rect's top-left, so "Testing" on the Windows panel rail sat at the slot's left edge.

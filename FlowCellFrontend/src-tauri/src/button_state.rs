@@ -440,7 +440,11 @@ fn button_bootstrap_error_path() -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub(crate) fn set_button_bootstrap_failure(message: Option<String>) -> Result<(), String> {
+pub(crate) async fn set_button_bootstrap_failure(message: Option<String>) -> Result<(), String> {
+    run_button_state_blocking("bootstrap status", move || write_button_bootstrap_status(message)).await
+}
+
+fn write_button_bootstrap_status(message: Option<String>) -> Result<(), String> {
     let path = button_bootstrap_error_path()?;
     if let Some(message) = message
         .map(|value| value.trim().to_string())
