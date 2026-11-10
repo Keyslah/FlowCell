@@ -1967,7 +1967,7 @@ fn add_program_source_is_required(
     source.required
 }
 
-fn validate_available_program_package(
+pub(super) fn validate_available_program_package(
     program_name: &str,
 ) -> Result<AvailableProgramPackage, String> {
     let program_root = resolve_program_directory(program_name)?;
@@ -2115,6 +2115,13 @@ fn validate_available_program_package_at(
     })
 }
 
+fn is_core_program_placeholder(programs_root: &Path, folder_name: &str) -> bool {
+    // Core creates this directory tree before a Windows package is imported.
+    folder_name.eq_ignore_ascii_case("Windows")
+        && super::program_packages::placeholder_directories(&programs_root.join(folder_name))
+            .is_ok()
+}
+
 #[tauri::command]
 pub(crate) fn list_available_program_packages() -> Result<AvailableProgramPackagesResponse, String>
 {
@@ -2124,7 +2131,9 @@ pub(crate) fn list_available_program_packages() -> Result<AvailableProgramPackag
     let mut packages = Vec::new();
     let mut rejected_packages = Vec::new();
     for folder_name in available {
-        if find_registered_program(&bindings, &folder_name).is_some() {
+        if find_registered_program(&bindings, &folder_name).is_some()
+            || is_core_program_placeholder(&programs_root, &folder_name)
+        {
             continue;
         }
         match validate_available_program_package(&folder_name) {
@@ -2708,6 +2717,49 @@ fn serialize_bindings(document: &IniDocument) -> String {
     serialize_ini_document(document)
 }
 
+fn add_program_bindings_with_backend_defaults(document: &IniDocument) -> IniDocument {
+    let mut normalized = document.clone();
+    let meta = normalized.entry("Meta".to_string()).or_default();
+    // FlowCellBackend LoadFromDisk uses these exact defaults, and SaveToDisk
+    // materializes them when the backend restarts during setup or an upgrade.
+    meta.entry("Ids".to_string()).or_default();
+    meta.entry("NextId".to_string()).or_insert_with(|| "1".to_string());
+    normalized
+}
+
+fn add_program_bindings_match(current: &IniDocument, snapshot: &str) -> bool {
+    add_program_bindings_with_backend_defaults(current)
+        == add_program_bindings_with_backend_defaults(&parse_ini_document(snapshot))
+}
+
+fn add_program_bindings_to_restore(
+    current: &IniDocument,
+    before: &str,
+    after_registration: &str,
+) -> Result<Option<IniDocument>, String> {
+    if add_program_bindings_match(current, before) {
+        return Ok(None);
+    }
+    if !add_program_bindings_match(current, after_registration) {
+        return Err(
+            "FlowCell bindings changed after Add Program began; registration rollback was preserved for manual recovery."
+                .to_string(),
+        );
+    }
+    // Retain the backend's equivalent defaults when restoring registration.
+    // Every other field still has to match the journal before any write occurs.
+    let mut restored = parse_ini_document(before);
+    for (key, default) in [("Ids", ""), ("NextId", "1")] {
+        if current.get("Meta").and_then(|meta| meta.get(key)).map(String::as_str)
+            == Some(default)
+        {
+            restored.entry("Meta".to_string()).or_default()
+                .entry(key.to_string()).or_insert_with(|| default.to_string());
+        }
+    }
+    Ok(Some(restored))
+}
+
 fn enabled_state_for_plan(
     manifest: &program_sources::manifest::ProgramManifest,
     preflight: &AddProgramPreflight,
@@ -2847,7 +2899,7 @@ fn rollback_add_program_transaction(
                     file_name: resolution.file_name,
                 };
                 if let Err(error) =
-                    program_sources::delete::uninstall_button_source(app.clone(), request)
+                    program_sources::delete::uninstall_button_source_sync(app.clone(), request)
                 {
                     errors.push(format!(
                         "Button source '{}' rollback failed: {error}",
@@ -2872,21 +2924,21 @@ fn rollback_add_program_transaction(
     if errors.is_empty() {
         match read_bindings_file_state() {
             Ok((_, current, path)) => {
-                let current = serialize_bindings(&current);
                 if path != journal.bindings_path {
                     errors.push("Bindings path changed during Add Program rollback.".to_string());
-                } else if current == journal.bindings_before {
-                    // Registration never reached the durable apply boundary, or an earlier
-                    // recovery pass already restored it.
-                } else if current != journal.bindings_after_registration {
-                    errors.push(
-                        "FlowCell bindings changed after Add Program began; registration rollback was preserved for manual recovery."
-                            .to_string(),
-                    );
                 } else {
-                    let before = parse_ini_document(&journal.bindings_before);
-                    if let Err(error) = write_bindings_file_state(&path, &before) {
-                        errors.push(error);
+                    match add_program_bindings_to_restore(
+                        &current,
+                        &journal.bindings_before,
+                        &journal.bindings_after_registration,
+                    ) {
+                        Ok(Some(before)) => {
+                            if let Err(error) = write_bindings_file_state(&path, &before) {
+                                errors.push(error);
+                            }
+                        }
+                        Ok(None) => {} // Already at the pre-transaction state.
+                        Err(error) => errors.push(error),
                     }
                 }
             }
@@ -3025,7 +3077,7 @@ fn verify_add_program_native_state(
 ) -> Result<(), String> {
     let (_, current_bindings, current_bindings_path) = read_bindings_file_state()?;
     if current_bindings_path != journal.bindings_path
-        || serialize_bindings(&current_bindings) != journal.bindings_after_registration
+        || !add_program_bindings_match(&current_bindings, &journal.bindings_after_registration)
     {
         return Err(
             "FlowCell bindings changed before Add Program commit; the transaction was preserved for manual recovery."
@@ -3406,8 +3458,26 @@ fn finalize_add_program_transaction(
     Ok(setup_result)
 }
 
+async fn run_add_program_blocking<T: Send + 'static>(
+    action: &'static str,
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    // Setup may wait on adapters or another transaction. Neither wait belongs
+    // on the WebView event thread or on an async executor worker.
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("Add Program {action} worker failed: {error}"))?
+}
+
 #[tauri::command]
-pub(crate) fn apply_add_program_plan(
+pub(crate) async fn apply_add_program_plan(
+    app: tauri::AppHandle,
+    request: AddProgramPlanRequest,
+) -> Result<AppliedProgramSetup, String> {
+    run_add_program_blocking("apply", move || apply_add_program_plan_inner(app, request)).await
+}
+
+fn apply_add_program_plan_inner(
     app: tauri::AppHandle,
     request: AddProgramPlanRequest,
 ) -> Result<AppliedProgramSetup, String> {
@@ -3825,7 +3895,7 @@ fn canonical_source_graph_matches(
 }
 
 fn canonical_matches_add_program(journal: &AddProgramTransactionJournal) -> Result<bool, String> {
-    let Some(document) = crate::button_state::load_button_state()? else {
+    let Some(document) = crate::button_state::load_button_state_sync()? else {
         return Ok(journal.expected_button_ids.is_empty() && journal.preflight.panels.is_empty());
     };
     if journal
@@ -3902,7 +3972,16 @@ fn normalize_expected_button_ids(values: Vec<String>) -> Result<Vec<String>, Str
 }
 
 #[tauri::command]
-pub(crate) fn prepare_add_program_canonical_commit(
+pub(crate) async fn prepare_add_program_canonical_commit(
+    transaction_token: String,
+    expected_button_ids: Vec<String>,
+) -> Result<(), String> {
+    run_add_program_blocking("prepare commit", move || {
+        prepare_add_program_canonical_commit_inner(transaction_token, expected_button_ids)
+    }).await
+}
+
+fn prepare_add_program_canonical_commit_inner(
     transaction_token: String,
     expected_button_ids: Vec<String>,
 ) -> Result<(), String> {
@@ -3949,7 +4028,11 @@ pub(crate) fn prepare_add_program_canonical_commit(
 }
 
 #[tauri::command]
-pub(crate) fn finalize_add_program_plan(transaction_token: String) -> Result<ProgramSetupResult, String> {
+pub(crate) async fn finalize_add_program_plan(transaction_token: String) -> Result<ProgramSetupResult, String> {
+    run_add_program_blocking("finalize", move || finalize_add_program_plan_inner(transaction_token)).await
+}
+
+fn finalize_add_program_plan_inner(transaction_token: String) -> Result<ProgramSetupResult, String> {
     let lock = ADD_PROGRAM_TRANSACTION_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock
         .lock()
@@ -3969,7 +4052,14 @@ pub(crate) fn finalize_add_program_plan(transaction_token: String) -> Result<Pro
 }
 
 #[tauri::command]
-pub(crate) fn rollback_add_program_plan(
+pub(crate) async fn rollback_add_program_plan(
+    app: tauri::AppHandle,
+    transaction_token: String,
+) -> Result<String, String> {
+    run_add_program_blocking("rollback", move || rollback_add_program_plan_inner(app, transaction_token)).await
+}
+
+fn rollback_add_program_plan_inner(
     app: tauri::AppHandle,
     transaction_token: String,
 ) -> Result<String, String> {
@@ -4509,7 +4599,7 @@ fn canonical_matches_add_panel(journal: &AddPanelTransactionJournal) -> Result<b
     let Some(expected) = journal.expected_button_id.as_deref() else {
         return Ok(false);
     };
-    let Some(document) = crate::button_state::load_button_state()? else {
+    let Some(document) = crate::button_state::load_button_state_sync()? else {
         return Ok(false);
     };
     let Some(button) = canonical_button(&document, expected) else {
@@ -4567,7 +4657,15 @@ fn finalize_add_panel_transaction(
 }
 
 #[tauri::command]
-pub(crate) fn apply_add_panel_plan(
+pub(crate) async fn apply_add_panel_plan(
+    request: AddPanelPlanRequest,
+) -> Result<AppliedPanelSetup, String> {
+    tauri::async_runtime::spawn_blocking(move || apply_add_panel_plan_sync(request))
+        .await
+        .map_err(|error| format!("Add Panel apply worker failed: {error}"))?
+}
+
+fn apply_add_panel_plan_sync(
     request: AddPanelPlanRequest,
 ) -> Result<AppliedPanelSetup, String> {
     let lock = ADD_PANEL_TRANSACTION_LOCK.get_or_init(|| Mutex::new(()));
@@ -4707,7 +4805,13 @@ pub(crate) fn prepare_add_panel_canonical_commit(
 }
 
 #[tauri::command]
-pub(crate) fn finalize_add_panel_plan(transaction_token: String) -> Result<(), String> {
+pub(crate) async fn finalize_add_panel_plan(transaction_token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || finalize_add_panel_plan_sync(transaction_token))
+        .await
+        .map_err(|error| format!("Add Panel finalize worker failed: {error}"))?
+}
+
+fn finalize_add_panel_plan_sync(transaction_token: String) -> Result<(), String> {
     let lock = ADD_PANEL_TRANSACTION_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock
         .lock()
@@ -4724,7 +4828,13 @@ pub(crate) fn finalize_add_panel_plan(transaction_token: String) -> Result<(), S
 }
 
 #[tauri::command]
-pub(crate) fn rollback_add_panel_plan(transaction_token: String) -> Result<String, String> {
+pub(crate) async fn rollback_add_panel_plan(transaction_token: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || rollback_add_panel_plan_sync(transaction_token))
+        .await
+        .map_err(|error| format!("Add Panel rollback worker failed: {error}"))?
+}
+
+fn rollback_add_panel_plan_sync(transaction_token: String) -> Result<String, String> {
     let lock = ADD_PANEL_TRANSACTION_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock
         .lock()
@@ -5256,10 +5366,7 @@ fn preview_plain_program_package_in(
             .into_iter()
             .collect::<BTreeSet<_>>();
     for folder_name in list_child_directory_names(&programs_root)? {
-        // Core creates this directory before the Windows package is available.
-        if folder_name.eq_ignore_ascii_case("Windows")
-            && super::program_packages::placeholder_directories(&programs_root.join(&folder_name)).is_ok()
-        {
+        if is_core_program_placeholder(programs_root, &folder_name) {
             continue;
         }
         let existing_manifest = load_program_manifest_from_root(programs_root, &folder_name)
@@ -5368,7 +5475,16 @@ fn apply_manifest_registration(
 }
 
 #[tauri::command]
-pub(crate) fn rename_program_folder(
+pub(crate) async fn rename_program_folder(
+    current_name: String,
+    name: String,
+) -> Result<super::program_rename::BeginProgramRenameResult, String> {
+    tauri::async_runtime::spawn_blocking(move || rename_program_folder_sync(current_name, name))
+        .await
+        .map_err(|error| format!("Program rename worker failed: {error}"))?
+}
+
+fn rename_program_folder_sync(
     current_name: String,
     name: String,
 ) -> Result<super::program_rename::BeginProgramRenameResult, String> {
@@ -5438,7 +5554,13 @@ pub(crate) fn rename_program_folder(
 }
 
 #[tauri::command]
-pub(crate) fn rollback_program_rename(rename_token: String) -> Result<(), String> {
+pub(crate) async fn rollback_program_rename(rename_token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || rollback_program_rename_sync(rename_token))
+        .await
+        .map_err(|error| format!("Program rename rollback worker failed: {error}"))?
+}
+
+fn rollback_program_rename_sync(rename_token: String) -> Result<(), String> {
     {
         let _button_guard = crate::button_state::button_state_commit_guard()?;
         let _source_guard = program_sources::source_quarantine_guard()?;
@@ -5450,7 +5572,13 @@ pub(crate) fn rollback_program_rename(rename_token: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub(crate) fn finalize_program_rename(rename_token: String) -> Result<(), String> {
+pub(crate) async fn finalize_program_rename(rename_token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || finalize_program_rename_sync(rename_token))
+        .await
+        .map_err(|error| format!("Program rename finalize worker failed: {error}"))?
+}
+
+fn finalize_program_rename_sync(rename_token: String) -> Result<(), String> {
     let _button_guard = crate::button_state::button_state_commit_guard()?;
     let _source_guard = program_sources::source_quarantine_guard()?;
     let _bindings_guard = super::bindings::bindings_state_guard()?;
@@ -5459,7 +5587,13 @@ pub(crate) fn finalize_program_rename(rename_token: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub(crate) fn recover_program_rename(rename_token: String) -> Result<(), String> {
+pub(crate) async fn recover_program_rename(rename_token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || recover_program_rename_sync(rename_token))
+        .await
+        .map_err(|error| format!("Program rename recovery worker failed: {error}"))?
+}
+
+fn recover_program_rename_sync(rename_token: String) -> Result<(), String> {
     {
         let _button_guard = crate::button_state::button_state_commit_guard()?;
         let _source_guard = program_sources::source_quarantine_guard()?;
@@ -5473,7 +5607,16 @@ pub(crate) fn recover_program_rename(rename_token: String) -> Result<(), String>
 }
 
 #[tauri::command]
-pub(crate) fn begin_program_unregistration(
+pub(crate) async fn begin_program_unregistration(
+    name: String,
+    expected_owner_button_ids: Vec<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || begin_program_unregistration_sync(name, expected_owner_button_ids))
+        .await
+        .map_err(|error| format!("Program unregistration prepare worker failed: {error}"))?
+}
+
+fn begin_program_unregistration_sync(
     name: String,
     expected_owner_button_ids: Vec<String>,
 ) -> Result<String, String> {
@@ -5507,7 +5650,13 @@ pub(crate) fn begin_program_unregistration(
 }
 
 #[tauri::command]
-pub(crate) fn rollback_program_unregistration(rollback_token: String) -> Result<(), String> {
+pub(crate) async fn rollback_program_unregistration(rollback_token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || rollback_program_unregistration_sync(rollback_token))
+        .await
+        .map_err(|error| format!("Program unregistration rollback worker failed: {error}"))?
+}
+
+fn rollback_program_unregistration_sync(rollback_token: String) -> Result<(), String> {
     {
         let lock = DELETE_LIFECYCLE_LOCK.get_or_init(|| Mutex::new(()));
         let _delete_guard = lock
@@ -5527,7 +5676,13 @@ pub(crate) fn rollback_program_unregistration(rollback_token: String) -> Result<
 }
 
 #[tauri::command]
-pub(crate) fn finalize_program_unregistration(rollback_token: String) -> Result<(), String> {
+pub(crate) async fn finalize_program_unregistration(rollback_token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || finalize_program_unregistration_sync(rollback_token))
+        .await
+        .map_err(|error| format!("Program unregistration finalize worker failed: {error}"))?
+}
+
+fn finalize_program_unregistration_sync(rollback_token: String) -> Result<(), String> {
     {
         let lock = DELETE_LIFECYCLE_LOCK.get_or_init(|| Mutex::new(()));
         let _delete_guard = lock
@@ -5547,7 +5702,17 @@ pub(crate) fn finalize_program_unregistration(rollback_token: String) -> Result<
 }
 
 #[tauri::command]
-pub(crate) fn rename_panel_folder(
+pub(crate) async fn rename_panel_folder(
+    program_name: String,
+    current_name: String,
+    name: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || rename_panel_folder_sync(program_name, current_name, name))
+        .await
+        .map_err(|error| format!("Panel rename worker failed: {error}"))?
+}
+
+fn rename_panel_folder_sync(
     program_name: String,
     current_name: String,
     name: String,
@@ -5591,7 +5756,17 @@ pub(crate) fn rename_panel_folder(
 }
 
 #[tauri::command]
-pub(crate) fn prepare_panel_deletion(
+pub(crate) async fn prepare_panel_deletion(
+    program_name: String,
+    panel_name: String,
+    expected_owner_button_ids: Vec<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || prepare_panel_deletion_sync(program_name, panel_name, expected_owner_button_ids))
+        .await
+        .map_err(|error| format!("Panel deletion prepare worker failed: {error}"))?
+}
+
+fn prepare_panel_deletion_sync(
     program_name: String,
     panel_name: String,
     expected_owner_button_ids: Vec<String>,
@@ -5637,7 +5812,13 @@ pub(crate) fn prepare_panel_deletion(
 }
 
 #[tauri::command]
-pub(crate) fn rollback_panel_deletion(transaction_token: String) -> Result<(), String> {
+pub(crate) async fn rollback_panel_deletion(transaction_token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || rollback_panel_deletion_sync(transaction_token))
+        .await
+        .map_err(|error| format!("Panel deletion rollback worker failed: {error}"))?
+}
+
+fn rollback_panel_deletion_sync(transaction_token: String) -> Result<(), String> {
     let lock = DELETE_LIFECYCLE_LOCK.get_or_init(|| Mutex::new(()));
     let _delete_guard = lock
         .lock()
@@ -5651,7 +5832,13 @@ pub(crate) fn rollback_panel_deletion(transaction_token: String) -> Result<(), S
 }
 
 #[tauri::command]
-pub(crate) fn finalize_panel_deletion(transaction_token: String) -> Result<(), String> {
+pub(crate) async fn finalize_panel_deletion(transaction_token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || finalize_panel_deletion_sync(transaction_token))
+        .await
+        .map_err(|error| format!("Panel deletion finalize worker failed: {error}"))?
+}
+
+fn finalize_panel_deletion_sync(transaction_token: String) -> Result<(), String> {
     let lock = DELETE_LIFECYCLE_LOCK.get_or_init(|| Mutex::new(()));
     let _delete_guard = lock
         .lock()
@@ -6117,9 +6304,11 @@ ScriptPath=C:\FlowCell\Illustrator.jsx
 #[cfg(test)]
 mod managed_program_setup_tests {
     use super::{
+        add_program_bindings_match, add_program_bindings_to_restore,
         add_program_source_is_required, backend_run_method_for_runner,
         canonical_source_graph_matches, copy_external_panel_tree, create_plain_program_package,
         generated_plain_program_manifest, install_add_program_sources_while_source_locked,
+        is_core_program_placeholder,
         mark_add_program_native_applied, preflight_add_program_plan_inner,
         preview_plain_program_package_in, read_add_program_journal,
         recover_planned_active_record_path, recycle_owned_add_panel_destination_with,
@@ -6135,6 +6324,7 @@ mod managed_program_setup_tests {
     use crate::program_sources::execute::ActiveSourceResolution;
     use crate::program_sources::manifest::BundledSourceManifest;
     use crate::program_sources::records::{ActiveSourceChild, ActiveSourceRecord};
+    use crate::commands::bindings::parse_ini_document;
     use serde_json::json;
     use std::cell::Cell;
     use std::fs;
@@ -6150,6 +6340,91 @@ mod managed_program_setup_tests {
                 .unwrap_or_default()
                 .as_nanos()
         ))
+    }
+
+    #[test]
+    fn add_program_recovery_accepts_backend_defaults_and_keeps_them_on_rollback() {
+        let before = "[Meta]\nProgramTabIds=3\nSelectedProgramTabId=3\n\n[ProgramTab_3]\nLabel=Blender\n";
+        let after = "[Meta]\nProgramTabIds=1|3\nSelectedProgramTabId=1\n\n[ProgramTab_1]\nLabel=Illustrator\n\n[ProgramTab_3]\nLabel=Blender\n";
+        for defaults in ["", "Ids=\n", "NextId=1\n", "Ids=\nNextId=1\n"] {
+            let current = parse_ini_document(&after.replacen("[Meta]\n", &format!("[Meta]\n{defaults}"), 1));
+            assert!(add_program_bindings_match(&current, after), "finalization accepts {defaults:?}");
+            let restored = add_program_bindings_to_restore(&current, before, after)
+                .expect("backend defaults are not user edits")
+                .expect("registration still needs rollback");
+            let expected = parse_ini_document(&before.replacen("[Meta]\n", &format!("[Meta]\n{defaults}"), 1));
+            assert_eq!(restored, expected, "only registration is restored");
+            assert!(add_program_bindings_to_restore(&restored, before, after)
+                .expect("repeated recovery is safe").is_none());
+        }
+    }
+
+    #[test]
+    fn add_program_recovery_preserves_real_binding_and_metadata_changes_as_conflicts() {
+        let before = "[Meta]\nProgramTabIds=3\nIds=9\nNextId=10\n\n[ProgramTab_3]\nLabel=Blender\n\n[Binding_9]\nShortcut=Ctrl+9\n";
+        let after = before.replace("ProgramTabIds=3", "ProgramTabIds=1|3") + "\n[ProgramTab_1]\nLabel=Illustrator\n";
+        let expected = parse_ini_document(&after);
+        let mut variants = vec![];
+        for (key, value) in [("Ids", ""), ("Ids", "9|10"), ("NextId", "1"), ("NextId", "11"), ("Unknown", "new")] {
+            let mut changed = expected.clone();
+            changed.get_mut("Meta").unwrap().insert(key.into(), value.into());
+            variants.push(changed);
+        }
+        let mut changed = expected.clone();
+        changed.get_mut("Binding_9").unwrap().insert("Shortcut".into(), "Ctrl+8".into());
+        variants.push(changed);
+        let mut changed = expected.clone();
+        changed.remove("Binding_9");
+        variants.push(changed);
+        let mut changed = expected.clone();
+        changed.insert("Binding_10".into(), parse_ini_document("[Binding_10]\nShortcut=Ctrl+0\n").remove("Binding_10").unwrap());
+        variants.push(changed);
+        let mut changed = expected.clone();
+        changed.get_mut("ProgramTab_3").unwrap().insert("Label".into(), "Personal Blender".into());
+        variants.push(changed);
+        let mut changed = expected.clone();
+        changed.insert("Personal".into(), Default::default());
+        variants.push(changed);
+        for changed in variants {
+            let preserved = changed.clone();
+            assert!(!add_program_bindings_match(&changed, &after));
+            assert!(add_program_bindings_to_restore(&changed, before, &after).is_err());
+            assert_eq!(changed, preserved, "conflicting user data is untouched");
+        }
+        for nondefault in ["0", "01", "", "2"] {
+            let current = parse_ini_document(&format!("[Meta]\nNextId={nondefault}\n"));
+            assert!(!add_program_bindings_match(&current, "[Meta]\n"));
+        }
+        assert!(!add_program_bindings_match(&parse_ini_document("[Meta]\nIds=1\n"), "[Meta]\n"));
+    }
+
+    #[test]
+    fn add_program_worker_yields_while_blocking_and_preserves_results() {
+        use std::future::Future;
+        use std::sync::mpsc;
+        use std::task::{Context, Waker};
+        use std::time::Duration;
+
+        let caller = std::thread::current().id();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut operation = std::pin::pin!(super::run_add_program_blocking("test", move || {
+            started_tx.send(std::thread::current().id()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5))
+                .map_err(|error| error.to_string())?;
+            Ok(42)
+        }));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(operation.as_mut().poll(&mut context).is_pending(),
+            "a waiting setup worker must yield to the caller");
+        assert_ne!(started_rx.recv_timeout(Duration::from_secs(5)).unwrap(), caller);
+        release_tx.send(()).unwrap();
+        assert_eq!(tauri::async_runtime::block_on(operation), Ok(42));
+
+        let failure = tauri::async_runtime::block_on(super::run_add_program_blocking(
+            "test", || Err::<(), _>("adapter rejected setup".to_string()),
+        ));
+        assert_eq!(failure, Err("adapter rejected setup".to_string()));
     }
 
     struct TestProgramPackage(PathBuf);
@@ -6210,6 +6485,27 @@ mod managed_program_setup_tests {
             panel_preexisted: false,
             expected_button_id: None,
         }
+    }
+
+    #[test]
+    fn only_directory_only_windows_stub_is_omitted_from_package_inventory() {
+        let root = temporary_root("core-program-placeholder");
+        let _cleanup = TestProgramPackage(root.clone());
+        fs::create_dir_all(root.join("Windows/Panels/Startup")).unwrap();
+        fs::create_dir(root.join("Unrecognized")).unwrap();
+        assert!(is_core_program_placeholder(&root, "Windows"));
+        assert!(!is_core_program_placeholder(&root, "Unrecognized"));
+        assert!(!is_core_program_placeholder(&root, "Missing"));
+
+        let manifest = root.join("Windows/flowcell.program.json");
+        fs::write(&manifest, b"malformed manifest").unwrap();
+        assert!(!is_core_program_placeholder(&root, "Windows"));
+        assert_eq!(fs::read(&manifest).unwrap(), b"malformed manifest");
+        fs::remove_file(manifest).unwrap();
+        let personal = root.join("Windows/Panels/Startup/personal.txt");
+        fs::write(&personal, b"keep this user content").unwrap();
+        assert!(!is_core_program_placeholder(&root, "Windows"));
+        assert_eq!(fs::read(personal).unwrap(), b"keep this user content");
     }
 
     #[test]

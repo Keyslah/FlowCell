@@ -90,10 +90,9 @@ export interface ButtonSkinRendererProps {
   matchHitboxToSkin?: boolean;
   allowStretching?: boolean;
   /**
-   * Center a uniformly scaled skin in the rect instead of pinning it to the top-left corner. ButtonHost sets it when
-   * a skin family swaps in the member for the label, so a new or renamed rail Button sits in the middle of its slot.
+   * Center the scaled family member on the axes owned by this renderer.
    */
-  centerSkinInRect?: boolean;
+  centerSkinInRect?: "both" | "vertical";
   textFitMode: ButtonTextFitMode;
   textAlignment?: ButtonTextAlignment;
   textOffsetX?: number;
@@ -758,7 +757,7 @@ function applySkinRootScale(
   matchHitboxToSkin: boolean,
   allowStretching: boolean,
   renderScale: ButtonHostRenderScale,
-  centerInRect = false
+  centerInRect?: ButtonSkinRendererProps["centerSkinInRect"]
 ): void {
   mounted.container.style.removeProperty("transform");
   mounted.container.style.removeProperty("transform-origin");
@@ -784,7 +783,7 @@ function applySkinRootScale(
     { width, height },
     allowStretching
   );
-  const offsetX = centerInRect ? Math.max(0, (width - naturalWidth * scale.scaleX) / 2) : 0;
+  const offsetX = centerInRect === "both" ? Math.max(0, (width - naturalWidth * scale.scaleX) / 2) : 0;
   const offsetY = centerInRect ? Math.max(0, (height - naturalHeight * scale.scaleY) / 2) : 0;
   const centering = offsetX || offsetY ? `translate(${offsetX}px, ${offsetY}px) ` : "";
   mounted.container.style.transform = `${centering}scale(${scale.scaleX}, ${scale.scaleY}) translate(${-coreOffsetX}px, ${-coreOffsetY}px)`;
@@ -1025,7 +1024,7 @@ export function ButtonSkinRenderer({
   constrained = true,
   matchHitboxToSkin = true,
   allowStretching = false,
-  centerSkinInRect = false,
+  centerSkinInRect,
   textFitMode,
   textAlignment = "skin",
   textOffsetX = 0,
@@ -1072,7 +1071,7 @@ export function ButtonSkinRenderer({
     constrained: boolean;
     matchHitboxToSkin: boolean;
     allowStretching: boolean;
-    centerSkinInRect: boolean;
+    centerSkinInRect: ButtonSkinRendererProps["centerSkinInRect"];
     textSizeOverride?: number;
     previewStackWords: boolean;
   } | null>(null);

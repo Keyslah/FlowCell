@@ -579,14 +579,14 @@ pub(crate) fn clear_pending_canonical_install(owner_button_id: &str) -> Result<(
 pub(crate) fn recover_pending_canonical_installs_on_startup(
     app: &tauri::AppHandle,
 ) -> Result<usize, String> {
-    let current_document = crate::button_state::load_button_state()?;
+    let current_document = crate::button_state::load_button_state_sync()?;
     let root = pending_installs_root(false)?;
     recover_pending_installs_at_root_with(
         &root,
         current_document.as_ref(),
         resolve_exact_active_source,
         |journal, file_name| {
-            super::delete::uninstall_button_source(
+            super::delete::uninstall_button_source_sync(
                 app.clone(),
                 UninstallButtonSourceRequest {
                     owner_button_id: journal.owner_button_id.clone(),

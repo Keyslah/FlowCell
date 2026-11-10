@@ -13,10 +13,10 @@ from bpy.types import OperatorFileListElement
 from bpy_extras.io_utils import ImportHelper
 
 DEFAULT_DPI = 300.0
-SOLIDIFY_THICKNESS_METERS = 0.016
+DEFAULT_MIN_THICKNESS_MM = 0.1
+DEFAULT_MAX_THICKNESS_MM = 17.0
 TOP_FACE_SUBDIVISION_CUTS = 20
 SUBSURF_LEVELS = 6
-DISPLACE_MID_LEVEL = -0.01
 TOP_FACE_GROUP_NAME = "TopFaceGroup"
 ALPHA_CUTOFF = 0.5
 OPERATOR_ID = "flowcell.create_lithophane_from_image"
@@ -145,6 +145,21 @@ def _resolve_explicit_object_name(data):
     if not isinstance(object_name, str) or not object_name.strip() or "\x00" in object_name:
         raise ValueError("Illustrator lithophane object_name must be a non-empty layer name.")
     return object_name
+
+
+def _resolve_thickness_mm(data=None):
+    values = data if isinstance(data, dict) else {}
+    minimum = values.get("min_thickness_mm", DEFAULT_MIN_THICKNESS_MM)
+    maximum = values.get("max_thickness_mm", DEFAULT_MAX_THICKNESS_MM)
+    try:
+        if isinstance(minimum, bool) or isinstance(maximum, bool):
+            raise ValueError
+        minimum, maximum = float(minimum), float(maximum)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Lithophane thickness must be numeric millimeter values.") from exc
+    if not math.isfinite(minimum) or not math.isfinite(maximum) or minimum <= 0 or maximum < minimum:
+        raise ValueError("Lithophane thickness requires 0 < minimum <= maximum, in millimeters.")
+    return minimum, maximum
 
 
 def _resolve_available_object_name(base_name):
@@ -298,17 +313,32 @@ def _add_subsurf_modifier(obj):
     return modifier
 
 
-def _add_displace_modifier(obj, image):
+def _add_displace_modifier(obj, image, minimum_thickness, maximum_thickness):
+    if maximum_thickness == minimum_thickness:
+        return None
     modifier = obj.modifiers.new(name="Displace", type="DISPLACE")
     texture = bpy.data.textures.new(name=f"{obj.name}_DispTex", type="IMAGE")
     texture.image = image
+    # Alpha controls the cutout separately; height follows RGB brightness.
+    texture.use_alpha = False
+    texture.use_calculate_alpha = True
+    # Clamp HDR/out-of-range image samples to the requested thickness range.
+    texture.use_color_ramp = True
+    texture.color_ramp.elements[0].position = 0.0
+    # Legacy Texture supplies ramp alpha as its scalar displacement intensity.
+    texture.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 0.0)
+    texture.color_ramp.elements[1].position = 1.0
+    texture.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
+    texture.color_ramp.interpolation = "LINEAR"
 
     modifier.texture = texture
     modifier.texture_coords = "UV"
     modifier.uv_layer = "UVMap"
     modifier.direction = "Z"
     modifier.vertex_group = TOP_FACE_GROUP_NAME
-    modifier.mid_level = DISPLACE_MID_LEVEL
+    # Preserve the original brightness direction: black is thin, white is thick.
+    modifier.mid_level = 0.0
+    modifier.strength = maximum_thickness - minimum_thickness
     return modifier
 
 
@@ -381,12 +411,12 @@ def _delete_transparent_faces(obj, alpha_data):
         bm.free()
 
 
-def _collect_top_surface_vertex_indices(obj):
+def _collect_top_surface_vertex_indices(obj, minimum_thickness):
     vertices = list(obj.data.vertices)
     if not vertices:
         raise ValueError(f"{obj.name} has no vertices after alpha cleanup.")
     top_z = max(float(vertex.co.z) for vertex in vertices)
-    tolerance = max(1e-9, abs(top_z) * 1e-7, abs(SOLIDIFY_THICKNESS_METERS) * 1e-7)
+    tolerance = max(1e-9, abs(top_z) * 1e-7, abs(minimum_thickness) * 1e-7)
     indices = [
         vertex.index
         for vertex in vertices
@@ -397,7 +427,7 @@ def _collect_top_surface_vertex_indices(obj):
     return indices
 
 
-def _make_alpha_cutout_lithophane(context, obj, image, alpha_data):
+def _make_alpha_cutout_lithophane(context, obj, image, alpha_data, minimum_thickness, maximum_thickness):
     _set_active_object(context, obj, select_only=True)
     _safe_mode_set("EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
@@ -409,19 +439,22 @@ def _make_alpha_cutout_lithophane(context, obj, image, alpha_data):
     removed_face_count = _delete_transparent_faces(obj, alpha_data)
 
     solidify_modifier = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
-    solidify_modifier.thickness = SOLIDIFY_THICKNESS_METERS
+    solidify_modifier.thickness = minimum_thickness
     _apply_modifier(context, obj, solidify_modifier)
 
-    selected_vertex_indices = _collect_top_surface_vertex_indices(obj)
+    selected_vertex_indices = _collect_top_surface_vertex_indices(obj, minimum_thickness)
     _create_or_replace_vertex_group(obj, TOP_FACE_GROUP_NAME, selected_vertex_indices)
-    displace_modifier = _add_displace_modifier(obj, image)
-    _apply_modifier(context, obj, displace_modifier)
+    displace_modifier = _add_displace_modifier(obj, image, minimum_thickness, maximum_thickness)
+    if displace_modifier is not None:
+        _apply_modifier(context, obj, displace_modifier)
     return removed_face_count
 
 
 def perform_make_lithophane(context=None, data=None, image=None, target_xy=None):
-    del data
     ctx = _ctx(context)
+    minimum_mm, maximum_mm = _resolve_thickness_mm(data)
+    minimum_thickness = _meters_to_blender_units(ctx, minimum_mm / 1000.0)
+    maximum_thickness = _meters_to_blender_units(ctx, maximum_mm / 1000.0)
     obj = getattr(ctx.view_layer.objects, "active", None)
     if obj is None or obj.type != "MESH":
         raise ValueError("Select one active mesh object before making a lithophane.")
@@ -446,10 +479,12 @@ def perform_make_lithophane(context=None, data=None, image=None, target_xy=None)
     alpha_data = _read_image_alpha(image)
     removed_alpha_faces = 0
     if alpha_data is not None:
-        removed_alpha_faces = _make_alpha_cutout_lithophane(ctx, obj, image, alpha_data)
+        removed_alpha_faces = _make_alpha_cutout_lithophane(
+            ctx, obj, image, alpha_data, minimum_thickness, maximum_thickness
+        )
     else:
         solidify_modifier = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
-        solidify_modifier.thickness = SOLIDIFY_THICKNESS_METERS
+        solidify_modifier.thickness = minimum_thickness
         _apply_modifier(ctx, obj, solidify_modifier)
 
         _set_active_object(ctx, obj, select_only=True)
@@ -464,9 +499,10 @@ def perform_make_lithophane(context=None, data=None, image=None, target_xy=None)
         _safe_mode_set("OBJECT")
         _create_or_replace_vertex_group(obj, TOP_FACE_GROUP_NAME, selected_vertex_indices)
         subsurf_modifier = _add_subsurf_modifier(obj)
-        displace_modifier = _add_displace_modifier(obj, image)
+        displace_modifier = _add_displace_modifier(obj, image, minimum_thickness, maximum_thickness)
         _apply_modifier(ctx, obj, subsurf_modifier)
-        _apply_modifier(ctx, obj, displace_modifier)
+        if displace_modifier is not None:
+            _apply_modifier(ctx, obj, displace_modifier)
     _fit_xy_dimensions(ctx, obj, target_x, target_y)
 
     return {
@@ -484,6 +520,8 @@ def perform_make_lithophane(context=None, data=None, image=None, target_xy=None)
         "object": obj.name,
         "image": image.name,
         "removed_alpha_faces": removed_alpha_faces,
+        "min_thickness_mm": minimum_mm,
+        "max_thickness_mm": maximum_mm,
     }
 
 
@@ -525,6 +563,7 @@ def _create_lithophane_from_path(
     dpi,
     target_xy=None,
     object_name=None,
+    thickness_mm=None,
 ):
     original_materials = {_data_block_pointer(item) for item in bpy.data.materials}
     original_textures = {_data_block_pointer(item) for item in bpy.data.textures}
@@ -551,7 +590,12 @@ def _create_lithophane_from_path(
                 )
         _set_active_object(context, plane, select_only=True)
 
-        result = perform_make_lithophane(context=context, image=image, target_xy=target_xy)
+        thickness_data = None if thickness_mm is None else {
+            "min_thickness_mm": thickness_mm[0], "max_thickness_mm": thickness_mm[1]
+        }
+        result = perform_make_lithophane(
+            context=context, data=thickness_data, image=image, target_xy=target_xy
+        )
         result["image_path"] = image_path
         result["object"] = result.get("object", plane.name)
         result["image"] = result.get("image", image.name)
@@ -587,6 +631,7 @@ def perform_create_lithophane_from_images(context=None, data=None, image_paths=N
     resolved_dpi = float(dpi if dpi is not None else (data or {}).get("dpi", DEFAULT_DPI))
     explicit_target_xy = _resolve_explicit_target_xy(ctx, data)
     explicit_object_name = _resolve_explicit_object_name(data)
+    thickness_mm = _resolve_thickness_mm(data)
     if (explicit_target_xy is not None or explicit_object_name is not None) and len(resolved_paths) != 1:
         raise ValueError("Explicit Illustrator dimensions and object name require exactly one lithophane image.")
 
@@ -599,6 +644,7 @@ def perform_create_lithophane_from_images(context=None, data=None, image_paths=N
                 resolved_dpi,
                 target_xy=explicit_target_xy,
                 object_name=explicit_object_name,
+                thickness_mm=thickness_mm,
             )
         )
 
@@ -632,6 +678,22 @@ class FLOWCELL_OT_create_lithophane_from_image(bpy.types.Operator, ImportHelper)
         min=1.0,
         soft_max=1200.0,
     )
+    min_thickness_mm: FloatProperty(
+        name="Minimum thickness (mm)",
+        description="Physical thickness of dark image areas, independent of scene units.",
+        default=DEFAULT_MIN_THICKNESS_MM,
+        min=0.001,
+        soft_max=10.0,
+        precision=3,
+    )
+    max_thickness_mm: FloatProperty(
+        name="Maximum thickness (mm)",
+        description="Physical thickness of light image areas; must be at least the minimum.",
+        default=DEFAULT_MAX_THICKNESS_MM,
+        min=0.001,
+        soft_max=20.0,
+        precision=3,
+    )
 
     def execute(self, context):
         if self.files:
@@ -647,6 +709,7 @@ class FLOWCELL_OT_create_lithophane_from_image(bpy.types.Operator, ImportHelper)
                 context=context,
                 image_paths=image_paths,
                 dpi=self.dpi,
+                data={"min_thickness_mm": self.min_thickness_mm, "max_thickness_mm": self.max_thickness_mm},
             )
         except Exception as exc:
             self.report({"ERROR"}, str(exc))
@@ -670,5 +733,8 @@ def run_flowcell_action(context=None, data=None):
         return perform_create_lithophane_from_images(context=context, data=data)
 
     ensure_picker_operator_registered()
-    bpy.ops.flowcell.create_lithophane_from_image("INVOKE_DEFAULT")
+    minimum_mm, maximum_mm = _resolve_thickness_mm(data)
+    bpy.ops.flowcell.create_lithophane_from_image(
+        "INVOKE_DEFAULT", min_thickness_mm=minimum_mm, max_thickness_mm=maximum_mm
+    )
     return _result("FINISHED", "Lithophane image picker opened in Blender.")

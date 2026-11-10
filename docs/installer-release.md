@@ -4,6 +4,8 @@ The Windows installer release contains `flowcellwindowsinstaller.zip` and one
 `FlowCell-<Program>.zip` for every tracked `Programs/*/flowcell.program.json`.
 Current packages are Blender, Fresco, Fusion 360, Illustrator, Krita and Windows.
 No new portable ZIP is produced by this release route.
+Windows is also included in the Core installer, so initial Windows setup does
+not depend on downloading its separate catalog ZIP.
 
 ## Installed storage
 
@@ -32,13 +34,20 @@ root, then selects it for the existing registration plan. It does not execute th
 package. Existing files are never overwritten; directory-only placeholders are
 preserved. Manual extraction into that local root remains available for older
 releases. Folder roles come from each program manifest.
-Fresh launch creates only the empty `Programs/Windows` placeholder; without a
-manifest it is not a valid registered program. Import and registration remain
-separate steps in Add Program. Neither upgrade nor normal uninstall removes this user data.
+The installer carries a tracked, immutable Windows catalog at
+`bundled-programs/Windows` under its resource root. Initial Core launch requires
+Windows setup and offers checkboxes for Files, Utility and Startup, all checked
+initially. **Install Windows tools** registers Windows and installs the chosen
+panels; there is no separate Windows download or EXE picker. Its writable catalog,
+panels and owned scripts use the normal local Programs root. After setup the user
+may delete panels or Windows itself without normal launches adding them back.
+Existing configured Windows programs are preserved on upgrade. Other programs
+retain the separate import and registration steps in Add Program. Neither upgrade
+nor normal uninstall removes this user data.
 
-The Windows Startup panel uses the usual Button ownership, scripts and bindings.
-Setup creates its missing panel folder without replacing existing panels or their
-settings. Sign-in registration passes `--logon` to the installed background launcher,
+The Windows Startup panel, when selected, uses the usual Button ownership,
+scripts and bindings. Setup preserves existing panel choices and settings.
+Sign-in registration passes `--logon` to the installed background launcher,
 which explicitly enables AutoHotkey for a new Windows sign-in and reuses an existing
 backend. Manual OFF remains in force throughout that session, including UI launch,
 upgrade, binding saves, sleep and unlock. Turning ON restores stopped scripts and

@@ -14,13 +14,62 @@ $maximumExpandedBytes = 1073741824L
 $maximumFileBytes = 134217728L
 $maximumEntries = 25000
 
+function ConvertTo-ExtendedPath([string]$Path) {
+    # Windows PowerShell's .NET file APIs otherwise retain MAX_PATH limits.
+    $pathText = $Path.Replace('/', '\')
+    if (-not $pathText.StartsWith('\\?\')) {
+        if ($pathText.StartsWith('\\')) { $pathText = '\\?\UNC\' + $pathText.Substring(2) }
+        elseif ($pathText -match '^[A-Za-z]:\\') { $pathText = '\\?\' + $pathText }
+        else { $pathText = '\\?\' + [IO.Path]::GetFullPath($pathText) }
+    }
+    return [IO.Path]::GetFullPath($pathText)
+}
+
+function Test-CloudStorageDirectory([string]$Path) {
+    if (-not ('FlowCellProgramZipCloudDirectory' -as [type])) {
+        Add-Type @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using FILETIME = System.Runtime.InteropServices.ComTypes.FILETIME;
+public static class FlowCellProgramZipCloudDirectory {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct FindData {
+        public uint Attributes;
+        public FILETIME Created, Accessed, Written;
+        public uint SizeHigh, SizeLow, ReparseTag, Reserved;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string Name;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)] public string AlternateName;
+    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr FindFirstFile(string path, out FindData data);
+    [DllImport("kernel32.dll")] static extern bool FindClose(IntPtr handle);
+    public static bool IsCloudTag(uint tag) { return (tag & 0xFFFF0FFFu) == 0x9000001Au; }
+    public static bool IsCloudDirectory(string path) {
+        FindData data;
+        IntPtr handle = FindFirstFile(path.TrimEnd('\\'), out data);
+        if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try { return (data.Attributes & 0x410u) == 0x410u && IsCloudTag(data.ReparseTag); }
+        finally { FindClose(handle); }
+    }
+}
+'@
+    }
+    return [FlowCellProgramZipCloudDirectory]::IsCloudDirectory((ConvertTo-ExtendedPath $Path))
+}
+
 function Assert-PlainPath([string]$Path) {
-    $cursor = [IO.Path]::GetFullPath($Path)
+    $cursor = ConvertTo-ExtendedPath $Path
     while ($cursor) {
-        if (Test-Path -LiteralPath $cursor) {
-            if (((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw 'Program ZIP paths cannot pass through a link or reparse point.'
-            }
+        $attributes = $null
+        try { $attributes = [IO.File]::GetAttributes($cursor) }
+        catch [IO.FileNotFoundException] { }
+        catch [IO.DirectoryNotFoundException] { }
+        # Cloud directory tags preserve identity. Junctions, symbolic links, cloud
+        # files and unknown reparse tags remain rejected, including in ancestors.
+        if ($null -ne $attributes -and ($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -and
+            -not (Test-CloudStorageDirectory $cursor)) {
+            throw "Program ZIP paths cannot pass through a link or reparse point: $cursor"
         }
         $parent = [IO.Path]::GetDirectoryName($cursor)
         if ($parent -eq $cursor) { break }
@@ -41,14 +90,14 @@ function Assert-Segment([string]$Part) {
     }
 }
 
-$archiveFull = [IO.Path]::GetFullPath($ArchivePath)
-$destinationFull = [IO.Path]::GetFullPath($Destination)
+$archiveFull = ConvertTo-ExtendedPath $ArchivePath
+$destinationFull = ConvertTo-ExtendedPath $Destination
 Assert-PlainPath $archiveFull
 Assert-PlainPath $destinationFull
-if (-not [IO.File]::Exists($archiveFull) -or (Get-Item -LiteralPath $archiveFull).Length -gt $maximumArchiveBytes) {
+if (-not [IO.File]::Exists($archiveFull) -or (New-Object IO.FileInfo($archiveFull)).Length -gt $maximumArchiveBytes) {
     throw 'Choose a program ZIP no larger than 512 MiB.'
 }
-if (Test-Path -LiteralPath $destinationFull) { throw 'Program ZIP staging destination must not already exist.' }
+if ([IO.File]::Exists($destinationFull) -or [IO.Directory]::Exists($destinationFull)) { throw 'Program ZIP staging destination must not already exist.' }
 
 $archive = [IO.Compression.ZipFile]::OpenRead($archiveFull)
 try {
@@ -107,7 +156,7 @@ try {
     $destinationPrefix = $destinationFull.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
     $buffer = New-Object byte[] 65536
     foreach ($item in $entries) {
-        $target = [IO.Path]::GetFullPath((Join-Path $destinationFull $item.Relative))
+        $target = [IO.Path]::GetFullPath([IO.Path]::Combine($destinationFull, $item.Relative.Replace('/', '\')))
         if (-not $target.StartsWith($destinationPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Program ZIP escaped staging.' }
         Assert-PlainPath $target
         if ($item.Directory) { [IO.Directory]::CreateDirectory($target) | Out-Null; continue }

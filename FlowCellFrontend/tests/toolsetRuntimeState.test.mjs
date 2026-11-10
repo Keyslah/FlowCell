@@ -13,6 +13,40 @@ import {
 
 const frontendRoot = join(import.meta.dirname, "..");
 
+test("XYZ responses update the declared Button label fields without losing other axis readings", async () => {
+  const { executeButtonRecord, registerButtonCoreAction } = await import("./.compiled-button-system/button/runtime/ButtonRuntimeAdapter.js");
+  const manifest = JSON.parse(readFileSync(join(frontendRoot, "..", "Programs", "Blender", "Blender Git Scripts", "Toolsets", "xyz-dimensions", "flowcell.toolset.json"), "utf8"));
+  assert.doesNotThrow(() => validateInstalledButtonLayout(manifest.layout, manifest.children.map(child => child.slot)));
+  const fields = manifest.layout.fields;
+  let values = Object.fromEntries(fields.map(field => [field.id, field.defaultValue]));
+  let response;
+  const unregister = registerButtonCoreAction("xyz-readout-test", async () => response);
+  try {
+    for (const [axis, display] of [["x", "X 0.787 in"], ["y", "Y 0.394 in"], ["z", "Z -- in"]]) {
+      const slot = `dimension_${axis}`;
+      const behavior = manifest.layout.childBehaviors[slot];
+      const field = fields.find(field => field.id === behavior.labelField);
+      assert.ok(field, `${slot} must expose its response through an existing label field`);
+      assert.equal(field.kind, "display");
+      assert.equal(field.hidden, true);
+      const before = { ...values };
+      response = { status: "ok", display, fieldPatch: { [`${slot}_display`]: display } };
+      const result = await executeButtonRecord({
+        id: slot, label: axis.toUpperCase(), role: "tool-set-child", disabled: false,
+        executionTarget: { kind: "core-action", actionId: "xyz-readout-test" },
+        toolSetBehavior: behavior
+      }, "click", { fields, fieldValues: values });
+      assert.equal(result.executed, true);
+      values = result.fieldValues;
+      assert.equal(values[behavior.labelField], display);
+      for (const other of fields.filter(candidate => candidate.id !== field.id)) {
+        assert.equal(values[other.id], before[other.id]);
+      }
+    }
+    assert.deepEqual(values, { dimension_x_display: "X 0.787 in", dimension_y_display: "Y 0.394 in", dimension_z_display: "Z -- in" });
+  } finally { unregister(); }
+});
+
 function numberField(defaultValue = 15) {
   return {
     id: "angle",

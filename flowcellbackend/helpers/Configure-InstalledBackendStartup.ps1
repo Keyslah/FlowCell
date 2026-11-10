@@ -3,7 +3,7 @@ Purpose: Register the installed background backend at Windows sign-in independen
 Context: Per-user installer hooks. The installed launcher supplies explicit role and paths.
 Inputs: ResourceRoot; LocalRoot for first registration; fixture startup, desktop and registry paths.
 Changes: Startup/optional desktop shortcuts, installed registry pointer, first-use config and preserved legacy migration.
-Constraints: No user settings are removed; a different installation's shortcut is preserved.
+Constraints: No user settings or program panels are changed; a different installation's shortcut is preserved.
 #>
 [CmdletBinding()]
 param(
@@ -88,17 +88,8 @@ if (Test-Path -LiteralPath $toggleShortcutPath -PathType Leaf) {
 }
 . (Join-Path $root 'flowcellbackend\helpers\AutoHotkeyState.ps1')
 Import-FlowCellAutoHotkeyLegacyState -LegacyRoots @($legacyToggleRoots | Select-Object -Unique)
-$windowsRoot = Join-Path $FlowCellProgramsRoot 'Windows'
-$windowsManifest = Join-Path $windowsRoot 'flowcell.program.json'
-$panelsFolder = 'Panels'
-if (Test-Path -LiteralPath $windowsManifest -PathType Leaf) {
-    $manifest = Get-Content -LiteralPath $windowsManifest -Raw | ConvertFrom-Json
-    if ($manifest.PSObject.Properties['panelsFolder']) { $panelsFolder = [string]$manifest.panelsFolder }
-}
-if ([string]::IsNullOrWhiteSpace($panelsFolder) -or [IO.Path]::IsPathRooted($panelsFolder)) { throw 'Windows panelsFolder must be a relative folder.' }
-$startupPanel = [IO.Path]::GetFullPath((Join-Path (Join-Path $windowsRoot $panelsFolder) 'Startup'))
-if (-not $startupPanel.StartsWith(([IO.Path]::GetFullPath($windowsRoot).TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'Windows Startup panel escaped its program folder.' }
-[IO.Directory]::CreateDirectory($startupPanel) | Out-Null
+# Native program setup owns panel selection; background registration must not
+# create an unchecked panel or recreate one the user removed.
 $legacyStartupPath = Join-Path $StartupDirectory 'FlowCell Hotkeys Startup.vbs'
 if ((Test-Path -LiteralPath $legacyStartupPath -PathType Leaf) -and (Get-Item -LiteralPath $legacyStartupPath).Length -le 16384) {
     $legacyText = [IO.File]::ReadAllText($legacyStartupPath)

@@ -108,12 +108,129 @@ test("Add Program always offers a registration-only executable path beside manag
   assert.match(addProgram, /const addPlainProgram = async/);
   assert.match(
     addProgram,
-    /const addPlainProgram = async[\s\S]*preflightAddProgramPlan\(request\)[\s\S]*installValidatedPlan\(validatedRequest, validated\)/
+    /const addPlainProgram = async[\s\S]*preflightAddProgramPlan\(request\)[\s\S]*installValidatedPlan\(validatedRequest\)/
   );
   assert.match(addProgram, /onClick=\{\(\) => void addPlainProgram\(\)\}/);
   assert.doesNotMatch(addProgram, /I confirm this EXE filename identifies/);
   assert.doesNotMatch(addProgram, />Review program<\/button>/);
   assert.match(addProgram, />Review plan<\/button>/);
+});
+
+function addProgramCloseHarness(componentName = "AddProgramWindowPage") {
+  const source = read(frontendRoot, "src", "pages", "program-setup", `${componentName}.tsx`);
+  const parsed = ts.createSourceFile(`${componentName}.tsx`, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const component = parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === componentName);
+  const declarations = component.body.statements.filter(ts.isVariableStatement).flatMap(node => [...node.declarationList.declarations]);
+  const initializer = name => declarations.find(node => node.name.getText(parsed) === name).initializer;
+  const effect = component.body.statements.find(node => ts.isExpressionStatement(node) &&
+    ts.isCallExpression(node.expression) && node.expression.expression.getText(parsed) === "useEffect" &&
+    node.expression.arguments[0].getText(parsed).includes(".onCloseRequested("));
+  assert.ok(effect, `${componentName} must protect native close requests during setup`);
+  let listener;
+  let completeRegistration;
+  let unlistenCount = 0;
+  let closed = false;
+  const statuses = [];
+  const stateUpdates = [];
+  const busyRef = { current: false };
+  const requestClose = () => {
+    const event = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    listener(event);
+    return event;
+  };
+  const context = {
+    busyRef,
+    setBusyState: next => stateUpdates.push(next),
+    setStatus: next => statuses.push(next),
+    setReviewed: () => {},
+    setCompletedSetup: () => {},
+    setSetupStatuses: () => {},
+    loadButtonStateDocument: async () => ({}),
+    publishButtonCommit: async () => {},
+    emitProgramSetupCommitted: async () => {},
+    errorMessage: error => String(error),
+    getCurrentWindow: () => ({
+      onCloseRequested(callback) {
+        listener = callback;
+        return new Promise(resolve => { completeRegistration = () => resolve(() => { unlistenCount += 1; }); });
+      },
+      async close() { closed = !requestClose().defaultPrevented; }
+    })
+  };
+  const evaluate = node => {
+    const compiled = ts.transpileModule(`return (${node.getText(parsed)});`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 }
+    }).outputText;
+    return new Function(...Object.keys(context), compiled)(...Object.values(context));
+  };
+  context.setBusy = evaluate(initializer("setBusy").arguments[0]);
+  const dispose = evaluate(effect.expression.arguments[0])();
+  return {
+    setBusy: context.setBusy, requestClose, dispose, statuses, stateUpdates,
+    present: componentName === "AddProgramWindowPage" ? evaluate(initializer("presentSetupResult")) : null,
+    finish: componentName === "AddPanelWindowPage" ? evaluate(initializer("finishSuccess")) : null,
+    async registered() { completeRegistration(); await Promise.resolve(); },
+    get unlistenCount() { return unlistenCount; },
+    get closed() { return closed; }
+  };
+}
+
+test("Add Program native close follows busy state immediately and releases after setup", async () => {
+  const h = addProgramCloseHarness();
+  await h.registered();
+  assert.equal(h.requestClose().defaultPrevented, false);
+  h.setBusy(true);
+  assert.equal(h.requestClose().defaultPrevented, true, "X/Alt-F4 must not abandon the pending transaction");
+  assert.match(h.statuses.at(-1), /before closing/);
+  h.setBusy(false);
+  assert.equal(h.requestClose().defaultPrevented, false);
+  assert.deepEqual(h.stateUpdates, [true, false]);
+  h.dispose();
+  assert.equal(h.unlistenCount, 1);
+});
+
+test("Add Program removes a close listener that registers after disposal", async () => {
+  const h = addProgramCloseHarness();
+  h.setBusy(true);
+  h.dispose();
+  assert.equal(h.unlistenCount, 0);
+  await h.registered();
+  assert.equal(h.unlistenCount, 1);
+  assert.equal(h.requestClose().defaultPrevented, false);
+  assert.deepEqual(h.statuses, [], "a disposed listener must not update the old window");
+});
+
+test("Add Program successful setup can still close its window while finishing", async () => {
+  const h = addProgramCloseHarness();
+  await h.registered();
+  h.setBusy(true);
+  await h.present({ programName: "Fixture", status: "ready", message: "Added", restartNotes: "" });
+  assert.equal(h.closed, true, "the completed transaction must release its close guard before auto-close");
+  h.dispose();
+});
+
+test("Add Panel blocks native close during setup and releases after completion", async () => {
+  const h = addProgramCloseHarness("AddPanelWindowPage");
+  await h.registered();
+  assert.equal(h.requestClose().defaultPrevented, false);
+  h.setBusy(true);
+  assert.equal(h.requestClose().defaultPrevented, true);
+  assert.match(h.statuses.at(-1), /before closing/);
+  await h.finish("Fixture", "Tools");
+  assert.equal(h.closed, true);
+  assert.deepEqual(h.stateUpdates, [true, false]);
+  h.dispose();
+  assert.equal(h.unlistenCount, 1);
+});
+
+test("Add Panel removes a close listener that arrives after disposal", async () => {
+  const h = addProgramCloseHarness("AddPanelWindowPage");
+  h.setBusy(true);
+  h.dispose();
+  await h.registered();
+  assert.equal(h.unlistenCount, 1);
+  assert.equal(h.requestClose().defaultPrevented, false);
+  assert.deepEqual(h.statuses, []);
 });
 
 test("Add Button fixes its destination and delegates exact content detection to native auto import", () => {

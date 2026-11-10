@@ -1,7 +1,7 @@
 bl_info = {
     "name": "FlowCell",
     "author": "OpenAI Codex",
-    "version": (1, 8, 16),
+    "version": (1, 8, 17),
     "blender": (5, 0, 0),
     "location": "FlowCell bridge runtime",
     "description": "FlowCell Blender sandbox actions.",
@@ -1438,6 +1438,11 @@ def perform_save_selected_stl_to_assets_result(
 
     export_dir = get_assets_3d_directory_from_current_file()
     export_scale = get_stl_export_scale_for_millimeters(context.scene)
+    # STL operator properties differ across Blender versions. In particular,
+    # Blender 5.1 has no evaluation_mode argument.
+    export_options = {}
+    if "evaluation_mode" in bpy.ops.wm.stl_export.get_rna_type().properties:
+        export_options["evaluation_mode"] = "DAG_EVAL_VIEWPORT"
 
     view_layer = context.view_layer
     previous_active = view_layer.objects.active
@@ -1477,10 +1482,10 @@ def perform_save_selected_stl_to_assets_result(
                 check_existing=False,
                 export_selected_objects=True,
                 apply_modifiers=True,
-                evaluation_mode="DAG_EVAL_VIEWPORT",
                 ascii_format=False,
                 use_scene_unit=False,
                 global_scale=export_scale,
+                **export_options,
             )
             if result is None or "FINISHED" not in result:
                 raise ValueError(f"STL export did not finish for '{obj.name}'.")

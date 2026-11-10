@@ -4,8 +4,8 @@ import type {
   ButtonRect,
   ButtonStateDocument,
   ButtonWindowFitMode
-} from "../types";
-import { cloneButtonDocument } from "./buttonDefaults";
+} from "../types.js";
+import { cloneButtonDocument } from "./buttonDefaults.js";
 
 const DRAFT_EVENT = "flowcell:button-draft";
 const DRAFT_REQUEST_EVENT = "flowcell:button-draft-request";

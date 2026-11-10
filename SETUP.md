@@ -16,9 +16,12 @@ Do not use GitHub's automatic `Source code (zip)` download as the app download. 
 
 1. Download `flowcellwindowsinstaller.zip` from Releases.
 2. Extract it and run the included Windows setup executable.
-3. Launch **FlowCell** from the Start Menu.
-4. Download the desired `FlowCell-<Program>.zip` packages. This release includes
-   Blender, Fresco, Fusion 360, Illustrator, Krita and Windows.
+3. Launch **FlowCell** from the Start Menu. Windows tools are included with setup.
+   On first launch, choose the **Files**, **Utility**, and **Startup** panels you
+   want (all are checked initially), then select **Install Windows tools**.
+   Windows is required for initial setup; it needs no separate download or EXE selection.
+4. Download any additional desired `FlowCell-<Program>.zip` packages. The v0.1.4 release
+   provides `FlowCell-Blender.zip` and `FlowCell-Illustrator.zip`.
 5. Open **Add Program → Import program ZIP** and select the downloaded ZIP.
    FlowCell validates it and places the package in its active program data folder.
    Existing packages are not overwritten; importing a ZIP does not run its scripts.
@@ -49,8 +52,10 @@ only that program's available catalog; it preserves local conflicts and does not
 replace scripts already installed into Buttons. The source picker reads new
 downloads immediately. Removing the updater does not cause it to be reinstalled.
 
-FlowCell works before any package is installed. Its empty Windows folder is only
-a placeholder. Normal upgrades/uninstall preserve user data and program packages.
+Windows is installed during initial setup with the panels you choose. You can
+remove its panels or the Windows program afterward; normal launches do not add
+them back. Upgrades preserve an existing configured Windows program. Normal
+upgrades/uninstall preserve user data and program packages.
 Restart Blender after bridge registration, and Fusion after add-in changes.
 Restart FlowCell after manually changing a program manifest. See
 [installer release details](docs/installer-release.md).
@@ -110,7 +115,7 @@ Normal users also do not need Node, npm, Rust, Cargo, or Tauri build tools.
 
 ## Blender tools
 
-After registering the Blender payload with `Add Program`, FlowCell installs or repairs the bridge from `Programs\Blender`, writes the Blender startup bootstrap, and keeps panel creation separate. Restart Blender once after adding Blender. If Blender has never created its user settings folder, open Blender once, close it, then restart FlowCell and add Blender again.
+After registering the Blender payload with `Add Program`, FlowCell installs or repairs the bridge from `Programs\Blender`, writes the Blender startup bootstrap, and keeps panel creation separate. Restart Blender once after adding Blender. For the current installer, follow the **Recheck setup** steps under [Install the current Windows release](#install-the-current-windows-release) if the Blender user settings folder is missing.
 
 ## If FlowCell does not start
 

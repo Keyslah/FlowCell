@@ -1,17 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import {
-  applyAddProgramPlan,
-  emitProgramSetupCommitted,
-  finalizeAddProgramPlan,
   importProgramPackage,
   listAvailableProgramPackages,
   listProgramSetupStatuses,
   preflightAddProgramPlan,
-  prepareAddProgramCanonicalCommit,
   recheckProgramSetup,
-  rollbackAddProgramPlan,
   type AddProgramPlanRequest,
   type AddProgramPreflight,
   type AvailableProgramPackage,
@@ -19,18 +14,7 @@ import {
   type ProgramSetupResult
 } from "../../lib/programRails";
 import { showOpenFileDialog } from "../../lib/tauri";
-import {
-  buttonStateDocumentsEqual,
-  commitButtonStateDocument,
-  loadButtonStateDocument,
-  reconcileBundledProgramSources
-} from "../../button/state/ButtonStateRepository";
-import { publishButtonCommit } from "../../button/state/ButtonDraftBus";
-import { reconcileProgramPanelOwners } from "../../button/state/panelOwnerButtonOperations";
-import {
-  buildPanelRailOwnerEntries,
-  panelRailOwnerSurfaceBounds
-} from "../main/mainLayout";
+import { applyManagedProgramPlan } from "./applyManagedProgramPlan";
 import "./programSetup.css";
 
 type SetupMode = "register" | "everything" | "custom";
@@ -95,12 +79,35 @@ export default function AddProgramWindowPage() {
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
   const [destinations, setDestinations] = useState<Record<string, string>>({});
   const [reviewed, setReviewed] = useState<AddProgramPreflight | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusyState] = useState(false);
+  const busyRef = useRef(false);
+  const setBusy = useCallback((next: boolean) => {
+    busyRef.current = next;
+    setBusyState(next);
+  }, []);
   const [status, setStatus] = useState("Loading Program packages…");
   const [setupStatuses, setSetupStatuses] = useState<ProgramSetupResult[]>([]);
   const [setupStatusError, setSetupStatusError] = useState("");
   const [completedSetup, setCompletedSetup] = useState<ProgramSetupResult | null>(null);
   const packageActionPending = useRef(false);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWindow().onCloseRequested((event) => {
+      if (disposed || !busyRef.current) return;
+      event.preventDefault();
+      setStatus("Finish the current Program setup operation before closing this window.");
+    }).then((next) => {
+      if (disposed) next(); else unlisten = next;
+    }).catch((error) => {
+      if (!disposed) setStatus(`Window close protection failed: ${errorMessage(error)}`);
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const selectedProgram = useMemo(
     () => inventory?.packages.find((program) => program.programName === selectedProgramName) ?? null,
@@ -208,6 +215,7 @@ export default function AddProgramWindowPage() {
     if (result.status === "needsHostInitialization" || result.restartNotes.trim()) {
       setCompletedSetup(result);
     } else {
+      setBusy(false);
       await getCurrentWindow().close();
     }
   };
@@ -379,72 +387,19 @@ export default function AddProgramWindowPage() {
     }
   };
 
-  const finishSuccess = async (programName: string) => {
-    const result = (await listProgramSetupStatuses()).find((entry) => entry.programName === programName);
-    if (!result) throw new Error(`Program '${programName}' is registered, but its setup status could not be recovered.`);
-    setCompletedSetup(result);
-    setStatus(result.message);
-    try {
-      const latest = await loadButtonStateDocument();
-      await publishButtonCommit(latest);
-      await emitProgramSetupCommitted({ kind: "program", programName });
-    } catch (error) {
-      setStatus(`Program '${programName}' was added. Updating the open windows did not finish: ${errorMessage(error)}`);
-    }
-  };
-
-  const installValidatedPlan = async (
-    planRequest: AddProgramPlanRequest,
-    validatedPlan: AddProgramPreflight
-  ) => {
+  const installValidatedPlan = async (planRequest: AddProgramPlanRequest) => {
     setStatus("Applying the durable Program setup transaction…");
-    let transactionToken = "";
     let finalizedResult: ProgramSetupResult | null = null;
     try {
-      const applied = await applyAddProgramPlan(planRequest);
-      transactionToken = applied.transactionToken;
-      const base = await loadButtonStateDocument();
-      const next = reconcileBundledProgramSources(base, applied.descriptors);
-      const panelOwners = reconcileProgramPanelOwners(next, {
-        programName: applied.programName,
-        panels: buildPanelRailOwnerEntries(applied.panels),
-        surfaceBounds: panelRailOwnerSurfaceBounds,
-        removeStaleOwners: false
-      });
-      const sourceOwnerIds = applied.descriptors.map((descriptor) => String(descriptor.ownerButtonId ?? ""));
-      const expectedButtonIds = [
-        ...sourceOwnerIds,
-        ...panelOwners.owners.map((owner) => owner.buttonId)
-      ].filter(Boolean);
-      await prepareAddProgramCanonicalCommit(transactionToken, expectedButtonIds);
-      let saved = base;
-      if (!buttonStateDocumentsEqual(next, base)) {
-        saved = await commitButtonStateDocument(next, base.revision);
-      }
-      const result = await finalizeAddProgramPlan(transactionToken);
+      const result = await applyManagedProgramPlan(planRequest);
       finalizedResult = result;
-      await publishButtonCommit(saved).catch(() => {});
-      await emitProgramSetupCommitted({ kind: "program", programName: applied.programName });
       await presentSetupResult(result);
     } catch (error) {
       if (finalizedResult) {
         setCompletedSetup(finalizedResult);
         setStatus(`Program '${finalizedResult.programName}' was added. Updating this window did not finish: ${errorMessage(error)}`);
-      } else if (!transactionToken) {
-        setStatus(`Program setup failed: ${errorMessage(error)}`);
       } else {
-        try {
-          const outcome = await rollbackAddProgramPlan(transactionToken);
-          if (outcome === "finalized") {
-            await finishSuccess(validatedPlan.programName);
-            return;
-          }
-          setStatus(`Program setup failed and was fully rolled back: ${errorMessage(error)}`);
-        } catch (rollbackError) {
-          setStatus(
-            `Program setup failed: ${errorMessage(error)} Rollback requires startup recovery: ${errorMessage(rollbackError)}`
-          );
-        }
+        setStatus(`Program setup failed: ${errorMessage(error)}`);
       }
     }
   };
@@ -461,7 +416,7 @@ export default function AddProgramWindowPage() {
         executablePath: validated.executablePath
       };
       setPlainExecutablePath(validated.executablePath);
-      await installValidatedPlan(validatedRequest, validated);
+      await installValidatedPlan(validatedRequest);
     } catch (error) {
       setStatus(`Program setup failed: ${errorMessage(error)}`);
     } finally {
@@ -473,7 +428,7 @@ export default function AddProgramWindowPage() {
     if (!request || !reviewed || setupSource !== "package") return;
     setBusy(true);
     try {
-      await installValidatedPlan(request, reviewed);
+      await installValidatedPlan(request);
     } finally {
       setBusy(false);
     }

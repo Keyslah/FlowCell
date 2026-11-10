@@ -63,8 +63,12 @@ function Launch-And-Check([string]$expectedLocal) {
     $runtime=Join-Path $install 'flowcellbackend/runtime/AutoHotkey64.exe'
     $backend=@(Get-CimInstance Win32_Process -Filter "Name = 'AutoHotkey64.exe'"|Where-Object {$_.ExecutablePath -eq $runtime -and $_.CommandLine -like '*--headless*'})
     if($backend.Count -ne 1){throw 'Start Menu launch did not start the required bundled backend.'}
-    if(-not (Test-Path -LiteralPath (Join-Path $expectedLocal 'Programs/Windows'))){throw 'Missing empty Windows placeholder.'}
-    if(Test-Path -LiteralPath (Join-Path $expectedLocal 'Programs/Windows/flowcell.program.json')){throw 'Placeholder incorrectly became a registered program.'}
+    $windowsCatalog=Join-Path $install 'bundled-programs/Windows'
+    if(-not (Test-Path -LiteralPath (Join-Path $windowsCatalog 'flowcell.program.json') -PathType Leaf)){throw 'Installer is missing its mandatory Windows program catalog.'}
+    if(-not (Test-Path -LiteralPath (Join-Path $windowsCatalog 'Windows Git Scripts') -PathType Container)){throw 'Installer is missing its Windows tools.'}
+    foreach($mutable in @('Panels','Windows Local Scripts','flowcell.install.json')){if(Test-Path -LiteralPath (Join-Path $windowsCatalog $mutable)){throw "Mutable user state bundled with Windows: $mutable"}}
+    # The required first-launch chooser owns panel selection and registration.
+    # This unattended smoke test does not claim completion of that interactive UI.
     if(-not (Test-Path -LiteralPath (Join-Path $expectedLocal 'bindings.ini'))){throw 'Bindings were not written to the resolved local root.'}
     foreach($forbidden in @('Programs','local','flowcellbackend/local')){if(Test-Path -LiteralPath (Join-Path $install $forbidden)){throw "Writable data appeared inside installation: $forbidden"}}
     foreach($forbidden in @('panels','scripts')){if(Test-Path -LiteralPath (Join-Path $expectedLocal $forbidden)){throw "Global mutable folder created: $forbidden"}}
@@ -75,6 +79,7 @@ Run-Setup
 Check-StartupBackend
 Launch-And-Check $local
 $userFile=Join-Path $local 'Programs/Windows/preserve-user-data.txt'
+[IO.Directory]::CreateDirectory((Split-Path -Parent $userFile))|Out-Null
 [IO.File]::WriteAllText($userFile,'keep through upgrade and uninstall')
 $toggleScript=Join-Path $install 'tools/autohotkey v2 on off/Toggle-AutoHotkey.ps1'
 & $toggleScript -Quiet

@@ -75,6 +75,7 @@ export interface ButtonHostProps {
   onHoverEnd?: (button: ButtonRecord, event: PointerEvent) => void;
   onHoverCancel?: (button: ButtonRecord, event: PointerEvent) => void;
   onExecutionResult?: (result: ButtonExecutionResult) => void;
+  familySkinCentering?: "both" | "vertical";
   onMeasurement?: (measurement: ButtonCoreMeasurement) => void;
   onVisualMeasurement?: (measurement: ButtonVisualMeasurement) => void;
   visualMeasurementSamplingKey?: string | number;
@@ -163,6 +164,7 @@ export function ButtonHost({
   onHoverEnd,
   onHoverCancel,
   onExecutionResult,
+  familySkinCentering = "both",
   onMeasurement,
   onVisualMeasurement,
   visualMeasurementSamplingKey,
@@ -1265,7 +1267,7 @@ export function ButtonHost({
         constrained={constrained}
         matchHitboxToSkin={skinPlacement.matchHitboxToSkin}
         allowStretching={placement.allowStretching}
-        centerSkinInRect={skin !== assignedSkin}
+        centerSkinInRect={skin !== assignedSkin ? familySkinCentering : undefined}
         textFitMode={placement.textFitMode}
         textAlignment={placement.textAlignment}
         textOffsetX={placement.textOffsetX}

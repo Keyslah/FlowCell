@@ -64,6 +64,8 @@
     "src/button/windows/nativeCursorIgnoreController.ts",
     "src/button/windows/buttonWindowCloseControl.ts",
     "src/pages/window-grid/windowGridDetails.ts",
+    "src/pages/program-setup/applyManagedProgramPlan.ts",
+    "src/pages/program-setup/windowsSetupPlan.ts",
     "src/button/text/textFit.ts",
     "src/button/skins/buttonVisualSampling.ts",
     "src/button/skins/chippedConcreteKeyTravel.ts",

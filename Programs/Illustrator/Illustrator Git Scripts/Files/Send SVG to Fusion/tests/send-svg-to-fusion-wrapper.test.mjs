@@ -46,8 +46,8 @@ test("Send SVG to Fusion is an ordinary completion-waiting Illustrator script pa
 test("fresh installs expose Send SVG to Fusion in Illustrator Files with the SVG owner dependency", () => {
   const svgContribution = programManifest.bundledSources.find(({ id }) => id === "illustrator.send-svg-to-blender");
   const contribution = programManifest.bundledSources.find(({ id }) => id === "illustrator.send-svg-to-fusion");
-  // 1.3.0 is the first Send SVG package that carries the Fusion handoff.
-  assert.equal(svgContribution.version, "1.3.0");
+  // The current Send SVG package includes the Fusion handoff and compound-mask regrouping.
+  assert.equal(svgContribution.version, "1.3.2");
   assert.deepEqual(contribution, {
     id: "illustrator.send-svg-to-fusion",
     version: "1.0.0",

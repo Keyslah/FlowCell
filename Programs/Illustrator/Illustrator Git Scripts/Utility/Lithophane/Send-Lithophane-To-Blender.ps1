@@ -60,7 +60,7 @@ function Write-HandoffStatus {
 
     $folder = Split-Path -Parent $Path
     if (-not [string]::IsNullOrWhiteSpace($folder)) {
-        New-Item -ItemType Directory -Path $folder -Force | Out-Null
+        [void][System.IO.Directory]::CreateDirectory((ConvertTo-ExtendedFilePath -Path $folder))
     }
 
     $lines = @(
@@ -72,26 +72,65 @@ function Write-HandoffStatus {
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     $processId = [System.Diagnostics.Process]::GetCurrentProcess().Id
     $temporaryPath = '{0}.{1}.{2}.tmp' -f $Path, $processId, ([guid]::NewGuid().ToString('N'))
+    $temporaryIoPath = ConvertTo-ExtendedFilePath -Path $temporaryPath
+    $destinationIoPath = ConvertTo-ExtendedFilePath -Path $Path
 
     try {
-        [System.IO.File]::WriteAllLines($temporaryPath, $lines, $utf8NoBom)
-        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        [System.IO.File]::WriteAllLines($temporaryIoPath, $lines, $utf8NoBom)
+        if ([System.IO.File]::Exists($destinationIoPath)) {
             try {
-                [System.IO.File]::Replace($temporaryPath, $Path, $null)
+                [System.IO.File]::Replace($temporaryIoPath, $destinationIoPath, [NullString]::Value)
             }
             catch {
-                Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+                [System.IO.File]::Copy($temporaryIoPath, $destinationIoPath, $true)
+                [System.IO.File]::Delete($temporaryIoPath)
             }
         }
         else {
-            Move-Item -LiteralPath $temporaryPath -Destination $Path
+            [System.IO.File]::Move($temporaryIoPath, $destinationIoPath)
         }
     }
     finally {
-        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
-            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        if ([System.IO.File]::Exists($temporaryIoPath)) {
+            [System.IO.File]::Delete($temporaryIoPath)
         }
     }
+}
+
+function ConvertTo-ExtendedFilePath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if ($Path.StartsWith('\\?\')) { return $Path }
+    if ($Path.StartsWith('\\')) { return '\\?\UNC\' + $Path.Substring(2) }
+    if ($Path -notmatch '^[A-Za-z]:[\\/]') { throw 'Lithophane handoff paths must be absolute.' }
+    return '\\?\' + $Path.Replace('/', '\')
+}
+
+function Read-HandoffRequest {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $ioPath = ConvertTo-ExtendedFilePath -Path $Path
+    if (-not [System.IO.File]::Exists($ioPath)) { throw "Illustrator Lithophane request not found: $Path" }
+    return [System.IO.File]::ReadAllText($ioPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+}
+
+function New-BridgeStatusPath {
+    param([Parameter(Mandatory = $true)][string]$RequestPath)
+    # This diagnostic is written by the existing Blender bridge helper through
+    # PowerShell 5.1's provider. Keep its own short-lived path within that limit.
+    for ($attempt = 0; $attempt -lt 8; $attempt++) {
+        $leaf = ([guid]::NewGuid().ToString('N').Substring(0, 16)) + '.tmp'
+        $path = Join-Path (Split-Path -Parent $RequestPath) $leaf
+        if ($path.Length -gt 259) { $path = Join-Path ([System.IO.Path]::GetTempPath()) $leaf }
+        if ($path.Length -gt 259) { throw 'The temporary Blender diagnostic path is too long.' }
+        try {
+            $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            $stream.Dispose()
+            return $path
+        }
+        catch [System.IO.IOException] {
+            if (-not [System.IO.File]::Exists($path)) { throw }
+        }
+    }
+    throw 'Could not reserve a unique temporary Blender diagnostic file.'
 }
 
 function Resolve-FlowCellRepoRoot {
@@ -458,7 +497,8 @@ function Get-PositiveFiniteNumber {
 }
 
 try {
-    $RequestPath = [System.IO.Path]::GetFullPath($RequestPath)
+    # Extend only IO calls: GetFullPath itself rejects long paths in Windows
+    # PowerShell 5.1. VBS supplies an absolute path, validated by the reader.
     $statusPath = Join-Path (Split-Path -Parent $RequestPath) $statusFileName
     $mutex = New-Object System.Threading.Mutex($false, $mutexName)
     try {
@@ -471,10 +511,7 @@ try {
         throw 'Another Illustrator Lithophane request is still running.'
     }
 
-    if (-not (Test-Path -LiteralPath $RequestPath -PathType Leaf)) {
-        throw "Illustrator Lithophane request not found: $RequestPath"
-    }
-    $request = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $request = Read-HandoffRequest -Path $RequestPath
     $requestId = [string](Get-ObjectPropertyValue -Source $request -Name 'requestId')
     $requestId = $requestId.Trim()
     if ($requestId -cnotmatch '^[A-Za-z0-9_-]{1,128}$') {
@@ -490,11 +527,10 @@ try {
     if ([string]::IsNullOrWhiteSpace($imagePath) -or -not [System.IO.Path]::IsPathRooted($imagePath)) {
         throw 'The Illustrator Lithophane request requires an absolute imagePath.'
     }
-    $imagePath = [System.IO.Path]::GetFullPath($imagePath)
     if ([System.IO.Path]::GetExtension($imagePath) -ine '.png') {
         throw 'The Illustrator Lithophane imagePath must identify a .png file.'
     }
-    if (-not (Test-Path -LiteralPath $imagePath -PathType Leaf)) {
+    if (-not [System.IO.File]::Exists((ConvertTo-ExtendedFilePath -Path $imagePath))) {
         throw "The selected Illustrator PNG is unavailable: $imagePath"
     }
 
@@ -535,7 +571,7 @@ try {
         width_mm = $widthMm
         height_mm = $heightMm
     } | ConvertTo-Json -Depth 4 -Compress
-    $bridgeStatusPath = Join-Path (Split-Path -Parent $RequestPath) ('lithophane.bridge.{0}.tmp' -f $requestId)
+    $bridgeStatusPath = New-BridgeStatusPath -RequestPath $RequestPath
     $response = Invoke-BlenderBridgeAction `
         -InvokeScript $invokeScript `
         -Action $bridgeAction `

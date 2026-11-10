@@ -21,6 +21,7 @@ use commands::theme_archive::*;
 use commands::themes::*;
 use commands::tool_packages::*;
 use commands::windows::*;
+use commands::windows_setup::*;
 
 use image::imageops::FilterType;
 use rfd::FileDialog;
@@ -153,6 +154,13 @@ fn main() {
         return;
     };
 
+    let mut context = tauri::generate_context!();
+    if flowcell_backend_role() == "development" {
+        // Tauri derives the default WebView profile for every window from this
+        // identifier. Keep source windows out of the installed app's profile.
+        context.config_mut().identifier.push_str(".development");
+    }
+
     tauri::Builder::default()
         .manage(ToolSetHotkeyRegistry::default())
         .manage(ScopedTopmostRegistry::default())
@@ -214,6 +222,7 @@ fn main() {
             prepare_add_program_canonical_commit,
             finalize_add_program_plan,
             list_program_setup_statuses,
+            get_windows_setup_requirement,
             recheck_program_setup,
             rollback_add_program_plan,
             preflight_add_panel_plan,
@@ -353,6 +362,6 @@ fn main() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("failed to run FlowCell");
 }

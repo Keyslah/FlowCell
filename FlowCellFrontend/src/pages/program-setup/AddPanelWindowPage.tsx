@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import type { AddPanelWindowContext } from "../../lib/windowContext";
@@ -41,10 +41,33 @@ export default function AddPanelWindowPage({ context }: { context: AddPanelWindo
   const [panelName, setPanelName] = useState("");
   const [sourceFolder, setSourceFolder] = useState("");
   const [reviewed, setReviewed] = useState<AddPanelPreflight | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusyState] = useState(false);
+  const busyRef = useRef(false);
+  const setBusy = useCallback((next: boolean) => {
+    busyRef.current = next;
+    setBusyState(next);
+  }, []);
   const [status, setStatus] = useState(
     "Create an empty managed panel or copy a safe external folder into it."
   );
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWindow().onCloseRequested((event) => {
+      if (disposed || !busyRef.current) return;
+      event.preventDefault();
+      setStatus("Finish the current Panel setup operation before closing this window.");
+    }).then((next) => {
+      if (disposed) next(); else unlisten = next;
+    }).catch((error) => {
+      if (!disposed) setStatus(`Window close protection failed: ${errorMessage(error)}`);
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const request = useMemo<AddPanelPlanRequest>(() => ({
     programName: context.programName,
@@ -81,6 +104,7 @@ export default function AddPanelWindowPage({ context }: { context: AddPanelWindo
     await publishButtonCommit(latest).catch(() => {});
     await emitProgramSetupCommitted({ kind: "panel", programName, panelName: finalPanelName });
     setStatus(`Panel '${finalPanelName}' is managed by ${programName}.`);
+    setBusy(false);
     await getCurrentWindow().close();
   };
 
@@ -118,6 +142,7 @@ export default function AddPanelWindowPage({ context }: { context: AddPanelWindo
         panelName: applied.panelName
       });
       setStatus(`Panel '${applied.panelName}' is managed by ${applied.programName}.`);
+      setBusy(false);
       await getCurrentWindow().close();
     } catch (error) {
       if (!transactionToken) {

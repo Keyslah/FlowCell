@@ -110,8 +110,8 @@ class LithophaneExplicitDimensionTests(unittest.TestCase):
     def test_explicit_dimensions_override_path_derived_size(self):
         calls = []
 
-        def record_create(context, image_path, dpi, target_xy=None, object_name=None):
-            calls.append((context, image_path, dpi, target_xy, object_name))
+        def record_create(context, image_path, dpi, target_xy=None, object_name=None, thickness_mm=None):
+            calls.append((context, image_path, dpi, target_xy, object_name, thickness_mm))
             return {
                 "message": "created",
                 "object": "Lithophane",
@@ -140,6 +140,7 @@ class LithophaneExplicitDimensionTests(unittest.TestCase):
         self.assertTrue(math.isclose(calls[0][3][0], 0.05))
         self.assertTrue(math.isclose(calls[0][3][1], 0.025))
         self.assertEqual(calls[0][4], "  (9) Main Stencil  ")
+        self.assertEqual(calls[0][5], (0.1, 17.0), "existing Illustrator payloads receive physical defaults")
 
     def test_explicit_object_name_preserves_the_owning_sublayer_name(self):
         self.assertEqual(
@@ -203,15 +204,53 @@ class LithophaneExplicitDimensionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no visible pixels"):
             self.module._read_image_alpha(fake_image([0.0, 0.0, 0.0, 0.0]))
 
-    def test_established_depth_settings_are_not_reinterpreted(self):
-        source = SCRIPT_PATH.read_text(encoding="utf-8")
+    def test_depth_range_accepts_defaults_custom_values_and_uniform_thickness(self):
+        self.assertEqual(self.module._resolve_thickness_mm(), (0.1, 17.0))
+        self.assertEqual(self.module._resolve_thickness_mm({"min_thickness_mm": "1.2", "max_thickness_mm": 4}), (1.2, 4.0))
+        self.assertEqual(self.module._resolve_thickness_mm({"min_thickness_mm": 2, "max_thickness_mm": 2}), (2.0, 2.0))
 
-        self.assertNotIn("DISPLACE_STRENGTH_METERS", source)
-        self.assertNotIn("modifier.strength", source)
-        self.assertEqual(
-            source.count("solidify_modifier.thickness = SOLIDIFY_THICKNESS_METERS"),
-            2,
-        )
+    def test_invalid_depth_fails_before_loading_or_creating_any_image(self):
+        for minimum, maximum in ((0, 3), (-1, 3), (4, 3), (math.nan, 3), (0.8, math.inf), (True, 3), (None, 3), ("thin", 3)):
+            with self.subTest(minimum=minimum, maximum=maximum), self.assertRaisesRegex(ValueError, "thickness"):
+                self.module.perform_create_lithophane_from_images(context=fake_context(), data={
+                    "image_path": "must-not-be-loaded.png", "min_thickness_mm": minimum, "max_thickness_mm": maximum
+                })
+
+    def test_displacement_maps_dark_to_minimum_and_light_to_maximum_in_scene_units(self):
+        original_data = getattr(self.module.bpy, "data", None)
+        try:
+            for scale in (1.0, 0.001):
+                texture = types.SimpleNamespace(color_ramp=types.SimpleNamespace(elements=[types.SimpleNamespace(), types.SimpleNamespace()]))
+                modifier = types.SimpleNamespace()
+                self.module.bpy.data = types.SimpleNamespace(textures=types.SimpleNamespace(new=lambda **_: texture))
+                obj = types.SimpleNamespace(name="QA", modifiers=types.SimpleNamespace(new=lambda **_: modifier))
+                minimum = self.module._meters_to_blender_units(fake_context(scale), 0.0008)
+                maximum = self.module._meters_to_blender_units(fake_context(scale), 0.003)
+                self.module._add_displace_modifier(obj, object(), minimum, maximum)
+                for brightness, expected_mm in ((0.0, 0.8), (1.0, 3.0)):
+                    thickness = minimum + (brightness - modifier.mid_level) * modifier.strength
+                    self.assertAlmostEqual(thickness * scale * 1000, expected_mm)
+                self.assertTrue(texture.use_color_ramp)
+        finally:
+            if original_data is None:
+                del self.module.bpy.data
+            else:
+                self.module.bpy.data = original_data
+
+    def test_picker_forwards_edited_thickness_and_dpi(self):
+        calls = []
+        original = self.module.perform_create_lithophane_from_images
+        self.module.perform_create_lithophane_from_images = lambda **kwargs: calls.append(kwargs) or {"message": "created"}
+        try:
+            picker = self.module.FLOWCELL_OT_create_lithophane_from_image()
+            picker.files, picker.filepath = [], "selected.png"
+            picker.dpi, picker.min_thickness_mm, picker.max_thickness_mm = 150, 1.2, 4.5
+            picker.report = lambda *_: None
+            self.assertEqual(picker.execute(fake_context()), {"FINISHED"})
+            self.assertEqual(calls[0]["dpi"], 150)
+            self.assertEqual(calls[0]["data"], {"min_thickness_mm": 1.2, "max_thickness_mm": 4.5})
+        finally:
+            self.module.perform_create_lithophane_from_images = original
 
 
 if __name__ == "__main__":

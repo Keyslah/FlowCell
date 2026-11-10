@@ -15,3 +15,4 @@ pub(crate) mod theme_archive;
 pub(crate) mod tool_packages;
 pub(crate) mod themes;
 pub(crate) mod windows;
+pub(crate) mod windows_setup;

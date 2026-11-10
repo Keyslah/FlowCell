@@ -652,12 +652,9 @@ test("Main Save and Load Layout use the existing strict secondary-window pipelin
   );
   assert.match(
     nativeLayouts,
-    /add_filter\("FlowCell Layout", &\["flowlayout\.json"\]\)/
+    /add_filter\("FlowCell Layout", &\["json"\]\)/
   );
-  assert.match(
-    nativeLayouts,
-    /add_filter\("Legacy FlowCell Layout", &\["json"\]\)/
-  );
+  assert.doesNotMatch(nativeLayouts, /add_filter\([^\n]+"flowlayout\.json"/);
   const openLayoutDialogStart = nativeLayouts.indexOf(
     "pub(crate) fn show_open_layout_dialog"
   );

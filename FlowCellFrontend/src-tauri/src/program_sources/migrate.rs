@@ -1255,14 +1255,19 @@ fn journal_is_represented_in_state(
 }
 
 #[tauri::command]
-pub(crate) fn prepare_legacy_button_bootstrap(
+pub(crate) async fn prepare_legacy_button_bootstrap(
+) -> Result<Option<LegacySourceMigrationResponse>, String> {
+    super::run_source_blocking("prepare legacy bootstrap", prepare_legacy_button_bootstrap_sync).await
+}
+
+fn prepare_legacy_button_bootstrap_sync(
 ) -> Result<Option<LegacySourceMigrationResponse>, String> {
     let lock = LEGACY_BUTTON_BOOTSTRAP_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock
         .lock()
         .map_err(|_| "Legacy Button bootstrap lock is poisoned.".to_string())?;
 
-    let state = crate::button_state::load_button_state()?;
+    let state = crate::button_state::load_button_state_sync()?;
     let mut pending = pending_migration_journals()?;
     if pending.len() > 1 {
         return Err("More than one legacy Button migration is pending; refusing to guess which transaction owns canonical state.".to_string());

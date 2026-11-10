@@ -346,7 +346,15 @@ fn require_new_export_path(path: &Path) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub(crate) fn export_installed_toolset(
+pub(crate) async fn export_installed_toolset(
+    request: ExportInstalledToolsetRequest,
+) -> Result<String, String> {
+    crate::program_sources::run_source_blocking("export toolset", move || {
+        export_installed_toolset_sync(request)
+    }).await
+}
+
+fn export_installed_toolset_sync(
     request: ExportInstalledToolsetRequest,
 ) -> Result<String, String> {
     let program = crate::require_registered_program_name(&request.program_name)?;
@@ -466,6 +474,7 @@ pub(crate) fn export_installed_toolset(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::export_installed_toolset_sync as export_installed_toolset;
     use serde_json::json;
 
     const SKIN_SOURCE: &str = "=== structure ===\n<span data-core>{{label}}</span>\n=== keyframes ===\n=== base ===\n=== hover ===\n=== play ===\n=== pressed ===\n=== held ===\n=== release ===\n=== disabled ===\n=== error ===\n";
@@ -540,7 +549,7 @@ mod tests {
         std::env::set_var("FLOWCELL_LOCAL_ROOT", &local);
 
         let install = |owner: &str, path: &Path| {
-            super::super::install_button_source(super::super::InstallButtonSourceRequest {
+            super::super::install_button_source_sync(super::super::InstallButtonSourceRequest {
                 owner_button_id: owner.into(),
                 program_name: "Blender".into(),
                 panel_name: "Tools".into(),

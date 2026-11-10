@@ -3686,7 +3686,13 @@ fn install_from_path_while_source_locked_with_completion(
 }
 
 #[tauri::command]
-pub(crate) fn install_button_source(
+pub(crate) async fn install_button_source(
+    request: InstallButtonSourceRequest,
+) -> Result<InstallButtonSourceResponse, String> {
+    super::run_source_blocking("install", move || install_button_source_sync(request)).await
+}
+
+pub(crate) fn install_button_source_sync(
     mut request: InstallButtonSourceRequest,
 ) -> Result<InstallButtonSourceResponse, String> {
     request.program_name = crate::require_registered_program_name(&request.program_name)?;
@@ -3845,7 +3851,13 @@ fn complete_button_source_update(
 }
 
 #[tauri::command]
-pub(crate) fn update_button_source(
+pub(crate) async fn update_button_source(
+    request: InstallButtonSourceRequest,
+) -> Result<InstallButtonSourceResponse, String> {
+    super::run_source_blocking("update", move || update_button_source_sync(request)).await
+}
+
+fn update_button_source_sync(
     mut request: InstallButtonSourceRequest,
 ) -> Result<InstallButtonSourceResponse, String> {
     request.program_name = crate::require_registered_program_name(&request.program_name)?;
@@ -3871,19 +3883,23 @@ pub(crate) fn update_button_source(
 }
 
 #[tauri::command]
-pub(crate) fn finalize_button_source_update(
+pub(crate) async fn finalize_button_source_update(
     transaction_token: String,
     owner_button_id: String,
 ) -> Result<String, String> {
-    complete_button_source_update(transaction_token, owner_button_id)
+    super::run_source_blocking("finalize update", move || {
+        complete_button_source_update(transaction_token, owner_button_id)
+    }).await
 }
 
 #[tauri::command]
-pub(crate) fn rollback_button_source_update(
+pub(crate) async fn rollback_button_source_update(
     transaction_token: String,
     owner_button_id: String,
 ) -> Result<String, String> {
-    complete_button_source_update(transaction_token, owner_button_id)
+    super::run_source_blocking("rollback update", move || {
+        complete_button_source_update(transaction_token, owner_button_id)
+    }).await
 }
 
 pub(crate) fn merge_toolset_payload(

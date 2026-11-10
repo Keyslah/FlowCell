@@ -273,6 +273,11 @@ export async function listAvailableProgramPackages(): Promise<AvailableProgramPa
   );
 }
 
+export async function getWindowsSetupRequirement(): Promise<AvailableProgramPackage | null> {
+  if (!isTauriWindowHost()) return null;
+  return invokeProgramRailCommand<AvailableProgramPackage | null>("get_windows_setup_requirement");
+}
+
 export async function importProgramPackage(zipPath: string): Promise<{ programName: string; packagePath: string; cleanupWarning?: string }> {
   return invokeProgramRailCommand("import_program_package", { zipPath });
 }
