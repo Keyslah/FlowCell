@@ -1259,8 +1259,18 @@ export default function MainPage() {
   }, [applyPanelScriptRecords, selectedPanelName, selectedProgramName]);
 
   const programRailButtons = useMemo(
-    () => buildProgramRailButtons(programNames, selectedProgramName),
-    [programNames, selectedProgramName]
+    () => {
+      const discovered = buildProgramRailButtons(programNames, selectedProgramName);
+      const savedPrograms = discovered.flatMap((button) => {
+        if (!button.folderName) return [];
+        const presentation = resolveFlowCellMainPagePresentation(buttonDocument, button);
+        return presentation ? [{ programName: button.folderName, rect: presentation.placement }] : [];
+      });
+      const footer = discovered.find((button) => button.actionId === "add-program-folder");
+      const savedFooter = footer ? resolveFlowCellMainPagePresentation(buttonDocument, footer)?.placement : undefined;
+      return buildProgramRailButtons(programNames, selectedProgramName, savedPrograms, savedFooter);
+    },
+    [buttonDocument, programNames, selectedProgramName]
   );
 
   const orderedPanelScripts = useMemo(

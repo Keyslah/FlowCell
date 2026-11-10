@@ -413,9 +413,43 @@ export const staticButtons: ButtonRecord[] = [
 
 export function buildProgramRailButtons(
   names: readonly string[],
-  selectedName: string | null
+  selectedName: string | null,
+  savedPrograms: readonly { programName: string; rect: PanelRailOwnerEntry["rect"] }[] = [],
+  savedAddProgramRect?: PanelRailOwnerEntry["rect"]
 ): ButtonRecord[] {
-  return buildFolderRailButtons(programRailDefinition, names, selectedName);
+  const buttons = buildFolderRailButtons(programRailDefinition, names, selectedName);
+  // Canonical placements are restored after folder discovery. Reserve them
+  // first so a newly registered Program cannot appear beneath a saved Button.
+  const footer = buttons.find((button) => button.actionId === "add-program-folder");
+  const occupied = [
+    ...savedPrograms.map((entry) => entry.rect),
+    ...(savedAddProgramRect ? [savedAddProgramRect] : footer ? [footer] : [])
+  ];
+  const candidates = buttons.filter((button) => button.folderName);
+  return buttons.map((button) => {
+    if (!button.folderName) return button;
+    const saved = savedPrograms.find((entry) => equalsFolderName(entry.programName, button.folderName!));
+    if (saved) return {
+      ...button,
+      x: saved.rect.x,
+      y: saved.rect.y,
+      width: saved.rect.width,
+      height: saved.rect.height
+    };
+    const available = [button, ...candidates].find((candidate) =>
+      !occupied.some((rect) => buttonRectsOverlap(candidate, rect))
+    );
+    const next = available
+      ? { ...button, x: available.x, y: available.y }
+      : {
+          ...button,
+          y: Math.max(button.y, ...occupied
+            .filter((rect) => button.x < rect.x + rect.width && button.x + button.width > rect.x)
+            .map((rect) => rect.y + rect.height + railButtonGeometry.stepY - railButtonGeometry.height))
+        };
+    occupied.push({ x: next.x, y: next.y, width: next.width, height: next.height });
+    return next;
+  });
 }
 
 export function buildPanelRailButtons(
