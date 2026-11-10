@@ -207,6 +207,19 @@ function placementPresentation(placement: ButtonPlacement): PortablePlacementPre
   return structuredClone(presentation);
 }
 
+/**
+ * A Button with no source, action, panel or Main control (such as a sample placed on a panel by a script) cannot
+ * be matched on import, so a portable theme leaves it out instead of refusing to save; applying the theme leaves
+ * that Button as it is. Buttons that have a source still need exactly one installed identity.
+ */
+function canBePortableThemeButton(button: ButtonRecord | undefined): boolean {
+  return !button || Boolean(
+    button.sourceIdentity || button.executionTarget || button.toolSetParentId || panelReference(button) ||
+    (button.metadata.mainPageControl === true && typeof button.metadata.mainPageControlKey === "string" &&
+      button.metadata.mainPageControlKey.trim())
+  );
+}
+
 /** Capture actual authored geometry and literal skins, never transient runtime state. */
 export function capturePortableTheme(args: {
   document: ButtonStateDocument;
@@ -217,13 +230,21 @@ export function capturePortableTheme(args: {
   contributions?: Record<string, PortableThemeContribution>;
   id?: string;
   savedAt?: string;
+  /**
+   * Applying in place on this machine (the Theme Editor's Apply): keep each skin's local metadata, such as its skin
+   * family link, instead of stripping it. Existing skins are then reused unchanged, and a newly assigned family skin
+   * keeps switching through the local Skins folder, so nothing needs its family files embedded. Saved and exported
+   * themes leave this off.
+   */
+  keepLocalSkinMetadata?: boolean;
 }): PortableTheme {
   const name = args.name.trim();
   if (!name) throw new Error("A theme name is required.");
   const document = args.document;
   const source = structuredClone(args.theme ?? captureThemeFile({ document, target: args.target }));
   if (!themeTargetsMatch(source.target, args.target)) throw new Error("Theme capture target does not match the selected target.");
-  const placements = listThemePlacements(document, args.target);
+  const placements = listThemePlacements(document, args.target)
+    .filter((placement) => canBePortableThemeButton(document.buttons[placement.buttonId]));
   const selected = new Set(placements.map((placement) => placement.id));
   const buttonMap = new Map<string, string>();
   const placementMap = new Map(placements.map((placement, index) => [placement.id, `placement-${index}`]));
@@ -285,14 +306,16 @@ export function capturePortableTheme(args: {
     const skin: ButtonSkin = {
       ...(current ? parseInstalledToolSetSkin(current.source, appearance.skin.name) : appearance.skin),
       id: "",
-      metadata: variants ? { buttonSkinEmbeddedVariants: variants } : {},
+      metadata: variants ? { buttonSkinEmbeddedVariants: variants }
+        : args.keepLocalSkinMetadata ? structuredClone(appearance.skin.metadata) : {},
       compileCache: null
     };
     return {
       ...appearance, label, placementId,
       buttonId: captureButton(appearance.buttonId), surfaceId: surfaceMap.get(appearance.surfaceId)!,
       sourceIdentity: null, panelOwnerIdentity: null,
-      skin: { ...skin, id: `skin-${portableKey(JSON.stringify(skin))}` },
+      // In place, keep the skin's own id so applying reuses that exact skin even when another has the same sections.
+      skin: { ...skin, id: args.keepLocalSkinMetadata && appearance.skin.id ? appearance.skin.id : `skin-${portableKey(JSON.stringify(skin))}` },
       assignSkin: true
     };
   });

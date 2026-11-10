@@ -1265,6 +1265,7 @@ export function ButtonHost({
         constrained={constrained}
         matchHitboxToSkin={skinPlacement.matchHitboxToSkin}
         allowStretching={placement.allowStretching}
+        centerSkinInRect={skin !== assignedSkin}
         textFitMode={placement.textFitMode}
         textAlignment={placement.textAlignment}
         textOffsetX={placement.textOffsetX}

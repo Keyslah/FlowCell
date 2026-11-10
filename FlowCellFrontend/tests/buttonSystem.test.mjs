@@ -2383,7 +2383,7 @@ test("placement text alignment overrides HTML layout without remounting or erasi
   assert.match(renderer, /fitted\.label === renderedLabel/);
   assert.match(
     renderer,
-    /}, \[width, height, renderedLabel, textFitMode, minimumFontSize, constrained, matchHitboxToSkin, allowStretching, textSizeOverride, previewStackWords\]\);/
+    /}, \[width, height, renderedLabel, textFitMode, minimumFontSize, constrained, matchHitboxToSkin, allowStretching, centerSkinInRect, textSizeOverride, previewStackWords\]\);/
   );
 });
 

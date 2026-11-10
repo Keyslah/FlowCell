@@ -338,6 +338,70 @@ test("legacy popped appearances preserve missing fields and apply global setting
   }), /cannot be resolved exactly/);
 });
 
+test("Main portable themes leave out panel Buttons that have no source, action or control, and keep them unchanged", () => {
+  const donor = singleFixture("host");
+  const host = donor.document.buttons.host;
+  host.sourceIdentity = null;
+  host.executionTarget = null;
+  host.metadata = { mainPageControl: true, mainPageControlKey: "buttons-add-script" };
+  const hostPlacement = Object.values(donor.document.placements).find((entry) => donor.document.surfaces[entry.surfaceId].kind === "panel");
+  const panelSurface = donor.document.surfaces[hostPlacement.surfaceId];
+  const mainId = getFlowCellThemePageDefinition("main").buttonSurfaceIds[0];
+  donor.document.surfaces[mainId] = { ...panelSurface, id: mainId, kind: "main", placementIds: [hostPlacement.id] };
+  hostPlacement.surfaceId = mainId;
+  delete donor.document.placements[donor.unit.memberPlacementIds[0]];
+  delete donor.document.surfaces[donor.unit.surfaceId];
+  delete donor.document.popoutUnits[donor.unit.id];
+  // A script-made sample on a program panel: no source, no action, no metadata.
+  donor.document.buttons.sample = { ...structuredClone(host), id: "sample", label: "Concrete Moss", metadata: {} };
+  donor.document.placements["placement-sample"] = { ...structuredClone(hostPlacement), id: "placement-sample", buttonId: "sample", surfaceId: panelSurface.id, x: 0, y: 0 };
+  panelSurface.placementIds = ["placement-sample"];
+  const main = { kind: "flowcell", page: "main" };
+  assert.equal(listThemePlacements(donor.document, main).some((entry) => entry.id === "placement-sample"), true);
+  const before = cloneButtonDocument(donor.document);
+  const theme = capturePortableTheme({ document: donor.document, target: main, name: "Main", descriptors: [] });
+  assert.equal(theme.theme.buttons.some((appearance) => appearance.label === "Concrete Moss"), false);
+  assert.equal(theme.theme.buttons.length, 1);
+  assert.equal(Object.keys(theme.references).length, 1);
+  const plan = planPortableThemeImport(donor.document, theme, main, []);
+  assert.deepEqual(plan.issues, []);
+  const applied = applyPortableTheme(donor.document, theme, plan);
+  assert.deepEqual(applied.placements["placement-sample"], before.placements["placement-sample"]);
+  assert.deepEqual(applied.buttons.sample, before.buttons.sample);
+});
+
+test("applying in place keeps local skin family links and reuses existing skins instead of copying them", () => {
+  const donor = singleFixture("host");
+  const host = donor.document.buttons.host;
+  host.sourceIdentity = null;
+  host.executionTarget = null;
+  host.metadata = { mainPageControl: true, mainPageControlKey: "buttons-add-script" };
+  const placement = Object.values(donor.document.placements).find((entry) => donor.document.surfaces[entry.surfaceId].kind === "panel");
+  const oldSurface = donor.document.surfaces[placement.surfaceId];
+  const mainId = getFlowCellThemePageDefinition("main").buttonSurfaceIds[0];
+  donor.document.surfaces[mainId] = { ...oldSurface, id: mainId, kind: "main" };
+  delete donor.document.surfaces[oldSurface.id];
+  placement.surfaceId = mainId;
+  delete donor.document.placements[donor.unit.memberPlacementIds[0]];
+  delete donor.document.surfaces[donor.unit.surfaceId];
+  delete donor.document.popoutUnits[donor.unit.id];
+  const base = donor.document.skins[placement.skinOverrideId ?? host.defaultSkinId];
+  const familyMetadata = { buttonSkinFamily: "Chipped Concrete", buttonSkinFamilyBaseline: { [placement.id]: 10 } };
+  donor.document.skins["skin-key"] = { ...structuredClone(base), id: "skin-key", name: "Chipped Concrete Key 104", metadata: structuredClone(familyMetadata) };
+  placement.skinOverrideId = "skin-key";
+  const main = { kind: "flowcell", page: "main" };
+  const shared = capturePortableTheme({ document: donor.document, target: main, name: "Main", descriptors: [] });
+  assert.deepEqual(shared.theme.buttons[0].skin.metadata, {});
+  const local = capturePortableTheme({ document: donor.document, target: main, name: "Main", descriptors: [], keepLocalSkinMetadata: true });
+  assert.deepEqual(local.theme.buttons[0].skin.metadata, familyMetadata);
+  const plan = planPortableThemeImport(donor.document, local, main, []);
+  assert.deepEqual(plan.issues, []);
+  const applied = applyPortableTheme(donor.document, local, plan);
+  assert.deepEqual(Object.keys(applied.skins).sort(), Object.keys(donor.document.skins).sort());
+  assert.equal(applied.placements[placement.id].skinOverrideId, "skin-key");
+  assert.deepEqual(applied.skins["skin-key"], donor.document.skins["skin-key"]);
+});
+
 test("Main host-owned controls round-trip by registered control keys without a source package", () => {
   const donor = singleFixture("host");
   const button = donor.document.buttons.host;

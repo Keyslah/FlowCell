@@ -869,7 +869,10 @@ export default function ThemeEditorPage({
     });
   };
 
-  const captureCompleteTheme = async (): Promise<PortableTheme> => {
+  // Apply works on this machine, so it keeps local skin family links instead of embedding every family file into
+  // each skin (one Apply on the Chipped Concrete keys used to add ~37 MB to button-state.json). Save Theme embeds,
+  // because a saved or exported theme must carry its variants.
+  const captureCompleteTheme = async ({ localApply = false }: { localApply?: boolean } = {}): Promise<PortableTheme> => {
     if (!draftDocument) throw new Error("Button state is not loaded yet.");
     if (target.kind === "program") {
       const installed = await invoke<unknown>("resolve_theme_contribution", { programName: target.programName });
@@ -877,7 +880,7 @@ export default function ThemeEditorPage({
     }
     const extension = target.kind === "program" ? await contribution.current?.capture() : null;
     let library: Promise<ToolsetSkinLibrary> | undefined;
-    const document = await embedLocalButtonSkinFamilies(
+    const document = localApply ? draftDocument : await embedLocalButtonSkinFamilies(
       draftDocument,
       listThemePlacements(draftDocument, target).map((placement) => placement.id),
       () => library ??= Promise.all([getButtonSkinDirectory(), listButtonSkinFiles()]).then(([directory, paths]) => ({
@@ -887,7 +890,8 @@ export default function ThemeEditorPage({
     return capturePortableTheme({ document, target, name: themeName,
       descriptors: await getThemeToolDescriptors(target), theme: captureCurrentTheme(document),
       ...(activeTheme?.id && activeTheme.name === themeName ? { id: activeTheme.id } : {}),
-      contributions: extension ? { [extension.sourceId]: extension } : {} });
+      contributions: extension ? { [extension.sourceId]: extension } : {},
+      keepLocalSkinMetadata: localApply });
   };
 
   const updateContributionSelection = async (theme: PortableTheme, path: string) => {
@@ -1042,7 +1046,7 @@ export default function ThemeEditorPage({
     if (pending) return;
     setPending(true);
     try {
-      const theme = await captureCompleteTheme();
+      const theme = await captureCompleteTheme({ localApply: true });
       const committed = await commitCompleteTheme(theme);
       const acceptedGradient = theme.theme.gradient ?? DEFAULT_GRADIENT;
       writeThemeEditorScopeState(target, {

@@ -89,6 +89,11 @@ export interface ButtonSkinRendererProps {
   constrained?: boolean;
   matchHitboxToSkin?: boolean;
   allowStretching?: boolean;
+  /**
+   * Center a uniformly scaled skin in the rect instead of pinning it to the top-left corner. ButtonHost sets it when
+   * a skin family swaps in the member for the label, so a new or renamed rail Button sits in the middle of its slot.
+   */
+  centerSkinInRect?: boolean;
   textFitMode: ButtonTextFitMode;
   textAlignment?: ButtonTextAlignment;
   textOffsetX?: number;
@@ -752,7 +757,8 @@ function applySkinRootScale(
   height: number | undefined,
   matchHitboxToSkin: boolean,
   allowStretching: boolean,
-  renderScale: ButtonHostRenderScale
+  renderScale: ButtonHostRenderScale,
+  centerInRect = false
 ): void {
   mounted.container.style.removeProperty("transform");
   mounted.container.style.removeProperty("transform-origin");
@@ -771,15 +777,17 @@ function applySkinRootScale(
     mounted.container.style.transform = `translate(${-coreOffsetX}px, ${-coreOffsetY}px)`;
     return;
   }
+  const naturalWidth = naturalCoreRect.width / renderScale.scaleX;
+  const naturalHeight = naturalCoreRect.height / renderScale.scaleY;
   const scale = resolveButtonSkinScale(
-    {
-      width: naturalCoreRect.width / renderScale.scaleX,
-      height: naturalCoreRect.height / renderScale.scaleY
-    },
+    { width: naturalWidth, height: naturalHeight },
     { width, height },
     allowStretching
   );
-  mounted.container.style.transform = `scale(${scale.scaleX}, ${scale.scaleY}) translate(${-coreOffsetX}px, ${-coreOffsetY}px)`;
+  const offsetX = centerInRect ? Math.max(0, (width - naturalWidth * scale.scaleX) / 2) : 0;
+  const offsetY = centerInRect ? Math.max(0, (height - naturalHeight * scale.scaleY) / 2) : 0;
+  const centering = offsetX || offsetY ? `translate(${offsetX}px, ${offsetY}px) ` : "";
+  mounted.container.style.transform = `${centering}scale(${scale.scaleX}, ${scale.scaleY}) translate(${-coreOffsetX}px, ${-coreOffsetY}px)`;
 }
 
 function measureNaturalSkin(
@@ -1017,6 +1025,7 @@ export function ButtonSkinRenderer({
   constrained = true,
   matchHitboxToSkin = true,
   allowStretching = false,
+  centerSkinInRect = false,
   textFitMode,
   textAlignment = "skin",
   textOffsetX = 0,
@@ -1063,6 +1072,7 @@ export function ButtonSkinRenderer({
     constrained: boolean;
     matchHitboxToSkin: boolean;
     allowStretching: boolean;
+    centerSkinInRect: boolean;
     textSizeOverride?: number;
     previewStackWords: boolean;
   } | null>(null);
@@ -1071,14 +1081,16 @@ export function ButtonSkinRenderer({
     height,
     constrained,
     matchHitboxToSkin,
-    allowStretching
+    allowStretching,
+    centerSkinInRect
   });
   sizingRef.current = {
     width,
     height,
     constrained,
     matchHitboxToSkin,
-    allowStretching
+    allowStretching,
+    centerSkinInRect
   };
   // Callbacks flow through refs so parent re-renders (new inline arrow identities)
   // never remount the skin shadow DOM — a remount restarts every CSS animation.
@@ -1376,7 +1388,8 @@ export function ButtonSkinRenderer({
       height,
       matchHitboxToSkin,
       allowStretching,
-      resolveHostRenderScale(host, width, height)
+      resolveHostRenderScale(host, width, height),
+      centerSkinInRect
     );
     applyTextOffset(mounted, textOffsetX, textOffsetY);
     fittedTextRef.current = {
@@ -1388,6 +1401,7 @@ export function ButtonSkinRenderer({
       constrained,
       matchHitboxToSkin,
       allowStretching,
+      centerSkinInRect,
       textSizeOverride,
       previewStackWords: Boolean(previewStackWords)
     };
@@ -1404,7 +1418,8 @@ export function ButtonSkinRenderer({
         sizing.height,
         sizing.matchHitboxToSkin,
         sizing.allowStretching,
-        renderScale
+        renderScale,
+        sizing.centerSkinInRect
       );
       applyTextOffset(mounted, textOffsetX, textOffsetY);
       if (hasMeasurementConsumer) {
@@ -1525,6 +1540,7 @@ export function ButtonSkinRenderer({
       fitted.constrained === constrained &&
       fitted.matchHitboxToSkin === matchHitboxToSkin &&
       fitted.allowStretching === allowStretching &&
+      fitted.centerSkinInRect === centerSkinInRect &&
       fitted.textSizeOverride === textSizeOverride &&
       fitted.previewStackWords === Boolean(previewStackWords)
     ) return;
@@ -1546,7 +1562,8 @@ export function ButtonSkinRenderer({
       height,
       matchHitboxToSkin,
       allowStretching,
-      renderScale
+      renderScale,
+      centerSkinInRect
     );
     // SVG fitting recreates the host-owned line tspans, and its pixel-to-user
     // conversion must observe the final host scale.
@@ -1560,6 +1577,7 @@ export function ButtonSkinRenderer({
       constrained,
       matchHitboxToSkin,
       allowStretching,
+      centerSkinInRect,
       textSizeOverride,
       previewStackWords: Boolean(previewStackWords)
     };
@@ -1568,7 +1586,7 @@ export function ButtonSkinRenderer({
     const measurement = readMeasurement(mounted.container, mounted.core, renderScale);
     onMeasurementRef.current?.(measurement);
     onVisualMeasurementRef.current?.({ ...measurement, state: visualStateRef.current });
-  }, [width, height, renderedLabel, textFitMode, minimumFontSize, constrained, matchHitboxToSkin, allowStretching, textSizeOverride, previewStackWords]);
+  }, [width, height, renderedLabel, textFitMode, minimumFontSize, constrained, matchHitboxToSkin, allowStretching, centerSkinInRect, textSizeOverride, previewStackWords]);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
