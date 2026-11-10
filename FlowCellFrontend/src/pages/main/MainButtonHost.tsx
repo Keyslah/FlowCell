@@ -1,11 +1,31 @@
+import { useCallback, useState } from "react";
 import { ButtonHost } from "../../button/ButtonHost";
 import { DEFAULT_BUTTON_SKIN } from "../../button/skins/defaultButtonSkin";
 import type {
   ButtonPlacement,
+  ButtonCoreMeasurement,
   ButtonRecord as CanonicalButtonRecord,
   ButtonSkin
 } from "../../button/types";
-import type { ButtonRecord as MainLayoutButtonRecord } from "./mainLayout";
+import { rails, type ButtonRecord as MainLayoutButtonRecord } from "./mainLayout";
+
+function useMainRailPosition(button: MainLayoutButtonRecord, absolute: boolean, fallbackWidth: number) {
+  const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
+  const rail = absolute && (button.railId === "program-rail" || button.railId === "panel-rail")
+    ? rails.find((candidate) => candidate.id === button.railId)
+    : undefined;
+  const onMeasurement = useCallback((measurement: ButtonCoreMeasurement) => {
+    if (!Number.isFinite(measurement.width) || measurement.width <= 0) return;
+    setMeasuredWidth((previous) => previous !== null && Math.abs(previous - measurement.width) < 0.01
+      ? previous : measurement.width);
+  }, []);
+  return {
+    left: absolute
+      ? rail ? rail.x + (rail.width - (measuredWidth ?? fallbackWidth)) / 2 : button.x
+      : undefined,
+    onMeasurement: rail ? onMeasurement : undefined
+  };
+}
 
 export interface MainButtonHostProps {
   button: MainLayoutButtonRecord;
@@ -46,6 +66,7 @@ export function MainButtonHost({
   const renderedPlacement = targetHeightOverride === undefined
     ? placement
     : { ...placement, height: targetHeightOverride };
+  const railPosition = useMainRailPosition(button, absolute, renderedPlacement.width);
   const mainPageDefaultLabel = typeof canonical.metadata.mainPageDefaultLabel === "string"
     ? canonical.metadata.mainPageDefaultLabel
     : null;
@@ -70,7 +91,7 @@ export function MainButtonHost({
       data-main-button-host={button.id}
       style={{
         position: absolute ? "absolute" : "relative",
-        left: absolute ? button.x : undefined,
+        left: railPosition.left,
         top: absolute ? button.y : undefined,
         display: "inline-block",
         width: renderedPlacement.width,
@@ -85,6 +106,7 @@ export function MainButtonHost({
         button={effectiveCanonical}
         placement={renderedPlacement}
         skin={skin}
+        onMeasurement={railPosition.onMeasurement}
         selected={Boolean(button.isSelected)}
         selectionOnly={Boolean(button.scriptFileName)}
         onActivate={onActivate ? (_canonical, event) => onActivate(button, event) : undefined}
@@ -122,6 +144,7 @@ export function MainControlHost({
   onRequestContextMenu
 }: MainControlHostProps) {
   const height = targetHeightOverride ?? control.height;
+  const railPosition = useMainRailPosition(control, absolute, control.width);
   const canonicalControl: CanonicalButtonRecord = {
     id: control.id,
     role: "panel-owner",
@@ -168,7 +191,7 @@ export function MainControlHost({
       data-main-control-host={control.id}
       style={{
         position: absolute ? "absolute" : "relative",
-        left: absolute ? control.x : undefined,
+        left: railPosition.left,
         top: absolute ? control.y : undefined,
         display: "inline-block",
         width: placement.width,
@@ -183,6 +206,7 @@ export function MainControlHost({
         button={canonicalControl}
         placement={placement}
         skin={DEFAULT_BUTTON_SKIN}
+        onMeasurement={railPosition.onMeasurement}
         selected={Boolean(control.isSelected)}
         onActivate={onActivate ? (_canonical, event) => onActivate(control, event) : undefined}
         onDoubleActivate={onDoubleActivate ? (_canonical, event) => onDoubleActivate(control, event) : undefined}

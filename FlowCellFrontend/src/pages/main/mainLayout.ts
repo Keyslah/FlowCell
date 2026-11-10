@@ -418,17 +418,26 @@ export function buildProgramRailButtons(
   savedAddProgramRect?: PanelRailOwnerEntry["rect"]
 ): ButtonRecord[] {
   const buttons = buildFolderRailButtons(programRailDefinition, names, selectedName);
-  // Canonical placements are restored after folder discovery. Reserve them
-  // first so a newly registered Program cannot appear beneath a saved Button.
-  const footer = buttons.find((button) => button.actionId === "add-program-folder");
+  return placeDiscoveredFolderRailButtons(buttons,
+    savedPrograms.map((entry) => ({ name: entry.programName, rect: entry.rect })), savedAddProgramRect);
+}
+
+function placeDiscoveredFolderRailButtons(
+  buttons: ButtonRecord[],
+  savedEntries: readonly { name: string; rect: PanelRailOwnerEntry["rect"] }[],
+  savedFooter?: PanelRailOwnerEntry["rect"]
+): ButtonRecord[] {
+  // Every navigation Button is centered on its rail at render time. Reserve
+  // vertical rows regardless of old authored x coordinates, including footer.
+  const footer = buttons.find((button) => !button.folderName);
   const occupied = [
-    ...savedPrograms.map((entry) => entry.rect),
-    ...(savedAddProgramRect ? [savedAddProgramRect] : footer ? [footer] : [])
+    ...savedEntries.map((entry) => entry.rect),
+    ...(savedFooter ? [savedFooter] : footer ? [footer] : [])
   ];
   const candidates = buttons.filter((button) => button.folderName);
   return buttons.map((button) => {
     if (!button.folderName) return button;
-    const saved = savedPrograms.find((entry) => equalsFolderName(entry.programName, button.folderName!));
+    const saved = savedEntries.find((entry) => equalsFolderName(entry.name, button.folderName!));
     if (saved) return {
       ...button,
       x: saved.rect.x,
@@ -437,15 +446,14 @@ export function buildProgramRailButtons(
       height: saved.rect.height
     };
     const available = [button, ...candidates].find((candidate) =>
-      !occupied.some((rect) => buttonRectsOverlap(candidate, rect))
+      !occupied.some((rect) => buttonRectsOverlap({ ...candidate, x: 0 }, { ...rect, x: 0 }))
     );
     const next = available
       ? { ...button, x: available.x, y: available.y }
       : {
           ...button,
-          y: Math.max(button.y, ...occupied
-            .filter((rect) => button.x < rect.x + rect.width && button.x + button.width > rect.x)
-            .map((rect) => rect.y + rect.height + railButtonGeometry.stepY - railButtonGeometry.height))
+          y: Math.max(button.y, ...occupied.map((rect) =>
+            rect.y + rect.height + railButtonGeometry.stepY - railButtonGeometry.height))
         };
     occupied.push({ x: next.x, y: next.y, width: next.width, height: next.height });
     return next;
@@ -455,31 +463,12 @@ export function buildProgramRailButtons(
 export function buildPanelRailButtons(
   names: readonly string[],
   selectedName: string | null,
-  savedPanels: readonly PanelRailOwnerEntry[] = []
+  savedPanels: readonly PanelRailOwnerEntry[] = [],
+  savedAddPanelRect?: PanelRailOwnerEntry["rect"]
 ): ButtonRecord[] {
   const buttons = buildFolderRailButtons(panelRailDefinition, names, selectedName);
-  // Folder discovery is read-only. Reserve every saved owner before placing
-  // newly discovered panels, including saved owners later in alphabetic order.
-  const occupied = savedPanels.map((entry) => entry.rect);
-  const candidates = buttons.filter((button) => button.folderName);
-  return buttons.map((button) => {
-    if (!button.folderName) return button;
-    const saved = savedPanels.find((entry) => equalsFolderName(entry.panelName, button.folderName!));
-    if (saved) return { ...button, ...saved.rect };
-    const available = [button, ...candidates].find((candidate) =>
-      !occupied.some((rect) => buttonRectsOverlap(candidate, rect))
-    );
-    const next = available
-      ? { ...button, x: available.x, y: available.y }
-      : {
-          ...button,
-          y: Math.max(button.y, ...occupied
-            .filter((rect) => button.x < rect.x + rect.width && button.x + button.width > rect.x)
-            .map((rect) => rect.y + rect.height + railButtonGeometry.stepY - railButtonGeometry.height))
-        };
-    occupied.push({ x: next.x, y: next.y, width: next.width, height: next.height });
-    return next;
-  });
+  return placeDiscoveredFolderRailButtons(buttons,
+    savedPanels.map((entry) => ({ name: entry.panelName, rect: entry.rect })), savedAddPanelRect);
 }
 
 export function buildPanelRailOwnerEntries(

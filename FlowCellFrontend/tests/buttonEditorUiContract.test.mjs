@@ -141,7 +141,7 @@ test("selected Main Page controls remain draggable in the edit workspace", () =>
     mainPageCss,
     /\.main-page__button-group--placement-layer\s*\{[\s\S]{0,120}pointer-events: none;/
   );
-  assert.match(mainButtonHost, /left: absolute \? button\.x : undefined/);
+  assert.match(mainButtonHost, /left: railPosition\.left/);
   assert.match(mainButtonHost, /top: absolute \? button\.y : undefined/);
 });
 

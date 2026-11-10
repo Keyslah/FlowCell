@@ -1479,7 +1479,9 @@ export default function MainPage() {
             return presentation ? [{ panelName, rect: presentation.placement }] : [];
           })
         : [];
-      return buildPanelRailButtons(panelNames, selectedPanelName, savedPanels).map((button) => {
+      const footer = buildPanelRailButtons([], null).find((button) => button.actionId === "add-panel-folder");
+      const savedFooter = footer ? resolveFlowCellMainPagePresentation(buttonDocument, footer)?.placement : undefined;
+      return buildPanelRailButtons(panelNames, selectedPanelName, savedPanels, savedFooter).map((button) => {
         if (
           button.actionId !== "select-panel-folder" ||
           !button.folderName ||
@@ -1504,6 +1506,7 @@ export default function MainPage() {
       });
     },
     [
+      buttonDocument,
       canonicalPanelOwnerPresentations,
       panelNames,
       selectedPanelName,
