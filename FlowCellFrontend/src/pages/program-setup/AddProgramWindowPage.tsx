@@ -535,21 +535,22 @@ export default function AddProgramWindowPage() {
             <article className="program-setup__card"><h2>Panels</h2>
               {selectedProgram.panels.map((panel) => {
                 const inUse = Array.from(selectedSources).some((sourceId) => (destinations[sourceId] || selectedProgram.sources.find((source) => source.id === sourceId)?.panelName) === panel.label);
-                return <label className="program-setup__check" key={panel.id}><input type="checkbox" checked={selectedPanels.has(panel.label)} disabled={busy || mode === "register" || inUse} onChange={(event) => togglePanel(panel.label, event.target.checked)} /><span><strong>{panel.label}</strong>{inUse ? <small>Required by a selected contribution</small> : null}</span></label>;
+                return <label className="program-setup__check" key={panel.id}><input type="checkbox" checked={selectedPanels.has(panel.label)} disabled={busy || mode === "register" || inUse} onChange={(event) => togglePanel(panel.label, event.target.checked)} /><span><strong>{panel.label}</strong>{inUse ? <small>Required by a selected button</small> : null}</span></label>;
               })}
             </article>
-            <article className="program-setup__card"><h2>Button contributions</h2>
+            <article className="program-setup__card"><h2>Buttons to add</h2>
+              <p className="program-setup__hint">Each selected item adds a button to its destination panel. Read the description below each button to see what it does.</p>
               {selectedProgram.panels.map((panel) => {
                 const sources = selectedProgram.sources.filter((source) => source.panelName === panel.label);
                 if (sources.length === 0) return null;
                 return <details className="program-setup__source-group" key={panel.id} open>
-                  <summary>{panel.label} <small>{sources.length} contribution{sources.length === 1 ? "" : "s"}</small></summary>
+                  <summary>{panel.label} <small>{sources.length} button{sources.length === 1 ? "" : "s"}</small></summary>
                   {sources.map((source) => {
                     const locked = mode !== "register" && (source.required || dependencyLocks.has(source.id));
                     return <div className="program-setup__source" key={source.id}>
                       <label className="program-setup__check"><input type="checkbox" checked={selectedSources.has(source.id)} disabled={busy || mode === "register" || locked} onChange={(event) => toggleSource(source.id, event.target.checked)} /><span><strong>{source.label}</strong><small>{source.sourceKind} - version {source.version}{locked ? " - required" : ""}</small></span></label>
                       <p>{source.tooltip}</p>
-                      {selectedSources.has(source.id) ? <label>Destination
+                      {selectedSources.has(source.id) ? <label>Destination panel
                         <select value={destinations[source.id] || source.panelName} disabled={busy} onChange={(event) => { setMode("custom"); setDestinations((current) => ({ ...current, [source.id]: event.target.value })); setSelectedPanels((current) => new Set(current).add(event.target.value)); invalidateReview(); }}>
                           {selectedProgram.panels.filter((candidate) => selectedPanels.has(candidate.label)).map((candidate) => <option key={candidate.id}>{candidate.label}</option>)}
                         </select>

@@ -1,6 +1,9 @@
 .program-setup {
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
   box-sizing: border-box;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 24px;
   color: #edf5ff;
   background:
@@ -11,6 +14,7 @@
 
 .windows-setup {
   width: min(640px, calc(100vw - 32px));
+  height: auto;
   max-height: calc(100vh - 32px);
   min-height: 0;
   overflow: auto;
@@ -167,6 +171,7 @@
 
 .program-setup__modes {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 16px;
 }
@@ -236,6 +241,7 @@
   border-top: 1px solid rgba(104, 140, 173, 0.35);
   padding: 15px 8px 8px;
   background: rgba(11, 16, 23, 0.94);
+  flex-wrap: wrap;
 }
 
 .program-setup__status {

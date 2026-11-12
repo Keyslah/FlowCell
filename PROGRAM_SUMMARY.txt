@@ -1,3 +1,9 @@
+2026-11-11 Add Program scrolling and v0.1.5 Windows installer release:
+- Add Program now owns a viewport-height vertical scroll area, so panel choices, button descriptions, destination panels and the review controls remain reachable when content exceeds the window. Mode and footer controls wrap in narrow windows; the Windows setup dialog keeps its bounded modal sizing.
+- Renamed "Button contributions" to "Buttons to add" and explained that each selected item adds a Button to its destination panel. Existing per-Button descriptions explain the action.
+- Release version 0.1.4 -> 0.1.5 includes the existing bundled Windows catalog and required first-installed-launch panel chooser. The published v0.1.4 installer predates that implementation. Choosing Files, Utility and/or Startup creates Windows and exactly the selected panels; normal launches preserve later intentional deletions.
+- Three new setup regressions exercise the actual chooser callbacks, managed canonical commit and Main navigation refresh. Fresh profiles gain exactly 1 Windows program Button and exactly 2, 3 or 0 chosen panel Buttons; tools and owner identities survive serialized reload and repeated startup. Native calls are isolated test doubles in these frontend checks.
+
 2026-11-10 GitHub sync and Main rail centering:
 - Main program and panel rails center the measured button core horizontally. When a label selects a different skin family member, the renderer centers it vertically on those rails and on both axes in other placements. This avoids adding a second horizontal offset for narrower keys. Rail regression tests cover the centering handoff and retained placement geometry.
 

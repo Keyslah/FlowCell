@@ -6,6 +6,8 @@ import { applyManagedProgramPlan } from "./.compiled-button-system/pages/program
 import { buildWindowsSetupPlan } from "./.compiled-button-system/pages/program-setup/windowsSetupPlan.js";
 import { createButtonStateDocument } from "./.compiled-button-system/button/state/buttonDefaults.js";
 import { runButtonStateBootstrapSequence } from "./.compiled-button-system/button/state/ButtonStateRepository.js";
+import { reconcileMainPageButtonDiscovery } from "./.compiled-button-system/button/state/mainPageButtonDiscovery.js";
+import { buildProgramRailButtons, buildPanelRailButtons } from "./.compiled-button-system/pages/main/mainLayout.js";
 
 const manifest = JSON.parse(readFileSync(new URL("../../Programs/Windows/flowcell.program.json", import.meta.url), "utf8"));
 const program = {
@@ -141,6 +143,118 @@ function evaluate(node, parsed, context) {
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
   }).outputText;
   return new Function(...Object.keys(context), compiled)(...Object.values(context));
+}
+
+for (const selectedPanelNames of [["Files", "Startup"], ["Files", "Utility", "Startup"], []]) {
+  test(`fresh Windows setup exposes its program Button and exactly ${selectedPanelNames.length} selected panel Buttons`, async () => {
+    const setup = componentSource("pages/program-setup/WindowsSetup.tsx", "WindowsSetup");
+    const main = componentSource("pages/main/MainPage.tsx", "MainPage");
+    const declaration = (name) => setup.component.body.statements.filter(ts.isVariableStatement)
+      .flatMap(node => [...node.declarationList.declarations])
+      .find(node => node.name.getText(setup.parsed) === name).initializer;
+    const selection = main.parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "resolveFolderSelection");
+    const resolveFolderSelection = evaluate(selection, main.parsed, {});
+    const state = { program: null, panels: new Set(), complete: false, error: "", programs: [], panelNames: [] };
+    let registeredPrograms = [];
+    let installedPanels = [];
+    let savedDocument = JSON.stringify(createButtonStateDocument());
+    let setupCommitted;
+    const disposeMain = evaluate(effectContaining(main.component, main.parsed, "PROGRAM_SETUP_COMMITTED_EVENT"), main.parsed, {
+      getCurrentWindow: () => ({ label: "main" }),
+      PROGRAM_SETUP_COMMITTED_EVENT: "setup-committed",
+      listen: async (_name, handler) => { setupCommitted = handler; return () => {}; },
+      listProgramFolders: async () => registeredPrograms,
+      listPanelFolders: async () => installedPanels,
+      resolveFolderSelection,
+      selectedPanelNameRef: { current: null },
+      preferredPanelSelectionRef: { current: null },
+      selectedProgramNameRef: { current: null },
+      setProgramNames: names => { state.programs = names; },
+      setSelectedProgramName: name => { state.selectedProgram = name; },
+      setPanelNames: names => { state.panelNames = names; },
+      setSelectedPanelName: name => { state.selectedPanel = name; },
+      console
+    })();
+    assert.equal(buildProgramRailButtons(state.programs, null).filter(button => button.folderName === "Windows").length, 0);
+    const onCompleteRef = { current: () => { state.complete = true; } };
+    const callback = declaration("checkRequirement").arguments[0];
+    await evaluate(callback, setup.parsed, {
+      getWindowsSetupRequirement: async () => program,
+      setLoading() {}, setError: error => { state.error = error; },
+      setProgram: value => { state.program = value; },
+      setSelectedPanels: panels => { state.panels = panels; },
+      onCompleteRef
+    })();
+    assert.equal(state.complete, false, "fresh setup waits for the user's choices");
+    assert.deepEqual([...state.panels], ["Files", "Utility", "Startup"]);
+    state.panels = new Set(selectedPanelNames);
+    const expectedPlan = buildWindowsSetupPlan(program, state.panels);
+    const busyRef = { current: false };
+    const operations = {
+      apply: async request => {
+        assert.deepEqual(request, expectedPlan);
+        registeredPrograms = ["Windows"];
+        installedPanels = [...request.selectedPanels];
+        return {
+          transactionToken: "add-program-fresh-windows", programName: "Windows", panels: installedPanels,
+          descriptors: request.selectedSources.map(source => ({
+            ownerButtonId: `owner-${source.sourceId}`,
+            sourceIdentity: { programName: "Windows", panelName: source.destinationPanel, fileName: `${source.sourceId}.flowcell-source.json` },
+            owner: {
+              label: program.sources.find(entry => entry.id === source.sourceId).label,
+              executionTarget: { kind: "program-action", programName: "Windows", actionId: "run-installed-source", payload: { ownerButtonId: `owner-${source.sourceId}` } }
+            },
+            children: []
+          }))
+        };
+      },
+      load: async () => JSON.parse(savedDocument),
+      prepare: async (_token, ids) => assert.equal(ids.length, expectedPlan.selectedPanels.length + expectedPlan.selectedSources.length),
+      commit: async (document, revision) => {
+        assert.equal(JSON.parse(savedDocument).revision, revision);
+        savedDocument = JSON.stringify({ ...document, revision: revision + 1 });
+        return JSON.parse(savedDocument);
+      },
+      finalize: async () => result,
+      rollback: async () => { assert.fail("fresh Windows setup must not roll back"); },
+      statuses: async () => [result],
+      publish: async () => {},
+      notify: async payload => {
+        setupCommitted({ payload });
+        await new Promise(resolve => setImmediate(resolve));
+      }
+    };
+    try {
+      await evaluate(declaration("install"), setup.parsed, {
+        program: state.program, selectedPanels: state.panels, busyRef,
+        setBusy() {}, setError: error => { state.error = error; },
+        buildWindowsSetupPlan,
+        preflightAddProgramPlan: async request => assert.deepEqual(request, expectedPlan),
+        applyManagedProgramPlan: request => applyManagedProgramPlan(request, operations),
+        onCompleteRef
+      })();
+      assert.equal(state.error, "");
+      assert.equal(state.complete, true);
+      assert.equal(busyRef.current, false);
+      assert.deepEqual(state.programs, ["Windows"]);
+      assert.deepEqual(state.panelNames, selectedPanelNames);
+      assert.equal(state.selectedProgram, "Windows");
+      const programButtons = buildProgramRailButtons(state.programs, state.selectedProgram).filter(button => button.folderName);
+      const panelButtons = buildPanelRailButtons(state.panelNames, state.selectedPanel).filter(button => button.folderName);
+      assert.deepEqual(programButtons.map(button => button.label), ["Windows"]);
+      assert.deepEqual(panelButtons.map(button => button.label), selectedPanelNames);
+      const reloaded = JSON.parse(savedDocument);
+      assert.deepEqual(Object.values(reloaded.buttons).filter(button => button.role === "panel-owner").map(button => button.metadata.panelName).sort(), [...selectedPanelNames].sort());
+      assert.equal(Object.values(reloaded.buttons).filter(button => button.sourceIdentity?.displayProgramName === "Windows").length, expectedPlan.selectedSources.length);
+      reconcileMainPageButtonDiscovery(reloaded, [{ programName: "Windows", panelNames: installedPanels }]);
+      assert.equal(Object.values(reloaded.buttons).filter(button => button.metadata.mainPageProgramName === "Windows").length, 1, "next startup creates exactly one canonical Windows presentation");
+      const beforeRepeat = structuredClone(reloaded);
+      reconcileMainPageButtonDiscovery(reloaded, [{ programName: "Windows", panelNames: installedPanels }]);
+      assert.deepEqual(reloaded, beforeRepeat, "later startup preserves the chosen panels and owners");
+    } finally {
+      disposeMain();
+    }
+  });
 }
 
 async function startupAfterBootstrapFailure({ canonicalAvailable }) {
