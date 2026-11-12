@@ -1,212 +1,308 @@
 {
-    "schemaVersion":  1,
-    "id":  "blender.tri-poly",
-    "version":  "1.1.2",
-    "label":  "tri poly",
-    "tooltip":  "Create triangle and regular polygon prism shapes from a compact Tri \u0026 Poly tool set.",
-    "kind":  "toolset",
-    "program":  "Blender",
-    "source":  "tri poly.py",
-    "bridgeData":  {
-
-                   },
-    "children":  [
-                     {
-                         "slot":  "triangle_equilateral",
-                         "label":  "Equal ",
-                         "tooltip":  "Create an equilateral triangular prism.",
-                         "payload":  {
-                                         "command":  "triangle_equilateral",
-                                         "action":  "triangle_equilateral"
-                                     }
-                     },
-                     {
-                         "slot":  "triangle_isosceles",
-                         "label":  "Isosceles ",
-                         "tooltip":  "Create an isosceles triangular prism.",
-                         "payload":  {
-                                         "command":  "triangle_isosceles",
-                                         "action":  "triangle_isosceles"
-                                     }
-                     },
-                     {
-                         "slot":  "triangle_50",
-                         "label":  "Angle",
-                         "tooltip":  "Create a triangular prism with the typed apex angle.",
-                         "payload":  {
-                                         "command":  "triangle_50",
-                                         "action":  "triangle_50"
-                                     }
-                     },
-                     {
-                         "slot":  "triangle_right",
-                         "label":  "Right",
-                         "tooltip":  "Create a right triangular prism.",
-                         "payload":  {
-                                         "command":  "triangle_right",
-                                         "action":  "triangle_right"
-                                     }
-                     },
-                     {
-                         "slot":  "triangle_scalene",
-                         "label":  "Scalene",
-                         "tooltip":  "Create a scalene triangular prism.",
-                         "payload":  {
-                                         "command":  "triangle_scalene",
-                                         "action":  "triangle_scalene"
-                                     }
-                     },
-                     {
-                         "slot":  "polygon_create",
-                         "label":  "Create",
-                         "tooltip":  "Create a regular polygon prism using the staged side count.",
-                         "payload":  {
-                                         "command":  "polygon_create",
-                                         "action":  "polygon_create"
-                                     }
-                     },
-                     {
-                         "slot":  "angle_input",
-                         "label":  "50",
-                         "tooltip":  "Click anywhere on this Button, then type the triangular prism apex angle."
-                     },
-                     {
-                         "slot":  "sides_input",
-                         "label":  "15",
-                         "tooltip":  "Click anywhere on this Button, then type the regular polygon side count."
-                     }
-                 ],
-    "layout":  {
-        "mode": "grid",
-        "columns": 4,
-        "gap": 8,
-        "padding": 8,
-        "width": 576,
-        "height": 160,
-        "updatePolicy": {
-            "appendMissingChildSlots": true
-        },
-        "placements": {
-            "triangle_equilateral": {
-                "x": 8,
-                "y": 8,
-                "width": 144,
-                "height": 42,
-                "zIndex": 0
-            },
-            "triangle_isosceles": {
-                "x": 160,
-                "y": 8,
-                "width": 144,
-                "height": 42,
-                "zIndex": 1
-            },
-            "triangle_50": {
-                "x": 312,
-                "y": 8,
-                "width": 144,
-                "height": 42,
-                "zIndex": 2
-            },
-            "triangle_right": {
-                "x": 8,
-                "y": 58,
-                "width": 144,
-                "height": 42,
-                "zIndex": 3
-            },
-            "triangle_scalene": {
-                "x": 160,
-                "y": 58,
-                "width": 144,
-                "height": 42,
-                "zIndex": 4
-            },
-            "polygon_create": {
-                "x": 312,
-                "y": 58,
-                "width": 144,
-                "height": 42,
-                "zIndex": 5
-            },
-            "angle_input": {
-                "x": 464,
-                "y": 8,
-                "width": 104,
-                "height": 42,
-                "zIndex": 6
-            },
-            "sides_input": {
-                "x": 464,
-                "y": 58,
-                "width": 104,
-                "height": 42,
-                "zIndex": 7
-            }
-        },
-        "fields": [
-            {
-                "id": "angle_deg",
-                "kind": "number",
-                "label": "Angle",
-                "payloadKey": "angle_deg",
-                "defaultValue": 50,
-                "minimum": 1,
-                "maximum": 178,
-                "step": 1,
-                "x": 464,
-                "y": 8,
-                "width": 104,
-                "height": 42,
-                "zIndex": 1,
-                "hidden": true
-            },
-            {
-                "id": "sides",
-                "kind": "number",
-                "label": "Sides",
-                "payloadKey": "sides",
-                "defaultValue": 15,
-                "minimum": 3,
-                "maximum": 96,
-                "step": 1,
-                "x": 464,
-                "y": 58,
-                "width": 104,
-                "height": 42,
-                "zIndex": 1,
-                "hidden": true
-            }
-        ],
-        "childBehaviors": {
-            "triangle_50": {
-                "execute": true,
-                "payloadTemplate": {
-                    "command": "triangle_50",
-                    "angle_deg": {
-                        "$field": "angle_deg"
-                    }
-                }
-            },
-            "polygon_create": {
-                "execute": true,
-                "payloadTemplate": {
-                    "command": "polygon_create",
-                    "sides": {
-                        "$field": "sides"
-                    }
-                }
-            },
-            "angle_input": {
-                "inlineEditField": "angle_deg",
-                "execute": false
-            },
-            "sides_input": {
-                "inlineEditField": "sides",
-                "execute": false
-            }
-        }
+  "schemaVersion": 1,
+  "id": "blender.tri-poly",
+  "version": "1.1.3",
+  "label": "tri poly",
+  "tooltip": "Create triangle and regular polygon prism shapes from a compact Tri & Poly tool set.",
+  "kind": "toolset",
+  "program": "Blender",
+  "source": "tri poly.py",
+  "bridgeData": {},
+  "children": [
+    {
+      "slot": "triangle_equilateral",
+      "label": "Equal ",
+      "tooltip": "Create an equilateral triangular prism.",
+      "payload": {
+        "command": "triangle_equilateral",
+        "action": "triangle_equilateral"
+      }
     },
+    {
+      "slot": "triangle_isosceles",
+      "label": "Isosceles ",
+      "tooltip": "Create an isosceles triangular prism.",
+      "payload": {
+        "command": "triangle_isosceles",
+        "action": "triangle_isosceles"
+      }
+    },
+    {
+      "slot": "triangle_50",
+      "label": "Angle",
+      "tooltip": "Create a triangular prism with the typed apex angle.",
+      "payload": {
+        "command": "triangle_50",
+        "action": "triangle_50"
+      }
+    },
+    {
+      "slot": "triangle_right",
+      "label": "Right",
+      "tooltip": "Create a right triangular prism.",
+      "payload": {
+        "command": "triangle_right",
+        "action": "triangle_right"
+      }
+    },
+    {
+      "slot": "triangle_scalene",
+      "label": "Scalene",
+      "tooltip": "Create a scalene triangular prism.",
+      "payload": {
+        "command": "triangle_scalene",
+        "action": "triangle_scalene"
+      }
+    },
+    {
+      "slot": "polygon_create",
+      "label": "Create",
+      "tooltip": "Create a regular polygon prism using the staged side count.",
+      "payload": {
+        "command": "polygon_create",
+        "action": "polygon_create"
+      }
+    },
+    {
+      "slot": "angle_input",
+      "label": "50",
+      "tooltip": "Click anywhere on this Button, then type the triangular prism apex angle."
+    },
+    {
+      "slot": "sides_input",
+      "label": "15",
+      "tooltip": "Click anywhere on this Button, then type the regular polygon side count."
+    }
+  ],
+  "layout": {
+    "mode": "grid",
+    "columns": 4,
+    "gap": 8,
+    "padding": 8,
+    "width": 576,
+    "height": 160,
+    "updatePolicy": {
+      "appendMissingChildSlots": true
+    },
+    "placements": {
+      "triangle_equilateral": {
+        "x": 8,
+        "y": 8,
+        "width": 144,
+        "height": 42,
+        "zIndex": 0
+      },
+      "triangle_isosceles": {
+        "x": 160,
+        "y": 8,
+        "width": 144,
+        "height": 42,
+        "zIndex": 1
+      },
+      "triangle_50": {
+        "x": 312,
+        "y": 8,
+        "width": 144,
+        "height": 42,
+        "zIndex": 2
+      },
+      "triangle_right": {
+        "x": 8,
+        "y": 58,
+        "width": 144,
+        "height": 42,
+        "zIndex": 3
+      },
+      "triangle_scalene": {
+        "x": 160,
+        "y": 58,
+        "width": 144,
+        "height": 42,
+        "zIndex": 4
+      },
+      "polygon_create": {
+        "x": 312,
+        "y": 58,
+        "width": 144,
+        "height": 42,
+        "zIndex": 5
+      },
+      "angle_input": {
+        "x": 464,
+        "y": 8,
+        "width": 104,
+        "height": 42,
+        "zIndex": 6
+      },
+      "sides_input": {
+        "x": 464,
+        "y": 58,
+        "width": 104,
+        "height": 42,
+        "zIndex": 7
+      }
+    },
+    "fields": [
+      {
+        "id": "angle_deg",
+        "kind": "number",
+        "label": "Angle",
+        "payloadKey": "angle_deg",
+        "defaultValue": 50,
+        "minimum": 1,
+        "maximum": 178,
+        "step": 1,
+        "x": 464,
+        "y": 8,
+        "width": 104,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "sides",
+        "kind": "number",
+        "label": "Sides",
+        "payloadKey": "sides",
+        "defaultValue": 15,
+        "minimum": 3,
+        "maximum": 96,
+        "step": 1,
+        "x": 464,
+        "y": 58,
+        "width": 104,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      }
+    ],
+    "childBehaviors": {
+      "triangle_50": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "triangle_50",
+          "angle_deg": {
+            "$field": "angle_deg"
+          }
+        }
+      },
+      "polygon_create": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "polygon_create",
+          "sides": {
+            "$field": "sides"
+          }
+        }
+      },
+      "angle_input": {
+        "inlineEditField": "angle_deg",
+        "execute": false
+      },
+      "sides_input": {
+        "inlineEditField": "sides",
+        "execute": false
+      }
+    },
+    "placementPresentation": {
+      "triangle_equilateral": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "triangle_isosceles": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "triangle_50": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "triangle_right": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "triangle_scalene": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "polygon_create": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "angle_input": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "sides_input": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      }
+    }
+  },
   "appearance": {
     "skins": {
       "skin-1-Chipped-Concrete-Key-100-d": {

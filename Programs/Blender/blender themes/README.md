@@ -25,9 +25,10 @@ Inside the ZIP, complete packages are placed under
 `Programs/Blender/themes/Blender/`, with relative image references or embedded
 archive assets so they work after extraction on another computer. The unified
 Theme Editor discovers these supplied themes through the program manifest's
-`themeLibrary`. Use **Import Theme** to inspect and import a supplied theme;
-**Open Theme** reads existing `.flowtheme.json` and `.flowcell-theme-pack.json`
-files. `Buckets/` contains separate palette saves.
+`themeLibrary`. **Open Theme** and previous/next theme cycling include supplied
+themes immediately, alongside saved themes. **Import Theme** can also save a
+local copy. Both `.flowtheme.json` and `.flowcell-theme-pack.json` files are
+supported. `Buckets/` contains separate palette saves.
 
 Startup migration retains original data under `themes/.migration-backups-v1/`
 and records progress in `themes/.migration-v1.json`. References to the retired

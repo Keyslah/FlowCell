@@ -5,10 +5,8 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
   padding: 24px;
-  color: #edf5ff;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(63, 130, 194, 0.22), transparent 36%),
-    linear-gradient(145deg, #111821, #0b1017 70%);
+  color: #27231d;
+  background: #887f73 url("../../assets/backgrounds/chipped-concrete-base.webp") center / cover fixed;
   font: 14px/1.45 Inter, "Segoe UI", sans-serif;
 }
 
@@ -18,7 +16,7 @@
   max-height: calc(100vh - 32px);
   min-height: 0;
   overflow: auto;
-  border: 1px solid #49637e;
+  border: 1px solid #6c6254;
   border-radius: 14px;
 }
 
@@ -39,11 +37,11 @@
 .windows-setup__description {
   display: block;
   margin-top: 3px;
-  color: #a9bdd0;
+  color: #51483c;
 }
 
 .windows-setup__error {
-  color: #ffc6c6;
+  color: #7d1d14;
   white-space: pre-wrap;
 }
 
@@ -78,16 +76,17 @@
   width: 100%;
   box-sizing: border-box;
   margin-top: 6px;
-  border: 1px solid #3c5065;
+  border: 1px solid #776c5c;
   border-radius: 7px;
   padding: 8px 10px;
-  color: #f2f7fc;
-  background: #0f1822;
+  color: #27231d;
+  background: rgba(255, 251, 243, 0.9);
 }
 
 .program-setup input[type="checkbox"] {
   width: auto;
   margin: 3px 0 0;
+  accent-color: #695c43;
 }
 
 .program-setup__header,
@@ -123,22 +122,22 @@
 
 .program-setup__header p {
   margin: 3px 0 0;
-  color: #a9bdd0;
+  color: #51483c;
 }
 
 .program-setup__eyebrow {
   text-transform: uppercase;
   letter-spacing: 0.13em;
   font-size: 11px;
-  color: #7fc3ff !important;
+  color: #51483c !important;
 }
 
 .program-setup__card {
   margin-top: 18px;
-  border: 1px solid rgba(105, 143, 177, 0.38);
+  border: 1px solid rgba(83, 72, 56, 0.55);
   border-radius: 12px;
   padding: 16px;
-  background: rgba(18, 29, 41, 0.86);
+  background: rgba(239, 232, 217, 0.9);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
 }
 
@@ -157,15 +156,19 @@
 }
 
 .program-setup__inline {
-  align-items: stretch;
-  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .program-setup__inline input {
+  flex: 1 1 200px;
+  width: auto;
   min-width: 0;
 }
 
-.program-setup__inline button {
+.program-setup__inline button,
+.program-setup__inline .chipped-concrete-action-button {
   margin-top: 6px;
 }
 
@@ -194,53 +197,103 @@
 .program-setup__check small,
 .program-setup__source p,
 .program-setup__hint {
-  color: #9eb2c5;
+  color: #51483c;
 }
 
 .program-setup__source {
   margin-top: 12px;
-  border-top: 1px solid rgba(107, 139, 167, 0.25);
+  border-top: 1px solid rgba(98, 85, 66, 0.28);
   padding-top: 4px;
 }
 
-.program-setup__source-group {
-  margin-top: 12px;
-  border: 1px solid rgba(107, 139, 167, 0.25);
+.program-setup__panels {
+  display: grid;
+  gap: 12px;
+}
+
+.program-setup__panel {
+  min-width: 0;
+  border: 1px solid rgba(98, 85, 66, 0.4);
   border-radius: 8px;
-  padding: 9px 11px;
+  background: rgba(255, 251, 243, 0.42);
 }
 
-.program-setup__source-group > summary {
+.program-setup__panel > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
   cursor: pointer;
-  font-weight: 700;
+  list-style: none;
 }
 
-.program-setup__source-group > summary small {
-  margin-left: 6px;
-  color: #9eb2c5;
-  font-weight: 400;
+.program-setup__panel > summary::-webkit-details-marker {
+  display: none;
 }
 
-.program-setup__source p {
-  margin: 6px 0 8px 26px;
+.program-setup__panel > summary::before {
+  content: "▸";
 }
 
-.program-setup__details p,
-.program-setup__review p {
-  margin: 7px 0;
+.program-setup__panel[open] > summary::before {
+  content: "▾";
 }
 
-.program-setup__review {
-  border-color: rgba(83, 181, 130, 0.58);
+.program-setup__panel > summary small {
+  margin-left: auto;
+  color: #51483c;
+}
+
+.program-setup__panel-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.program-setup__panel-choice input[type="checkbox"] {
+  margin: 0;
+}
+
+.program-setup__panel-contents {
+  padding: 0 16px 16px;
+}
+
+.program-setup__source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.program-setup__source .program-setup__check {
+  margin: 8px 0;
+}
+
+.program-setup__destination {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #51483c;
+}
+
+.program-setup__destination select {
+  width: auto;
+  min-width: 100px;
+  margin: 0;
+  padding: 5px 8px;
 }
 
 .program-setup__footer {
   position: sticky;
   bottom: 0;
   margin: 18px -8px -8px;
-  border-top: 1px solid rgba(104, 140, 173, 0.35);
+  border-top: 1px solid rgba(98, 85, 66, 0.45);
   padding: 15px 8px 8px;
-  background: rgba(11, 16, 23, 0.94);
+  background: rgba(220, 210, 191, 0.96);
+  border-radius: 8px;
   flex-wrap: wrap;
 }
 
@@ -249,15 +302,9 @@
   overflow-wrap: anywhere;
 }
 
-.program-setup__primary {
-  min-width: 170px;
-  border-color: #75c1ff !important;
-  background: #17619a !important;
-}
-
 .program-setup__rejected {
   margin-top: 18px;
-  color: #d8b7b7;
+  color: #7d1d14;
 }
 
 .program-setup__stack {

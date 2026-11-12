@@ -1,4 +1,4 @@
-# Description: Runs update github.
+# Description: Commit and push the active Explorer Git repository or clipboard repository after prompting for a commit message.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 

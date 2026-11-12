@@ -41,10 +41,18 @@
     "blender-launcher"
   ],
   "executableDiscovery": {
-    "appPaths": ["blender.exe"],
+    "appPaths": [
+      "blender.exe"
+    ],
     "commonLocations": [
-      {"root": "ProgramFiles", "path": "Blender Foundation/Blender */blender.exe"},
-      {"root": "LocalAppData", "path": "Programs/Blender Foundation/Blender */blender.exe"}
+      {
+        "root": "ProgramFiles",
+        "path": "Blender Foundation/Blender */blender.exe"
+      },
+      {
+        "root": "LocalAppData",
+        "path": "Programs/Blender Foundation/Blender */blender.exe"
+      }
     ]
   },
   "bindScopedNativeOwner": false,
@@ -62,6 +70,240 @@
   ],
   "supportsToolsetManifests": true,
   "bundledSources": [
+    {
+      "id": "blender.make-collections",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/make collections.py",
+      "importKind": "script",
+      "displayLabel": "Make Collections",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.new-collection",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/new collection.py",
+      "importKind": "script",
+      "displayLabel": "+collection",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.snapshot",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/snapshot.py",
+      "importKind": "script",
+      "displayLabel": "snapshot",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.restore",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/restore.py",
+      "importKind": "script",
+      "displayLabel": "restore",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.back",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/back.py",
+      "importKind": "script",
+      "displayLabel": "back",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.cycle-versions-forward",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/cycle versions forward.py",
+      "importKind": "script",
+      "displayLabel": "<",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.cycle-versions-back",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/cycle versions back.py",
+      "importKind": "script",
+      "displayLabel": ">",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.cycle-collection",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/Cycle Collection",
+      "importKind": "script",
+      "displayLabel": "Cycle Collection",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.add-to-live",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/add to live.py",
+      "importKind": "script",
+      "displayLabel": "add to live",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.archive",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/archive.py",
+      "importKind": "script",
+      "displayLabel": "archive",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.trash",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/trash.py",
+      "importKind": "script",
+      "displayLabel": "trash",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.empty-trash",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/empty trash.py",
+      "importKind": "script",
+      "displayLabel": "empty trash",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.empty-collections",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/empty collections.py",
+      "importKind": "script",
+      "displayLabel": "empty collections",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.rename-selected",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/rename selected.py",
+      "importKind": "script",
+      "displayLabel": "rename",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.sort",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/sort.py",
+      "importKind": "script",
+      "displayLabel": "sort",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.sort-live",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/Sort Live.py",
+      "importKind": "script",
+      "displayLabel": "Sort Live",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.baseline-visibility",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/baseline visibility.py",
+      "importKind": "script",
+      "displayLabel": "base V",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.restore-visibility",
+      "version": "1.0.0",
+      "panelName": "Collections",
+      "sourcePath": "Blender Git Scripts/Collections/restore visibility.py",
+      "importKind": "script",
+      "displayLabel": "restore V",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
     {
       "id": "blender.fill-gear",
       "version": "1.0.0",
@@ -215,7 +457,7 @@
     },
     {
       "id": "blender.alignment-tools",
-      "version": "1.4.3",
+      "version": "1.4.4",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/alignment-tools/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -230,7 +472,7 @@
     },
     {
       "id": "blender.boolean",
-      "version": "1.1.4",
+      "version": "1.1.5",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/boolean/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -245,7 +487,7 @@
     },
     {
       "id": "blender.flatten-revolve",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/flatten-revolve/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -260,7 +502,7 @@
     },
     {
       "id": "blender.remesh",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/remesh/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -275,7 +517,7 @@
     },
     {
       "id": "blender.rotate",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/rotate/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -290,7 +532,7 @@
     },
     {
       "id": "blender.smart-axis",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/smart-axis/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -305,7 +547,7 @@
     },
     {
       "id": "blender.tri-poly",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/tri-poly/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -320,7 +562,7 @@
     },
     {
       "id": "blender.xyz-dimensions",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/xyz-dimensions/flowcell.toolset.json",
       "importKind": "tool-set",

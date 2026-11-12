@@ -1,7 +1,7 @@
 use super::{
     active_record_file_name, copy_package_source_entries, load_program_manifest, prepare_source,
     reject_selected_source_reparse_point, validate_owner_button_id, ActiveSourceChild,
-    ToolsetLayoutRectManifest, TOOLSET_MANIFEST_FILE_NAME,
+    ToolsetLayoutRectManifest, ToolsetPlacementPresentationManifest, TOOLSET_MANIFEST_FILE_NAME,
 };
 use crate::button_state::{
     validate_button_skin_source, BUTTON_SKIN_FILE_EXTENSION, BUTTON_SKIN_FILE_MAX_BYTES,
@@ -208,6 +208,7 @@ struct ExportLayout {
     width: Option<f64>,
     height: Option<f64>,
     placements: Option<BTreeMap<String, ToolsetLayoutRectManifest>>,
+    placement_presentation: Option<BTreeMap<String, ToolsetPlacementPresentationManifest>>,
     #[serde(default)]
     fields: BTreeMap<String, ToolsetLayoutRectManifest>,
 }
@@ -231,6 +232,10 @@ fn apply_export_layout(toolset: &mut Value, snapshot: ExportLayout) -> Result<()
             "placements".into(),
             serde_json::to_value(placements).map_err(|error| error.to_string())?,
         );
+    }
+    if let Some(presentation) = snapshot.placement_presentation {
+        layout.insert("placementPresentation".into(),
+            serde_json::to_value(presentation).map_err(|error| error.to_string())?);
     }
     for (id, rect) in snapshot.fields {
         let field = layout

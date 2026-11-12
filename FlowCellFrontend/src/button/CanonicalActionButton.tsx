@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { ButtonHost } from "./ButtonHost";
-import { DEFAULT_BUTTON_SKIN } from "./skins/defaultButtonSkin";
+import { getChippedConcreteButtonSkin } from "./skins/chippedConcreteButtonSkin";
 import type { ButtonPlacement, ButtonRecord } from "./types";
 
 export interface CanonicalActionButtonProps {
@@ -24,6 +24,7 @@ export function CanonicalActionButton({
   className,
   onActivate
 }: CanonicalActionButtonProps) {
+  const skin = getChippedConcreteButtonSkin(label);
   const button = useMemo<ButtonRecord>(() => ({
     id,
     role: "panel-owner",
@@ -31,7 +32,7 @@ export function CanonicalActionButton({
     label,
     tooltip,
     executionTarget: null,
-    defaultSkinId: DEFAULT_BUTTON_SKIN.id,
+    defaultSkinId: skin.id,
     defaultTextFitMode: "shrink-and-stack",
     disabled,
     activationAnimation: null,
@@ -39,7 +40,7 @@ export function CanonicalActionButton({
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: {}
-  }), [disabled, id, label, tooltip]);
+  }), [disabled, id, label, tooltip, skin.id]);
   const placement = useMemo<ButtonPlacement>(() => ({
     id: `action-placement:${id}`,
     buttonId: id,
@@ -72,7 +73,7 @@ export function CanonicalActionButton({
       <ButtonHost
         button={button}
         placement={placement}
-        skin={DEFAULT_BUTTON_SKIN}
+        skin={skin}
         onActivate={() => onActivate()}
       />
     </span>

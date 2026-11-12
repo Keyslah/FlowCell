@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { ButtonHost } from "../../button/ButtonHost";
-import { DEFAULT_BUTTON_SKIN } from "../../button/skins/defaultButtonSkin";
+import { getChippedConcreteButtonSkin } from "../../button/skins/chippedConcreteButtonSkin";
 import type {
   ButtonPlacement,
   ButtonCoreMeasurement,
@@ -144,6 +144,7 @@ export function MainControlHost({
   onDoubleActivate,
   onRequestContextMenu
 }: MainControlHostProps) {
+  const skin = getChippedConcreteButtonSkin(control.label);
   const height = targetHeightOverride ?? control.height;
   const railPosition = useMainRailPosition(control, absolute, control.width);
   const canonicalControl: CanonicalButtonRecord = {
@@ -153,7 +154,7 @@ export function MainControlHost({
     label: control.label,
     tooltip: control.tooltip ?? "",
     executionTarget: null,
-    defaultSkinId: DEFAULT_BUTTON_SKIN.id,
+    defaultSkinId: skin.id,
     defaultTextFitMode: "shrink-and-stack",
     disabled: Boolean(control.disabled),
     activationAnimation: null,
@@ -206,7 +207,7 @@ export function MainControlHost({
       <ButtonHost
         button={canonicalControl}
         placement={placement}
-        skin={DEFAULT_BUTTON_SKIN}
+        skin={skin}
         familySkinCentering={railPosition.onMeasurement ? "vertical" : undefined}
         onMeasurement={railPosition.onMeasurement}
         selected={Boolean(control.isSelected)}

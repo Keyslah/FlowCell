@@ -1,6 +1,6 @@
 import type { ButtonPlacement, ButtonSkin, ButtonStateDocument, ToolSetButtonPopoutUnit } from "../types.js";
 import { resolveButtonPlacementPresentation } from "../state/buttonPresentation.js";
-import { assignInstalledToolSetSkins, parseInstalledToolSetSkin } from "../state/installedToolSetSkins.js";
+import { assignInstalledToolSetSkins, parseInstalledToolSetSkin, type InstalledToolSetPlacementPresentation } from "../state/installedToolSetSkins.js";
 import { cloneButtonDocument } from "../state/buttonDefaults.js";
 import { serializeButtonSkinSections } from "../skins/buttonSkinFormat.js";
 import {
@@ -133,6 +133,7 @@ export async function captureToolsetPackage(
   const children: Record<string, string> = Object.create(null);
   const childPresentation: Record<string, { label: string; tooltip: string }> = Object.create(null);
   const placements: Record<string, ReturnType<typeof exportRect>> = Object.create(null);
+  const placementPresentation: Record<string, InstalledToolSetPlacementPresentation> = Object.create(null);
   for (const id of unit.childPlacementIds) {
     const placement = document.placements[id];
     const button = placement && document.buttons[placement.buttonId];
@@ -147,6 +148,18 @@ export async function captureToolsetPackage(
     const presentation = resolveButtonPlacementPresentation(button, placement);
     childPresentation[slot] = { label: presentation.label, tooltip: presentation.tooltip };
     placements[slot] = exportRect(placement);
+    placementPresentation[slot] = {
+      textFitMode: placement.textFitMode,
+      textAlignment: placement.textAlignment,
+      textOffsetX: placement.textOffsetX,
+      textOffsetY: placement.textOffsetY,
+      minimumFontSize: placement.minimumFontSize,
+      textSizeOverride: placement.textSizeOverride,
+      allowLabelResize: placement.allowLabelResize,
+      matchHitboxToSkin: placement.matchHitboxToSkin,
+      allowStretching: placement.allowStretching,
+      highlightOnHover: placement.highlightOnHover
+    };
   }
 
   const validated = new Set<string>();
@@ -167,6 +180,7 @@ export async function captureToolsetPackage(
       width: surface.width,
       height: surface.height,
       placements,
+      placementPresentation,
       fields: Object.fromEntries(unit.fields.map((field) => [field.id, exportRect(field)]))
     }
   };

@@ -8,13 +8,13 @@ import {
   preflightAddProgramPlan,
   recheckProgramSetup,
   type AddProgramPlanRequest,
-  type AddProgramPreflight,
   type AvailableProgramPackage,
   type AvailableProgramPackagesResponse,
   type ProgramSetupResult
 } from "../../lib/programRails";
 import { showOpenFileDialog } from "../../lib/tauri";
 import { applyManagedProgramPlan } from "./applyManagedProgramPlan";
+import ProgramSetupButton from "../../button/ChippedConcreteActionButton";
 import "./programSetup.css";
 
 type SetupMode = "register" | "everything" | "custom";
@@ -78,7 +78,6 @@ export default function AddProgramWindowPage() {
   const [selectedPanels, setSelectedPanels] = useState<Set<string>>(new Set());
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
   const [destinations, setDestinations] = useState<Record<string, string>>({});
-  const [reviewed, setReviewed] = useState<AddProgramPreflight | null>(null);
   const [busy, setBusyState] = useState(false);
   const busyRef = useRef(false);
   const setBusy = useCallback((next: boolean) => {
@@ -122,8 +121,7 @@ export default function AddProgramWindowPage() {
     setSelectedPanels(setup.panels);
     setSelectedSources(setup.sources);
     setDestinations(setup.destinations);
-    setReviewed(null);
-    setStatus("Choose the exact Program contributions FlowCell should enable.");
+    setStatus("Choose the panels and buttons you want to add.");
   };
 
   useEffect(() => {
@@ -178,7 +176,7 @@ export default function AddProgramWindowPage() {
       setSetupSource("package");
       setSelectedProgramName(program.programName);
       resetForProgram(program);
-      setStatus(`${program.programName} was imported. Choose its application and contributions, then review the plan.${imported.cleanupWarning ? ` ${imported.cleanupWarning}` : ""}`);
+      setStatus(`${program.programName} was imported. Choose its application, panels and buttons, then select Install.${imported.cleanupWarning ? ` ${imported.cleanupWarning}` : ""}`);
     } catch (error) {
       setStatus(`Package import failed: ${errorMessage(error)}`);
     } finally {
@@ -198,7 +196,6 @@ export default function AddProgramWindowPage() {
       const program = next.packages.find((entry) => entry.programName === selectedProgramName);
       if (program && !executablePath.trim()) setExecutablePath(program.suggestedExecutable);
       setHostConfirmed(false);
-      setReviewed(null);
       setStatus("Detection refreshed. Choose the application you want to use, or Browse for it.");
     } catch (error) {
       setStatus(`Application detection failed: ${errorMessage(error)}`);
@@ -210,7 +207,6 @@ export default function AddProgramWindowPage() {
 
   const presentSetupResult = async (result: ProgramSetupResult) => {
     setSetupStatuses((current) => [...current.filter((entry) => entry.programName !== result.programName), result]);
-    setReviewed(null);
     setStatus(result.message);
     if (result.status === "needsHostInitialization" || result.restartNotes.trim()) {
       setCompletedSetup(result);
@@ -235,9 +231,8 @@ export default function AddProgramWindowPage() {
     }
   };
 
-  const invalidateReview = () => {
-    setReviewed(null);
-    setStatus("Plan changed. Review it again before installation.");
+  const markSelectionChanged = () => {
+    setStatus("Choose what to add, then select Install.");
   };
 
   const chooseProgram = (programName: string) => {
@@ -250,7 +245,6 @@ export default function AddProgramWindowPage() {
   const chooseSetupSource = (nextSource: SetupSource) => {
     setSetupSource(nextSource);
     setHostConfirmed(false);
-    setReviewed(null);
     if (nextSource === "plain") {
       setStatus("Choose any application executable to add a Program context.");
       return;
@@ -280,7 +274,7 @@ export default function AddProgramWindowPage() {
       setSelectedSources(setup.sources);
       setDestinations(setup.destinations);
     }
-    invalidateReview();
+    markSelectionChanged();
   };
 
   const dependencyLocks = useMemo(() => {
@@ -311,20 +305,37 @@ export default function AddProgramWindowPage() {
     setMode("custom");
     setSelectedSources(next);
     setSelectedPanels(nextPanels);
-    invalidateReview();
+    markSelectionChanged();
   };
 
   const togglePanel = (panelName: string, checked: boolean) => {
-    if (mode === "register") return;
-    const inUse = Array.from(selectedSources).some((sourceId) =>
-      (destinations[sourceId] || selectedProgram?.sources.find((source) => source.id === sourceId)?.panelName) === panelName
-    );
-    if (!checked && inUse) return;
+    if (!selectedProgram || mode === "register") return;
+    const belongsToPanel = (source: AvailableProgramPackage["sources"][number]) =>
+      (destinations[source.id] || source.panelName) === panelName;
+    const nextSources = new Set(selectedSources);
+    if (checked) {
+      for (const source of selectedProgram.sources) {
+        if (belongsToPanel(source) && (source.defaultSelected || source.required)) {
+          sourceClosure(selectedProgram, [source.id]).forEach((id) => nextSources.add(id));
+        }
+      }
+    } else {
+      for (const source of selectedProgram.sources) {
+        if (belongsToPanel(source)) nextSources.delete(source.id);
+      }
+      const remaining = sourceClosure(selectedProgram, nextSources);
+      if (selectedProgram.sources.some((source) => belongsToPanel(source) &&
+        ((source.required && selectedSources.has(source.id)) || remaining.has(source.id)))) return;
+    }
     const next = new Set(selectedPanels);
     if (checked) next.add(panelName); else next.delete(panelName);
+    for (const source of selectedProgram.sources) {
+      if (nextSources.has(source.id)) next.add(destinations[source.id] || source.panelName);
+    }
     setMode("custom");
+    setSelectedSources(nextSources);
     setSelectedPanels(next);
-    invalidateReview();
+    markSelectionChanged();
   };
 
   const request = useMemo<AddProgramPlanRequest | null>(() => {
@@ -363,32 +374,8 @@ export default function AddProgramWindowPage() {
     setupSource
   ]);
 
-  const reviewPlan = async () => {
-    if (!request || !hostConfirmed) return;
-    setBusy(true);
-    setStatus("Running read-only Program and Button-package preflight…");
-    if (setupSource === "plain") {
-      setStatus("Running read-only Program context preflight…");
-    }
-    try {
-      const result = await preflightAddProgramPlan(request);
-      setReviewed(result);
-      if (setupSource === "plain") {
-        setPlainExecutablePath(result.executablePath);
-      } else {
-        setExecutablePath(result.executablePath);
-      }
-      setStatus("Preflight passed. Review the exact effects below, then install.");
-    } catch (error) {
-      setReviewed(null);
-      setStatus(`Preflight failed: ${errorMessage(error)}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const installValidatedPlan = async (planRequest: AddProgramPlanRequest) => {
-    setStatus("Applying the durable Program setup transaction…");
+    setStatus("Installing the selected panels and buttons…");
     let finalizedResult: ProgramSetupResult | null = null;
     try {
       const result = await applyManagedProgramPlan(planRequest);
@@ -405,7 +392,7 @@ export default function AddProgramWindowPage() {
   };
 
   const addPlainProgram = async () => {
-    if (!request || setupSource !== "plain") return;
+    if (!request || setupSource !== "plain" || busyRef.current) return;
     setBusy(true);
     setStatus("Adding the Program…");
     try {
@@ -424,11 +411,20 @@ export default function AddProgramWindowPage() {
     }
   };
 
-  const installReviewedPlan = async () => {
-    if (!request || !reviewed || setupSource !== "package") return;
+  const installProgram = async () => {
+    if (!request || !hostConfirmed || setupSource !== "package" || busyRef.current) return;
     setBusy(true);
+    setStatus("Installing the selected panels and buttons…");
     try {
-      await installValidatedPlan(request);
+      const validated = await preflightAddProgramPlan(request);
+      setExecutablePath(validated.executablePath);
+      await installValidatedPlan({
+        ...request,
+        programName: validated.programName,
+        executablePath: validated.executablePath
+      });
+    } catch (error) {
+      setStatus(`Program setup failed: ${errorMessage(error)}`);
     } finally {
       setBusy(false);
     }
@@ -436,12 +432,12 @@ export default function AddProgramWindowPage() {
 
   if (completedSetup) {
     return <main className="program-setup">
-      <header className="program-setup__header"><h1>{completedSetup.programName} setup</h1><button type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</button></header>
+      <header className="program-setup__header"><h1>{completedSetup.programName} setup</h1><ProgramSetupButton type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</ProgramSetupButton></header>
       <section className="program-setup__card" aria-live="polite">
         <h2>{completedSetup.status === "needsHostInitialization" ? "Finish application setup" : "Setup ready"}</h2>
         <p>{completedSetup.message}</p>
         {completedSetup.restartNotes ? <p>{completedSetup.restartNotes}</p> : null}
-        {completedSetup.status === "needsHostInitialization" ? <button type="button" onClick={() => void recheckSetup(completedSetup.programName)} disabled={busy}>Recheck setup</button> : null}
+        {completedSetup.status === "needsHostInitialization" ? <ProgramSetupButton type="button" onClick={() => void recheckSetup(completedSetup.programName)} disabled={busy}>Recheck setup</ProgramSetupButton> : null}
         <p className="program-setup__status">{status}</p>
       </section>
     </main>;
@@ -454,8 +450,8 @@ export default function AddProgramWindowPage() {
   return (
     <main className="program-setup">
       <header className="program-setup__header">
-        <div><p className="program-setup__eyebrow">Managed lifecycle</p><h1>Add Program</h1></div>
-        <button type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</button>
+        <div><h1>Add Program</h1></div>
+        <ProgramSetupButton type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</ProgramSetupButton>
       </header>
 
       {setupStatusError ? <p className="program-setup__status" role="alert">{setupStatusError}</p> : null}
@@ -465,18 +461,18 @@ export default function AddProgramWindowPage() {
           <h2>{entry.programName}: setup incomplete</h2>
           <p>{entry.message}</p>
           {entry.restartNotes ? <p>{entry.restartNotes}</p> : null}
-          <button type="button" onClick={() => void recheckSetup(entry.programName)} disabled={busy}>Recheck setup</button>
+          <ProgramSetupButton type="button" onClick={() => void recheckSetup(entry.programName)} disabled={busy}>Recheck setup</ProgramSetupButton>
         </section>
       ))}
 
       <section className="program-setup__card program-setup__import">
         <div><strong>Have a FlowCell program ZIP?</strong><p>Import it here, then choose what to add.</p></div>
-        <button type="button" onClick={() => void importPackage()} disabled={busy}>Import program ZIP</button>
+        <ProgramSetupButton type="button" onClick={() => void importPackage()} disabled={busy}>Import program ZIP</ProgramSetupButton>
       </section>
 
       <section className="program-setup__modes" aria-label="Program source">
-        <button className={setupSource === "plain" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("plain")} disabled={busy}>Any program</button>
-        <button className={setupSource === "package" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("package")} disabled={busy || inventory.packages.length === 0}>Managed package</button>
+        <ProgramSetupButton className={setupSource === "plain" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("plain")} disabled={busy}>Any program</ProgramSetupButton>
+        <ProgramSetupButton className={setupSource === "package" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("package")} disabled={busy || inventory.packages.length === 0}>Managed package</ProgramSetupButton>
       </section>
 
       {setupSource === "plain" ? (
@@ -488,17 +484,17 @@ export default function AddProgramWindowPage() {
             <label>Application executable
               <div className="program-setup__inline">
                 <input value={plainExecutablePath} onChange={(event) => { setPlainExecutablePath(event.target.value); setStatus("Add the Program when the name and EXE path are ready."); }} disabled={busy} />
-                <button type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: "Choose the application executable", filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
+                <ProgramSetupButton type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: "Choose the application executable", filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
                   const selectedPath = paths[0];
                   if (!selectedPath) return;
                   setPlainExecutablePath(selectedPath);
                   setPlainProgramName((current) => current.trim() || inferProgramNameFromExecutable(selectedPath));
                   setStatus("Add the Program when the name and EXE path are ready.");
-                })}>Browse</button>
+                })}>Browse</ProgramSetupButton>
               </div>
             </label>
           </section>
-          <footer className="program-setup__footer"><p className="program-setup__status">{status}</p><div><button className="program-setup__primary" type="button" onClick={() => void addPlainProgram()} disabled={busy || !plainProgramName.trim() || !plainExecutablePath.trim()}>Add program</button></div></footer>
+          <footer className="program-setup__footer"><p className="program-setup__status">{status}</p><div><ProgramSetupButton className="program-setup__primary" type="button" onClick={() => void addPlainProgram()} disabled={busy || !plainProgramName.trim() || !plainExecutablePath.trim()}>{busy ? "Installing…" : "Install"}</ProgramSetupButton></div></footer>
         </>
       ) : selectedProgram ? (
         <>
@@ -509,69 +505,71 @@ export default function AddProgramWindowPage() {
               </select>
             </label>
             <label>Host executable
-              {selectedProgram.executableCandidates.length > 0 ? <select aria-label="Detected applications" value={selectedProgram.executableCandidates.some((candidate) => candidate.path === executablePath) ? executablePath : ""} onChange={(event) => { setExecutablePath(event.target.value); setHostConfirmed(false); invalidateReview(); }} disabled={busy}>
+              {selectedProgram.executableCandidates.length > 0 ? <select aria-label="Detected applications" value={selectedProgram.executableCandidates.some((candidate) => candidate.path === executablePath) ? executablePath : ""} onChange={(event) => { setExecutablePath(event.target.value); setHostConfirmed(false); markSelectionChanged(); }} disabled={busy}>
                 <option value="">Choose an installed application</option>
                 {selectedProgram.executableCandidates.map((candidate) => <option key={candidate.path} value={candidate.path}>{candidate.path}</option>)}
               </select> : null}
               <div className="program-setup__inline">
-                <input value={executablePath} onChange={(event) => { setExecutablePath(event.target.value); setHostConfirmed(false); invalidateReview(); }} disabled={busy} />
-                <button type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: `Choose ${selectedProgram.programName} host executable`, filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
+                <input value={executablePath} onChange={(event) => { setExecutablePath(event.target.value); setHostConfirmed(false); markSelectionChanged(); }} disabled={busy} />
+                <ProgramSetupButton type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: `Choose ${selectedProgram.programName} host executable`, filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
                   if (!paths[0]) return;
-                  setExecutablePath(paths[0]); setHostConfirmed(false); invalidateReview();
-                })}>Browse</button>
-                <button type="button" disabled={busy} onClick={() => void refreshDetection()}>Find installed</button>
+                  setExecutablePath(paths[0]); setHostConfirmed(false); markSelectionChanged();
+                })}>Browse</ProgramSetupButton>
+                <ProgramSetupButton type="button" disabled={busy} onClick={() => void refreshDetection()}>Find installed</ProgramSetupButton>
               </div>
             </label>
-            <label className="program-setup__confirm"><input type="checkbox" checked={hostConfirmed} onChange={(event) => { setHostConfirmed(event.target.checked); invalidateReview(); }} disabled={busy} /> I confirm this EXE is the host application for this Program package.</label>
+            <label className="program-setup__confirm"><input type="checkbox" checked={hostConfirmed} onChange={(event) => { setHostConfirmed(event.target.checked); markSelectionChanged(); }} disabled={busy} /> I confirm this EXE is the host application for this Program package.</label>
           </section>
 
           <section className="program-setup__modes" aria-label="Setup mode">
-            <button className={mode === "register" ? "is-active" : ""} type="button" onClick={() => applyMode("register")} disabled={busy}>Register program only</button>
-            <button className={mode === "everything" ? "is-active" : ""} type="button" onClick={() => applyMode("everything")} disabled={busy}>Add everything</button>
-            <button className={mode === "custom" ? "is-active" : ""} type="button" onClick={() => applyMode("custom")} disabled={busy}>Custom</button>
+            <ProgramSetupButton className={mode === "register" ? "is-active" : ""} type="button" onClick={() => applyMode("register")} disabled={busy}>Register program only</ProgramSetupButton>
+            <ProgramSetupButton className={mode === "everything" ? "is-active" : ""} type="button" onClick={() => applyMode("everything")} disabled={busy}>Add everything</ProgramSetupButton>
+            <ProgramSetupButton className={mode === "custom" ? "is-active" : ""} type="button" onClick={() => applyMode("custom")} disabled={busy}>Custom</ProgramSetupButton>
           </section>
 
-          <section className="program-setup__columns">
-            <article className="program-setup__card"><h2>Panels</h2>
-              {selectedProgram.panels.map((panel) => {
-                const inUse = Array.from(selectedSources).some((sourceId) => (destinations[sourceId] || selectedProgram.sources.find((source) => source.id === sourceId)?.panelName) === panel.label);
-                return <label className="program-setup__check" key={panel.id}><input type="checkbox" checked={selectedPanels.has(panel.label)} disabled={busy || mode === "register" || inUse} onChange={(event) => togglePanel(panel.label, event.target.checked)} /><span><strong>{panel.label}</strong>{inUse ? <small>Required by a selected button</small> : null}</span></label>;
-              })}
-            </article>
-            <article className="program-setup__card"><h2>Buttons to add</h2>
-              <p className="program-setup__hint">Each selected item adds a button to its destination panel. Read the description below each button to see what it does.</p>
-              {selectedProgram.panels.map((panel) => {
-                const sources = selectedProgram.sources.filter((source) => source.panelName === panel.label);
-                if (sources.length === 0) return null;
-                return <details className="program-setup__source-group" key={panel.id} open>
-                  <summary>{panel.label} <small>{sources.length} button{sources.length === 1 ? "" : "s"}</small></summary>
-                  {sources.map((source) => {
+          <section className="program-setup__card program-setup__panels" aria-label="Panels and their contents">
+            <h2>Panels</h2>
+            {selectedProgram.panels.map((panel) => {
+              const sources = selectedProgram.sources.filter((source) =>
+                (destinations[source.id] || source.panelName) === panel.label
+              );
+              const panelLocked = selectedProgram.sources.some((source) => {
+                if (!selectedSources.has(source.id)) return false;
+                const sourcePanel = destinations[source.id] || source.panelName;
+                if (sourcePanel === panel.label) return source.required;
+                return Array.from(sourceClosure(selectedProgram, [source.id])).some((id) =>
+                  id !== source.id && (destinations[id] || selectedProgram.sources.find((candidate) => candidate.id === id)?.panelName) === panel.label
+                );
+              });
+              return <details className="program-setup__panel" key={panel.id} open>
+                <summary>
+                  <label className="program-setup__panel-choice" title={panelLocked ? "Required by a selected button." : `Select the ${panel.label} panel and its default buttons.`}>
+                    <input type="checkbox" checked={selectedPanels.has(panel.label)} disabled={busy || mode === "register" || panelLocked} onClick={(event) => event.stopPropagation()} onChange={(event) => togglePanel(panel.label, event.target.checked)} />
+                    <strong>{panel.label}</strong>
+                  </label>
+                  <small>{sources.length} button{sources.length === 1 ? "" : "s"}</small>
+                </summary>
+                <div className="program-setup__panel-contents">
+                  {sources.length ? sources.map((source) => {
                     const locked = mode !== "register" && (source.required || dependencyLocks.has(source.id));
-                    return <div className="program-setup__source" key={source.id}>
-                      <label className="program-setup__check"><input type="checkbox" checked={selectedSources.has(source.id)} disabled={busy || mode === "register" || locked} onChange={(event) => toggleSource(source.id, event.target.checked)} /><span><strong>{source.label}</strong><small>{source.sourceKind} - version {source.version}{locked ? " - required" : ""}</small></span></label>
-                      <p>{source.tooltip}</p>
-                      {selectedSources.has(source.id) ? <label>Destination panel
-                        <select value={destinations[source.id] || source.panelName} disabled={busy} onChange={(event) => { setMode("custom"); setDestinations((current) => ({ ...current, [source.id]: event.target.value })); setSelectedPanels((current) => new Set(current).add(event.target.value)); invalidateReview(); }}>
+                    return <div className="program-setup__source" key={source.id} title={source.tooltip || source.label}>
+                      <label className="program-setup__check">
+                        <input type="checkbox" checked={selectedSources.has(source.id)} disabled={busy || mode === "register" || locked} onChange={(event) => toggleSource(source.id, event.target.checked)} />
+                        <span><strong>{source.label}</strong>{locked ? <small>Required</small> : null}</span>
+                      </label>
+                      {selectedSources.has(source.id) && selectedProgram.panels.length > 1 ? <label className="program-setup__destination">Panel
+                        <select aria-label={`Panel for ${source.label}`} value={destinations[source.id] || source.panelName} disabled={busy} onChange={(event) => { setMode("custom"); setDestinations((current) => ({ ...current, [source.id]: event.target.value })); setSelectedPanels((current) => new Set(current).add(event.target.value)); markSelectionChanged(); }}>
                           {selectedProgram.panels.filter((candidate) => selectedPanels.has(candidate.label)).map((candidate) => <option key={candidate.id}>{candidate.label}</option>)}
                         </select>
                       </label> : null}
                     </div>;
-                  })}
-                </details>;
-              })}
-            </article>
+                  }) : <p className="program-setup__hint">This panel has no bundled buttons.</p>}
+                </div>
+              </details>;
+            })}
           </section>
 
-          <section className="program-setup__card program-setup__details"><h2>Package contract</h2>
-            <p><strong>Type:</strong> {selectedProgram.programType}</p>
-            <p><strong>Support content:</strong> {selectedProgram.supportContent.join(", ") || "None"}</p>
-            <p><strong>Required versions:</strong> {selectedProgram.requiredVersions.join(", ")}</p>
-            {selectedProgram.addonReloadNotes ? <p><strong>Reload:</strong> {selectedProgram.addonReloadNotes}</p> : null}
-            {selectedProgram.appRestartNotes ? <p><strong>Restart:</strong> {selectedProgram.appRestartNotes}</p> : null}
-          </section>
-
-          {reviewed ? <section className="program-setup__card program-setup__review"><h2>Validated effects</h2><ul>{reviewed.installEffects.map((effect) => <li key={effect}>{effect}</li>)}</ul></section> : null}
-          <footer className="program-setup__footer"><p className="program-setup__status">{status}</p><div>{reviewed ? <button className="program-setup__primary" type="button" onClick={() => void installReviewedPlan()} disabled={busy}>Install validated plan</button> : <button className="program-setup__primary" type="button" onClick={() => void reviewPlan()} disabled={busy || !hostConfirmed || !executablePath.trim()}>Review plan</button>}</div></footer>
+          <footer className="program-setup__footer"><p className="program-setup__status" role="status">{status}</p><div><ProgramSetupButton className="program-setup__primary" type="button" onClick={() => void installProgram()} disabled={busy || !hostConfirmed || !executablePath.trim()}>{busy ? "Installing…" : "Install"}</ProgramSetupButton></div></footer>
         </>
       ) : (
         <section className="program-setup__card"><p>No validated, unregistered managed Program packages are available. Import a FlowCell program ZIP above. Choose Any program to add an executable directly.</p></section>

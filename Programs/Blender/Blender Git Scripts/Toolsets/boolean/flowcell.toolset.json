@@ -1,301 +1,414 @@
 {
-    "schemaVersion": 1,
-    "id": "blender.boolean",
-    "version": "1.1.4",
-    "label": "boolean",
-    "tooltip": "Quick Boolean with I/U/D operation buttons, one cycling solver button, SI/HT/HC/S toggles, and Run.",
-    "kind": "toolset",
-    "program": "Blender",
-    "source": "boolean.py",
-    "bridgeData": {},
-    "stateQuery": {
-        "slot": "operation_difference",
-        "payload": { "command": "status", "action": "status" }
+  "schemaVersion": 1,
+  "id": "blender.boolean",
+  "version": "1.1.5",
+  "label": "boolean",
+  "tooltip": "Quick Boolean with I/U/D operation buttons, one cycling solver button, SI/HT/HC/S toggles, and Run.",
+  "kind": "toolset",
+  "program": "Blender",
+  "source": "boolean.py",
+  "bridgeData": {},
+  "stateQuery": {
+    "slot": "operation_difference",
+    "payload": {
+      "command": "status",
+      "action": "status"
+    }
+  },
+  "children": [
+    {
+      "slot": "operation_intersect",
+      "label": "I",
+      "tooltip": "Set the boolean operation to Intersect.",
+      "payload": {
+        "command": "operation_intersect",
+        "action": "operation_intersect"
+      }
     },
-    "children": [
-        {
-            "slot": "operation_intersect",
+    {
+      "slot": "operation_union",
+      "label": "U",
+      "tooltip": "Set the boolean operation to Union.",
+      "payload": {
+        "command": "operation_union",
+        "action": "operation_union"
+      }
+    },
+    {
+      "slot": "operation_difference",
+      "label": "D",
+      "tooltip": "Set the boolean operation to Difference.",
+      "payload": {
+        "command": "operation_difference",
+        "action": "operation_difference"
+      }
+    },
+    {
+      "slot": "solver_cycle",
+      "label": "Exact",
+      "tooltip": "Cycle the boolean solver between Exact, Float, and Manifold.",
+      "payload": {
+        "command": "cycle_solver",
+        "action": "cycle_solver"
+      }
+    },
+    {
+      "slot": "toggle_self_intersection",
+      "label": "SI",
+      "tooltip": "Toggle self-intersection support.",
+      "payload": {
+        "command": "toggle_self_intersection",
+        "action": "toggle_self_intersection"
+      }
+    },
+    {
+      "slot": "toggle_hole_tolerant",
+      "label": "HT",
+      "tooltip": "Toggle hole-tolerant solving.",
+      "payload": {
+        "command": "toggle_hole_tolerant",
+        "action": "toggle_hole_tolerant"
+      }
+    },
+    {
+      "slot": "toggle_hide_cutter",
+      "label": "HC",
+      "tooltip": "Toggle hiding the cutter after running.",
+      "payload": {
+        "command": "toggle_hide_cutter",
+        "action": "toggle_hide_cutter"
+      }
+    },
+    {
+      "slot": "toggle_backup_active",
+      "label": "S",
+      "tooltip": "Toggle taking a FlowCell snapshot before running.",
+      "payload": {
+        "command": "toggle_backup_active",
+        "action": "toggle_backup_active"
+      }
+    },
+    {
+      "slot": "run_boolean",
+      "label": "Run",
+      "tooltip": "Run the quick boolean operation.",
+      "payload": {
+        "command": "run_boolean",
+        "action": "run_boolean"
+      }
+    }
+  ],
+  "layout": {
+    "mode": "grid",
+    "columns": 4,
+    "gap": 8,
+    "padding": 8,
+    "placements": {
+      "operation_intersect": {
+        "x": 8,
+        "y": 8,
+        "width": 66,
+        "height": 45,
+        "zIndex": 0
+      },
+      "operation_union": {
+        "x": 74,
+        "y": 8,
+        "width": 66,
+        "height": 45,
+        "zIndex": 1
+      },
+      "operation_difference": {
+        "x": 140,
+        "y": 8,
+        "width": 66,
+        "height": 45,
+        "zIndex": 2
+      },
+      "solver_cycle": {
+        "x": 206,
+        "y": 8,
+        "width": 79,
+        "height": 45,
+        "zIndex": 3
+      },
+      "toggle_self_intersection": {
+        "x": 8,
+        "y": 53,
+        "width": 57,
+        "height": 48,
+        "zIndex": 4
+      },
+      "toggle_hole_tolerant": {
+        "x": 65,
+        "y": 53,
+        "width": 57,
+        "height": 48,
+        "zIndex": 5
+      },
+      "toggle_hide_cutter": {
+        "x": 122,
+        "y": 53,
+        "width": 57,
+        "height": 48,
+        "zIndex": 6
+      },
+      "toggle_backup_active": {
+        "x": 179,
+        "y": 53,
+        "width": 57,
+        "height": 48,
+        "zIndex": 7
+      },
+      "run_boolean": {
+        "x": 236,
+        "y": 53,
+        "width": 57,
+        "height": 48,
+        "zIndex": 8
+      }
+    },
+    "fields": [
+      {
+        "id": "operation",
+        "label": "Operation",
+        "payloadKey": "",
+        "defaultValue": "DIFFERENCE",
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "select",
+        "options": [
+          {
+            "id": "intersect",
             "label": "I",
-            "tooltip": "Set the boolean operation to Intersect.",
-            "payload": {
-                "command": "operation_intersect",
-                "action": "operation_intersect"
-            }
-        },
-        {
-            "slot": "operation_union",
+            "value": "INTERSECT"
+          },
+          {
+            "id": "union",
             "label": "U",
-            "tooltip": "Set the boolean operation to Union.",
-            "payload": {
-                "command": "operation_union",
-                "action": "operation_union"
-            }
-        },
-        {
-            "slot": "operation_difference",
+            "value": "UNION"
+          },
+          {
+            "id": "difference",
             "label": "D",
-            "tooltip": "Set the boolean operation to Difference.",
-            "payload": {
-                "command": "operation_difference",
-                "action": "operation_difference"
-            }
-        },
-        {
-            "slot": "solver_cycle",
-            "label": "Exact",
-            "tooltip": "Cycle the boolean solver between Exact, Float, and Manifold.",
-            "payload": {
-                "command": "cycle_solver",
-                "action": "cycle_solver"
-            }
-        },
-        {
-            "slot": "toggle_self_intersection",
-            "label": "SI",
-            "tooltip": "Toggle self-intersection support.",
-            "payload": {
-                "command": "toggle_self_intersection",
-                "action": "toggle_self_intersection"
-            }
-        },
-        {
-            "slot": "toggle_hole_tolerant",
-            "label": "HT",
-            "tooltip": "Toggle hole-tolerant solving.",
-            "payload": {
-                "command": "toggle_hole_tolerant",
-                "action": "toggle_hole_tolerant"
-            }
-        },
-        {
-            "slot": "toggle_hide_cutter",
-            "label": "HC",
-            "tooltip": "Toggle hiding the cutter after running.",
-            "payload": {
-                "command": "toggle_hide_cutter",
-                "action": "toggle_hide_cutter"
-            }
-        },
-        {
-            "slot": "toggle_backup_active",
-            "label": "S",
-            "tooltip": "Toggle taking a FlowCell snapshot before running.",
-            "payload": {
-                "command": "toggle_backup_active",
-                "action": "toggle_backup_active"
-            }
-        },
-        {
-            "slot": "run_boolean",
-            "label": "Run",
-            "tooltip": "Run the quick boolean operation.",
-            "payload": {
-                "command": "run_boolean",
-                "action": "run_boolean"
-            }
-        }
+            "value": "DIFFERENCE"
+          }
+        ]
+      },
+      {
+        "id": "self_intersection",
+        "label": "Self Intersection",
+        "payloadKey": "",
+        "defaultValue": false,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "toggle"
+      },
+      {
+        "id": "hole_tolerant",
+        "label": "Hole Tolerant",
+        "payloadKey": "",
+        "defaultValue": false,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "toggle"
+      },
+      {
+        "id": "hide_cutter",
+        "label": "Hide Cutter",
+        "payloadKey": "",
+        "defaultValue": true,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "toggle"
+      },
+      {
+        "id": "backup_active",
+        "label": "Snapshot Before Run",
+        "payloadKey": "",
+        "defaultValue": true,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "toggle"
+      }
     ],
-    "layout": {
-        "mode": "grid",
-        "columns": 4,
-        "gap": 8,
-        "padding": 8,
-        "placements": {
-            "operation_intersect": {
-                "x": 8,
-                "y": 8,
-                "width": 66,
-                "height": 45,
-                "zIndex": 0
-            },
-            "operation_union": {
-                "x": 74,
-                "y": 8,
-                "width": 66,
-                "height": 45,
-                "zIndex": 1
-            },
-            "operation_difference": {
-                "x": 140,
-                "y": 8,
-                "width": 66,
-                "height": 45,
-                "zIndex": 2
-            },
-            "solver_cycle": {
-                "x": 206,
-                "y": 8,
-                "width": 79,
-                "height": 45,
-                "zIndex": 3
-            },
-            "toggle_self_intersection": {
-                "x": 8,
-                "y": 53,
-                "width": 57,
-                "height": 48,
-                "zIndex": 4
-            },
-            "toggle_hole_tolerant": {
-                "x": 65,
-                "y": 53,
-                "width": 57,
-                "height": 48,
-                "zIndex": 5
-            },
-            "toggle_hide_cutter": {
-                "x": 122,
-                "y": 53,
-                "width": 57,
-                "height": 48,
-                "zIndex": 6
-            },
-            "toggle_backup_active": {
-                "x": 179,
-                "y": 53,
-                "width": 57,
-                "height": 48,
-                "zIndex": 7
-            },
-            "run_boolean": {
-                "x": 236,
-                "y": 53,
-                "width": 57,
-                "height": 48,
-                "zIndex": 8
-            }
+    "childBehaviors": {
+      "operation_intersect": {
+        "fieldPatch": {
+          "operation": "INTERSECT"
         },
-        "fields": [
-            {
-                "id": "operation",
-                "label": "Operation",
-                "payloadKey": "",
-                "defaultValue": "DIFFERENCE",
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "select",
-                "options": [
-                    {
-                        "id": "intersect",
-                        "label": "I",
-                        "value": "INTERSECT"
-                    },
-                    {
-                        "id": "union",
-                        "label": "U",
-                        "value": "UNION"
-                    },
-                    {
-                        "id": "difference",
-                        "label": "D",
-                        "value": "DIFFERENCE"
-                    }
-                ]
-            },
-            {
-                "id": "self_intersection",
-                "label": "Self Intersection",
-                "payloadKey": "",
-                "defaultValue": false,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "toggle"
-            },
-            {
-                "id": "hole_tolerant",
-                "label": "Hole Tolerant",
-                "payloadKey": "",
-                "defaultValue": false,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "toggle"
-            },
-            {
-                "id": "hide_cutter",
-                "label": "Hide Cutter",
-                "payloadKey": "",
-                "defaultValue": true,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "toggle"
-            },
-            {
-                "id": "backup_active",
-                "label": "Snapshot Before Run",
-                "payloadKey": "",
-                "defaultValue": true,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "toggle"
-            }
+        "execute": true
+      },
+      "operation_union": {
+        "fieldPatch": {
+          "operation": "UNION"
+        },
+        "execute": true
+      },
+      "operation_difference": {
+        "fieldPatch": {
+          "operation": "DIFFERENCE"
+        },
+        "execute": true
+      },
+      "toggle_self_intersection": {
+        "toggleFields": [
+          "self_intersection"
         ],
-        "childBehaviors": {
-            "operation_intersect": {
-                "fieldPatch": {
-                    "operation": "INTERSECT"
-                },
-                "execute": true
-            },
-            "operation_union": {
-                "fieldPatch": {
-                    "operation": "UNION"
-                },
-                "execute": true
-            },
-            "operation_difference": {
-                "fieldPatch": {
-                    "operation": "DIFFERENCE"
-                },
-                "execute": true
-            },
-            "toggle_self_intersection": {
-                "toggleFields": [
-                    "self_intersection"
-                ],
-                "execute": true
-            },
-            "toggle_hole_tolerant": {
-                "toggleFields": [
-                    "hole_tolerant"
-                ],
-                "execute": true
-            },
-            "toggle_hide_cutter": {
-                "toggleFields": [
-                    "hide_cutter"
-                ],
-                "execute": true
-            },
-            "toggle_backup_active": {
-                "toggleFields": [
-                    "backup_active"
-                ],
-                "execute": true
-            }
-        },
-        "width": 616,
-        "height": 158
+        "execute": true
+      },
+      "toggle_hole_tolerant": {
+        "toggleFields": [
+          "hole_tolerant"
+        ],
+        "execute": true
+      },
+      "toggle_hide_cutter": {
+        "toggleFields": [
+          "hide_cutter"
+        ],
+        "execute": true
+      },
+      "toggle_backup_active": {
+        "toggleFields": [
+          "backup_active"
+        ],
+        "execute": true
+      }
     },
+    "width": 616,
+    "height": 158,
+    "placementPresentation": {
+      "operation_intersect": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "operation_union": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "operation_difference": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "solver_cycle": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "toggle_self_intersection": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "toggle_hole_tolerant": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "toggle_hide_cutter": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "toggle_backup_active": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "run_boolean": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      }
+    }
+  },
   "appearance": {
     "skins": {
       "skin-1-Chipped-Concrete-Key-100-b": {

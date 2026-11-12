@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import ChippedConcreteActionButton from "../../button/ChippedConcreteActionButton";
 import type { ThemeTarget } from "../../theme/themeModel.js";
 import { archiveSourceDescriptors, chooseThemeFile, listThemeLibrary, readTheme, type ReadThemeResult, type ThemeLibraryEntry } from "../../theme/themeFile.js";
 import { previewPortableThemeImport } from "../../theme/portableThemeService.js";
@@ -41,7 +42,7 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
     let disposed = false;
     inspection.current += 1;
     setSelected(null); setIssues([]); setRequirements([]); setError(""); setPending(false);
-    void listThemeLibrary(target).then((items) => { if (!disposed) setEntries(mode === "open" ? items.filter((item) => !item.supplied) : items); })
+    void listThemeLibrary(target).then((items) => { if (!disposed) setEntries(items); })
       .catch((reason) => { if (!disposed) setError(String(reason)); });
     return () => { disposed = true; inspection.current += 1; };
   }, [target, mode]);
@@ -70,15 +71,16 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
   const thumbnail = portableThemeThumbnail(selected?.portable);
   return <div className="theme-library-backdrop">
     <section className="theme-library-dialog" role="dialog" aria-modal="true" aria-label={mode === "import" ? "Import Theme" : "Open Theme"}>
-      <header><h2>{mode === "import" ? "Import Theme" : "Open Theme"}</h2><button onClick={onClose} disabled={pending}>Close</button></header>
+      <header><h2>{mode === "import" ? "Import Theme" : "Open Theme"}</h2><ChippedConcreteActionButton onClick={onClose} disabled={pending}>Close</ChippedConcreteActionButton></header>
       <p>{target.kind === "program" ? target.programName : "Main"} themes</p>
       <div className="theme-library-columns">
         <div className="theme-library-list">
-          {entries.map((entry) => <button key={entry.path} disabled={pending} onClick={() => void inspect(() => readTheme(entry.path, target))}>
-            {entry.name}<small>{entry.supplied ? "Supplied theme" : "Saved theme"}</small>
-          </button>)}
+          {entries.map((entry) => <div key={entry.path}>
+            <ChippedConcreteActionButton disabled={pending} title={entry.supplied ? "Supplied theme" : "Saved theme"} onClick={() => void inspect(() => readTheme(entry.path, target))}>{entry.name}</ChippedConcreteActionButton>
+            <small>{entry.supplied ? "Supplied theme" : "Saved theme"}</small>
+          </div>)}
           {!entries.length && <p>No themes in this library.</p>}
-          <button disabled={pending} onClick={() => void inspect(() => chooseThemeFile(target))}>Choose local theme file or archive…</button>
+          <ChippedConcreteActionButton disabled={pending} onClick={() => void inspect(() => chooseThemeFile(target))}>Choose local theme file or archive…</ChippedConcreteActionButton>
         </div>
         <div className="theme-library-review">
           {selected ? <>
@@ -96,11 +98,11 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
           {error && <p role="alert">{error}</p>}
         </div>
       </div>
-      <footer><button disabled={pending || !selected || issues.length > 0} onClick={() => {
+      <footer><ChippedConcreteActionButton disabled={pending || !selected || issues.length > 0} onClick={() => {
         if (!selected) return;
         setPending(true); setError("");
         void onApply(selected).then(onClose).catch((reason) => setError(String(reason))).finally(() => setPending(false));
-      }}>{pending ? "Checking…" : "Apply Theme"}</button></footer>
+      }}>{pending ? "Checking…" : "Apply Theme"}</ChippedConcreteActionButton></footer>
     </section>
   </div>;
 }

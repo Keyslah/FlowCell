@@ -1,4 +1,4 @@
-# Description: Runs sync recent creative shortcuts.
+# Description: Keep shortcuts to recent creative documents and assets under the per-user FlowCellRecent folder, updating them as files change.
 param(
     [switch]$Once,
     [int]$WaitSeconds = 5

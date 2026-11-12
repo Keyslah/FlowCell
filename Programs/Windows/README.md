@@ -32,8 +32,13 @@ role or tool-set slot change requires delete/re-add.
 
 Add Program reads the manifest-authoritative Windows Panel/contribution
 inventory. `Register program only` creates no source Button, while the default
-or custom plan may explicitly enable the Windows-owned Setup Organization page
-contribution. The exact enabled set is stored under
+or custom plan installs the selected user-facing tools. The shipped default set
+contains 8 Files tools and 8 Utility tools, including Setup Organization, Window
+Grid, clipboard text, backups and Git actions, screen captures, monitor controls,
+Chrome workspaces and the FlowCell window toggle. Startup starts empty and accepts
+the user's own assignments. Codex Micro remains a separately assignable catalog;
+generated organizer profile Buttons are created through Setup Organization rather
+than shipping another user's profiles. The exact enabled set is stored under
 `flowcellbackend/local/program-registration/windows.json`; startup synchronizes
 only that set. Add Panel can create an empty managed Windows Panel or copy one
 validated external folder without modifying the source.

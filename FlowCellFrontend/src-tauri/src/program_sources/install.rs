@@ -200,6 +200,8 @@ struct ToolsetLayoutManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     placements: Option<BTreeMap<String, ToolsetLayoutRectManifest>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement_presentation: Option<BTreeMap<String, ToolsetPlacementPresentationManifest>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     fields: Option<Vec<ToolsetFieldManifest>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     child_behaviors: Option<BTreeMap<String, ToolsetChildBehaviorManifest>>,
@@ -216,6 +218,21 @@ struct ToolsetLayoutRectManifest {
     height: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     z_index: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ToolsetPlacementPresentationManifest {
+    text_fit_mode: String,
+    text_alignment: String,
+    text_offset_x: f64,
+    text_offset_y: f64,
+    minimum_font_size: f64,
+    text_size_override: Option<f64>,
+    allow_label_resize: bool,
+    match_hitbox_to_skin: bool,
+    allow_stretching: bool,
+    highlight_on_hover: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -707,6 +724,30 @@ fn validate_toolset_layout(
             .iter()
             .any(|child| child.slot.eq_ignore_ascii_case(slot.trim()))
     };
+    if let Some(presentations) = layout.placement_presentation.as_ref() {
+        for (slot, presentation) in presentations {
+            if slot.trim().is_empty() || !child_exists(slot) {
+                return Err(format!("Tool-set placement presentation '{slot}' does not name a declared child slot."));
+            }
+            if !matches!(presentation.text_fit_mode.as_str(), "shrink" | "stack-whole-words" | "shrink-and-stack")
+                || !matches!(presentation.text_alignment.as_str(), "skin" | "left" | "center" | "right") {
+                return Err(format!("Tool-set placement presentation '{slot}' has an unsupported text-fit mode or alignment."));
+            }
+            for (name, value) in [("textOffsetX", presentation.text_offset_x), ("textOffsetY", presentation.text_offset_y),
+                ("minimumFontSize", presentation.minimum_font_size)] {
+                validate_toolset_layout_number(value, &format!("placementPresentation.{slot}.{name}"))?;
+            }
+            if presentation.minimum_font_size <= 0.0 {
+                return Err(format!("Tool-set placement presentation '{slot}' minimumFontSize must be positive."));
+            }
+            if let Some(size) = presentation.text_size_override {
+                validate_toolset_layout_number(size, &format!("placementPresentation.{slot}.textSizeOverride"))?;
+                if size <= 0.0 {
+                    return Err(format!("Tool-set placement presentation '{slot}' textSizeOverride must be positive."));
+                }
+            }
+        }
+    }
     if let Some(placements) = layout.placements.as_ref() {
         for (slot, rect) in placements {
             if slot.trim().is_empty() || !child_exists(slot) {

@@ -525,6 +525,7 @@ function addInstalledToolSet(
     });
     const exact = childRects[child.slot];
     const placement = addPlacement(document, childId, surface.id, exact);
+    Object.assign(placement, layout?.placementPresentation?.[child.slot]);
     skinAssignments.push({ placement, skinKey: layout?.appearance?.children?.[child.slot] });
   }
   assignInstalledToolSetSkins(document, layout?.appearance, skinAssignments);

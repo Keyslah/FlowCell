@@ -1,5 +1,9 @@
 # Blender Collections
 
+The Collections panel installs its 18 user-facing controls through the program
+manifest. Cycle Collection keeps its hover, press and release event mapping;
+its visibility helpers are not installed as separate Buttons.
+
 | Button | Description |
 | --- | --- |
 | `Make Collections` | Creates the four system roots, moves other scene-root collections under `Live` with their hierarchy intact, and moves loose scene-root objects into `Live`. Includes hidden content; existing `Snapshots`, `Trash`, and `Archive` remain in place. The internal `make_layers` action stays compatible with installed Buttons. |

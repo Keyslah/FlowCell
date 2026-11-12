@@ -1,121 +1,163 @@
 {
-    "schemaVersion":  1,
-    "id":  "blender.xyz-dimensions",
-    "version":  "1.0.3",
-    "label":  "xyz",
-    "tooltip":  "Show live X, Y, and Z dimensions for the active selected object in inches.",
-    "kind":  "toolset",
-    "program":  "Blender",
-    "source":  "xyz dimensions.py",
-    "bridgeData":  {
-
-                   },
-    "children":  [
-                     {
-                         "slot":  "dimension_x",
-                         "label":  "X",
-                         "tooltip":  "Display the active selected object\u0027s X dimension in inches.",
-                         "payload":  {
-                                         "command":  "dimension_x",
-                                         "action":  "dimension_x"
-                                     }
-                     },
-                     {
-                         "slot":  "dimension_y",
-                         "label":  "Y",
-                         "tooltip":  "Display the active selected object\u0027s Y dimension in inches.",
-                         "payload":  {
-                                         "command":  "dimension_y",
-                                         "action":  "dimension_y"
-                                     }
-                     },
-                     {
-                         "slot":  "dimension_z",
-                         "label":  "Z",
-                         "tooltip":  "Display the active selected object\u0027s Z dimension in inches.",
-                         "payload":  {
-                                         "command":  "dimension_z",
-                                         "action":  "dimension_z"
-                                     }
-                     }
-                 ],
-    "layout":  {
-        "mode": "grid",
-        "columns": 3,
-        "gap": 8,
-        "padding": 8,
-        "width": 464,
-        "height": 120,
-        "fields": [
-            {
-                "id": "dimension_x_display",
-                "kind": "display",
-                "label": "X dimension",
-                "payloadKey": "dimensionReadouts.x",
-                "defaultValue": "X -- in",
-                "x": 8,
-                "y": 8,
-                "width": 144,
-                "height": 42,
-                "zIndex": 1,
-                "hidden": true
-            },
-            {
-                "id": "dimension_y_display",
-                "kind": "display",
-                "label": "Y dimension",
-                "payloadKey": "dimensionReadouts.y",
-                "defaultValue": "Y -- in",
-                "x": 160,
-                "y": 8,
-                "width": 144,
-                "height": 42,
-                "zIndex": 1,
-                "hidden": true
-            },
-            {
-                "id": "dimension_z_display",
-                "kind": "display",
-                "label": "Z dimension",
-                "payloadKey": "dimensionReadouts.z",
-                "defaultValue": "Z -- in",
-                "x": 312,
-                "y": 8,
-                "width": 144,
-                "height": 42,
-                "zIndex": 1,
-                "hidden": true
-            }
-        ],
-        "childBehaviors": {
-            "dimension_x": { "labelField": "dimension_x_display" },
-            "dimension_y": { "labelField": "dimension_y_display" },
-            "dimension_z": { "labelField": "dimension_z_display" }
-        },
-        "placements": {
-            "dimension_x": {
-                "x": 8,
-                "y": 8,
-                "width": 144,
-                "height": 42,
-                "zIndex": 0
-            },
-            "dimension_y": {
-                "x": 160,
-                "y": 8,
-                "width": 144,
-                "height": 42,
-                "zIndex": 1
-            },
-            "dimension_z": {
-                "x": 312,
-                "y": 8,
-                "width": 144,
-                "height": 42,
-                "zIndex": 2
-            }
-        }
+  "schemaVersion": 1,
+  "id": "blender.xyz-dimensions",
+  "version": "1.0.4",
+  "label": "xyz",
+  "tooltip": "Show live X, Y, and Z dimensions for the active selected object in inches.",
+  "kind": "toolset",
+  "program": "Blender",
+  "source": "xyz dimensions.py",
+  "bridgeData": {},
+  "children": [
+    {
+      "slot": "dimension_x",
+      "label": "X",
+      "tooltip": "Display the active selected object's X dimension in inches.",
+      "payload": {
+        "command": "dimension_x",
+        "action": "dimension_x"
+      }
     },
+    {
+      "slot": "dimension_y",
+      "label": "Y",
+      "tooltip": "Display the active selected object's Y dimension in inches.",
+      "payload": {
+        "command": "dimension_y",
+        "action": "dimension_y"
+      }
+    },
+    {
+      "slot": "dimension_z",
+      "label": "Z",
+      "tooltip": "Display the active selected object's Z dimension in inches.",
+      "payload": {
+        "command": "dimension_z",
+        "action": "dimension_z"
+      }
+    }
+  ],
+  "layout": {
+    "mode": "grid",
+    "columns": 3,
+    "gap": 8,
+    "padding": 8,
+    "width": 464,
+    "height": 120,
+    "fields": [
+      {
+        "id": "dimension_x_display",
+        "kind": "display",
+        "label": "X dimension",
+        "payloadKey": "dimensionReadouts.x",
+        "defaultValue": "X -- in",
+        "x": 8,
+        "y": 8,
+        "width": 144,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "dimension_y_display",
+        "kind": "display",
+        "label": "Y dimension",
+        "payloadKey": "dimensionReadouts.y",
+        "defaultValue": "Y -- in",
+        "x": 160,
+        "y": 8,
+        "width": 144,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "dimension_z_display",
+        "kind": "display",
+        "label": "Z dimension",
+        "payloadKey": "dimensionReadouts.z",
+        "defaultValue": "Z -- in",
+        "x": 312,
+        "y": 8,
+        "width": 144,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      }
+    ],
+    "childBehaviors": {
+      "dimension_x": {
+        "labelField": "dimension_x_display"
+      },
+      "dimension_y": {
+        "labelField": "dimension_y_display"
+      },
+      "dimension_z": {
+        "labelField": "dimension_z_display"
+      }
+    },
+    "placements": {
+      "dimension_x": {
+        "x": 8,
+        "y": 8,
+        "width": 144,
+        "height": 42,
+        "zIndex": 0
+      },
+      "dimension_y": {
+        "x": 160,
+        "y": 8,
+        "width": 144,
+        "height": 42,
+        "zIndex": 1
+      },
+      "dimension_z": {
+        "x": 312,
+        "y": 8,
+        "width": 144,
+        "height": 42,
+        "zIndex": 2
+      }
+    },
+    "placementPresentation": {
+      "dimension_x": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": true,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "dimension_y": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": true,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "dimension_z": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": true,
+        "allowStretching": false,
+        "highlightOnHover": false
+      }
+    }
+  },
   "appearance": {
     "skins": {
       "skin-1-Chipped-Concrete-Key-100": {

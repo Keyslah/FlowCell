@@ -32,7 +32,7 @@ import { readLastLayoutPath } from "../../lib/startupSettings.js";
 import type { LayoutSnapshot } from "../../types.js";
 import { validateInstalledButtonLayout } from "./installedButtonLayoutValidation.js";
 import { resolveInstalledToolFields } from "./installedToolFields.js";
-import { assignInstalledToolSetSkins, type InstalledToolSetAppearance } from "./installedToolSetSkins.js";
+import { assignInstalledToolSetSkins, type InstalledToolSetAppearance, type InstalledToolSetPlacementPresentation } from "./installedToolSetSkins.js";
 import {
   validateButtonPlacementFile,
   type ButtonPlacementFile
@@ -55,6 +55,7 @@ export interface InstalledButtonLayout {
   width?: number;
   height?: number;
   placements?: Record<string, ButtonRect & { zIndex?: number }>;
+  placementPresentation?: Record<string, InstalledToolSetPlacementPresentation>;
   fields?: ButtonToolField[];
   childBehaviors?: Record<string, ButtonToolSetChildBehavior>;
   appearance?: InstalledToolSetAppearance;
@@ -936,6 +937,7 @@ function addMigratedToolSet(
       childRects[index],
       false
     );
+    Object.assign(placement, layout?.placementPresentation?.[child.slot]);
     appearanceTargets.push({ placement, skinKey: layout?.appearance?.children?.[child.slot] });
   });
   assignInstalledToolSetSkins(document, layout?.appearance, appearanceTargets);

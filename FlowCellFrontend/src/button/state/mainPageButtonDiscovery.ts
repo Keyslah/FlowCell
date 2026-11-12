@@ -5,6 +5,7 @@ import {
 import type { ButtonStateDocument } from "../types.js";
 import { ensureFlowCellMainPageButtons } from "./mainPageButtonOperations.js";
 import { reconcileProgramPanelOwners } from "./panelOwnerButtonOperations.js";
+import { ensureChippedConcreteDefaults } from "./buttonDefaults.js";
 
 export interface RegisteredProgramPanels {
   programName: string;
@@ -25,7 +26,7 @@ export function reconcileMainPageButtonDiscovery(
   registeredPanels: readonly RegisteredProgramPanels[],
   options: MainPageButtonDiscoveryOptions = {}
 ): MainPageButtonDiscoveryResult {
-  let changed = false;
+  let changed = ensureChippedConcreteDefaults(document);
   const removedOwnerButtonIds = new Set<string>();
   for (const entry of registeredPanels) {
     const result = reconcileProgramPanelOwners(document, {

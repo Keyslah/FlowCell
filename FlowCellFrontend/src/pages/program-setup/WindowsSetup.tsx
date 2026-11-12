@@ -7,6 +7,7 @@ import {
 } from "../../lib/programRails";
 import { applyManagedProgramPlan } from "./applyManagedProgramPlan";
 import { buildWindowsSetupPlan } from "./windowsSetupPlan";
+import ProgramSetupButton from "../../button/ChippedConcreteActionButton";
 import "./programSetup.css";
 
 export default function WindowsSetup({ onComplete }: { onComplete: () => void }) {
@@ -118,9 +119,9 @@ export default function WindowsSetup({ onComplete }: { onComplete: () => void })
     {error ? <p className="windows-setup__error" role="alert">{error}</p> : null}
     <footer className="program-setup__footer">
       <p>{busy ? "Installing your selected Windows panels…" : "You can add or remove panels later."}</p>
-      {program ? <button type="button" disabled={loading || busy} onClick={() => void install()}>
+      {program ? <ProgramSetupButton type="button" disabled={loading || busy} onClick={() => void install()}>
         {busy ? "Installing…" : selectedPanels.size ? "Install Windows tools" : "Continue with Windows"}
-      </button> : <button type="button" disabled={loading} onClick={() => void checkRequirement()}>Retry</button>}
+      </ProgramSetupButton> : <ProgramSetupButton type="button" disabled={loading} onClick={() => void checkRequirement()}>Retry</ProgramSetupButton>}
     </footer>
   </dialog>;
 }

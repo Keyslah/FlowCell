@@ -386,6 +386,7 @@ export function validateInstalledButtonLayout<T>(layout: T, childSlots?: readonl
       "width",
       "height",
       "placements",
+      "placementPresentation",
       "fields",
       "childBehaviors",
       "updatePolicy",
@@ -421,6 +422,34 @@ export function validateInstalledButtonLayout<T>(layout: T, childSlots?: readonl
       rejectUnknownKeys(rect as UnknownRecord, ["x", "y", "width", "height", "zIndex"], `placements.${slot}`);
       validateOptionalFiniteNumber(rect as UnknownRecord, "zIndex", `placements.${slot}`);
     });
+  }
+
+  if (layout.placementPresentation !== undefined) {
+    if (!isRecord(layout.placementPresentation)) invalid("placementPresentation", "must be an object.");
+    for (const [slot, presentation] of Object.entries(layout.placementPresentation)) {
+      const path = `placementPresentation.${slot}`;
+      if (!slot.trim() || (childSlots && !childSlots.includes(slot))) invalid(path, "must name a declared child slot.");
+      if (!isRecord(presentation)) invalid(path, "must be an object.");
+      rejectUnknownKeys(presentation, ["textFitMode", "textAlignment", "textOffsetX", "textOffsetY",
+        "minimumFontSize", "textSizeOverride", "allowLabelResize", "matchHitboxToSkin",
+        "allowStretching", "highlightOnHover"], path);
+      if (!["shrink", "stack-whole-words", "shrink-and-stack"].includes(String(presentation.textFitMode))) {
+        invalid(`${path}.textFitMode`, "is not supported.");
+      }
+      if (!["skin", "left", "center", "right"].includes(String(presentation.textAlignment))) {
+        invalid(`${path}.textAlignment`, "is not supported.");
+      }
+      for (const key of ["textOffsetX", "textOffsetY"] as const) requireFiniteNumber(presentation[key], `${path}.${key}`);
+      if (requireFiniteNumber(presentation.minimumFontSize, `${path}.minimumFontSize`) <= 0) {
+        invalid(`${path}.minimumFontSize`, "must be positive.");
+      }
+      if (presentation.textSizeOverride !== null && requireFiniteNumber(presentation.textSizeOverride, `${path}.textSizeOverride`) <= 0) {
+        invalid(`${path}.textSizeOverride`, "must be null or positive.");
+      }
+      for (const key of ["allowLabelResize", "matchHitboxToSkin", "allowStretching", "highlightOnHover"] as const) {
+        if (typeof presentation[key] !== "boolean") invalid(`${path}.${key}`, "must be boolean.");
+      }
+    }
   }
 
   const fieldKinds = new Map<string, string>();

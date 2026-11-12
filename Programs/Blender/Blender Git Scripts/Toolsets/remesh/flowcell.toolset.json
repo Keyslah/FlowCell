@@ -1,387 +1,521 @@
 {
-    "schemaVersion": 1,
-    "id": "blender.remesh",
-    "version": "1.1.2",
-    "label": "remesh",
-    "tooltip": "Remesh with one cycling mode Button, inline-editable value Buttons, SS/RD toggles, Create, and Apply.",
-    "kind": "toolset",
-    "program": "Blender",
-    "source": "remesh.py",
-    "bridgeData": {},
-    "children": [
-        {
-            "slot": "mode_cycle",
-            "label": "Voxel",
-            "tooltip": "Cycle the remesh mode between Voxel, Smooth, Sharp, and Blocks.",
-            "payload": {
-                "command": "cycle_mode",
-                "action": "cycle_mode"
-            }
-        },
-        {
-            "slot": "set_voxel_size_mm",
-            "label": "0.10",
-            "tooltip": "Click this Button, then type the voxel size in millimeters."
-        },
-        {
-            "slot": "set_adaptivity",
-            "label": "0.00",
-            "tooltip": "Click this Button, then type the voxel adaptivity."
-        },
-        {
-            "slot": "set_octree_depth",
-            "label": "6",
-            "tooltip": "Click this Button, then type the octree depth."
-        },
-        {
-            "slot": "set_scale",
-            "label": "0.90",
-            "tooltip": "Click this Button, then type the block scale."
-        },
-        {
-            "slot": "set_threshold",
-            "label": "0.10",
-            "tooltip": "Click this Button, then type the sharp threshold."
-        },
-        {
-            "slot": "set_sharpness",
-            "label": "1.00",
-            "tooltip": "Click this Button, then type the sharpness."
-        },
-        {
-            "slot": "toggle_smooth_shading",
-            "label": "SS",
-            "tooltip": "Toggle smooth shading on the remesh result.",
-            "payload": {
-                "command": "toggle_smooth_shading",
-                "action": "toggle_smooth_shading"
-            }
-        },
-        {
-            "slot": "toggle_remove_disconnected",
-            "label": "RD",
-            "tooltip": "Toggle removing disconnected geometry.",
-            "payload": {
-                "command": "toggle_remove_disconnected",
-                "action": "toggle_remove_disconnected"
-            }
-        },
-        {
-            "slot": "create_update_remesh",
-            "label": "Create",
-            "tooltip": "Create or update the Remesh modifier with the current values.",
-            "payload": {
-                "command": "create_update_remesh",
-                "action": "create_update_remesh"
-            }
-        },
-        {
-            "slot": "apply_remesh",
-            "label": "Apply",
-            "tooltip": "Apply the Remesh modifier with the current values.",
-            "payload": {
-                "command": "apply_remesh",
-                "action": "apply_remesh"
-            }
-        }
-    ],
-    "layout": {
-        "mode": "grid",
-        "columns": 4,
-        "gap": 8,
-        "padding": 8,
-        "width": 616,
-        "height": 158,
-        "placements": {
-            "mode_cycle": {
-                "x": 8,
-                "y": 8,
-                "width": 72,
-                "height": 44,
-                "zIndex": 0
-            },
-            "set_voxel_size_mm": {
-                "x": 80,
-                "y": 8,
-                "width": 72,
-                "height": 44,
-                "zIndex": 1
-            },
-            "set_adaptivity": {
-                "x": 152,
-                "y": 8,
-                "width": 72,
-                "height": 44,
-                "zIndex": 2
-            },
-            "set_octree_depth": {
-                "x": 224,
-                "y": 8,
-                "width": 72,
-                "height": 44,
-                "zIndex": 3
-            },
-            "set_scale": {
-                "x": 224,
-                "y": 52,
-                "width": 72,
-                "height": 44,
-                "zIndex": 7
-            },
-            "set_threshold": {
-                "x": 8,
-                "y": 52,
-                "width": 72,
-                "height": 44,
-                "zIndex": 4
-            },
-            "set_sharpness": {
-                "x": 80,
-                "y": 52,
-                "width": 72,
-                "height": 44,
-                "zIndex": 5
-            },
-            "toggle_smooth_shading": {
-                "x": 8,
-                "y": 96,
-                "width": 72,
-                "height": 44,
-                "zIndex": 8
-            },
-            "toggle_remove_disconnected": {
-                "x": 152,
-                "y": 52,
-                "width": 72,
-                "height": 44,
-                "zIndex": 6
-            },
-            "create_update_remesh": {
-                "x": 80,
-                "y": 96,
-                "width": 97,
-                "height": 45,
-                "zIndex": 9
-            },
-            "apply_remesh": {
-                "x": 177,
-                "y": 96,
-                "width": 117,
-                "height": 46,
-                "zIndex": 10
-            }
-        },
-        "fields": [
-            {
-                "id": "voxel_size_mm",
-                "label": "Voxel mm",
-                "payloadKey": "",
-                "defaultValue": 0.1,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "number",
-                "minimum": 0.001,
-                "maximum": 1000,
-                "step": 0.01
-            },
-            {
-                "id": "adaptivity",
-                "label": "Adaptivity",
-                "payloadKey": "",
-                "defaultValue": 0,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "number",
-                "minimum": 0,
-                "maximum": 1,
-                "step": 0.01
-            },
-            {
-                "id": "octree_depth",
-                "label": "Depth",
-                "payloadKey": "",
-                "defaultValue": 6,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "number",
-                "minimum": 1,
-                "maximum": 12,
-                "step": 1
-            },
-            {
-                "id": "scale",
-                "label": "Scale",
-                "payloadKey": "",
-                "defaultValue": 0.9,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "number",
-                "minimum": 0.1,
-                "maximum": 1,
-                "step": 0.01
-            },
-            {
-                "id": "threshold",
-                "label": "Threshold",
-                "payloadKey": "",
-                "defaultValue": 0.1,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "number",
-                "minimum": 0,
-                "maximum": 1,
-                "step": 0.01
-            },
-            {
-                "id": "sharpness",
-                "label": "Sharpness",
-                "payloadKey": "",
-                "defaultValue": 1,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "number",
-                "minimum": 0,
-                "maximum": 10,
-                "step": 0.1
-            },
-            {
-                "id": "smooth_shading",
-                "label": "Smooth Shading",
-                "payloadKey": "",
-                "defaultValue": false,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "toggle"
-            },
-            {
-                "id": "remove_disconnected",
-                "label": "Remove Disconnected",
-                "payloadKey": "",
-                "defaultValue": true,
-                "x": 8,
-                "y": 8,
-                "width": 120,
-                "height": 36,
-                "zIndex": 1,
-                "hidden": true,
-                "kind": "toggle"
-            }
-        ],
-        "childBehaviors": {
-            "set_voxel_size_mm": {
-                "inlineEditField": "voxel_size_mm",
-                "execute": false
-            },
-            "set_adaptivity": {
-                "inlineEditField": "adaptivity",
-                "execute": false
-            },
-            "set_octree_depth": {
-                "inlineEditField": "octree_depth",
-                "execute": false
-            },
-            "set_scale": {
-                "inlineEditField": "scale",
-                "execute": false
-            },
-            "set_threshold": {
-                "inlineEditField": "threshold",
-                "execute": false
-            },
-            "set_sharpness": {
-                "inlineEditField": "sharpness",
-                "execute": false
-            },
-            "toggle_smooth_shading": {
-                "toggleFields": [
-                    "smooth_shading"
-                ],
-                "execute": true
-            },
-            "toggle_remove_disconnected": {
-                "toggleFields": [
-                    "remove_disconnected"
-                ],
-                "execute": true
-            },
-            "create_update_remesh": {
-                "execute": true,
-                "payloadTemplate": {
-                    "command": "create_update_remesh",
-                    "voxel_size_mm": {
-                        "$field": "voxel_size_mm"
-                    },
-                    "adaptivity": {
-                        "$field": "adaptivity"
-                    },
-                    "octree_depth": {
-                        "$field": "octree_depth"
-                    },
-                    "scale": {
-                        "$field": "scale"
-                    },
-                    "threshold": {
-                        "$field": "threshold"
-                    },
-                    "sharpness": {
-                        "$field": "sharpness"
-                    }
-                }
-            },
-            "apply_remesh": {
-                "execute": true,
-                "payloadTemplate": {
-                    "command": "apply_remesh",
-                    "voxel_size_mm": {
-                        "$field": "voxel_size_mm"
-                    },
-                    "adaptivity": {
-                        "$field": "adaptivity"
-                    },
-                    "octree_depth": {
-                        "$field": "octree_depth"
-                    },
-                    "scale": {
-                        "$field": "scale"
-                    },
-                    "threshold": {
-                        "$field": "threshold"
-                    },
-                    "sharpness": {
-                        "$field": "sharpness"
-                    }
-                }
-            }
-        }
+  "schemaVersion": 1,
+  "id": "blender.remesh",
+  "version": "1.1.3",
+  "label": "remesh",
+  "tooltip": "Remesh with one cycling mode Button, inline-editable value Buttons, SS/RD toggles, Create, and Apply.",
+  "kind": "toolset",
+  "program": "Blender",
+  "source": "remesh.py",
+  "bridgeData": {},
+  "children": [
+    {
+      "slot": "mode_cycle",
+      "label": "Voxel",
+      "tooltip": "Cycle the remesh mode between Voxel, Smooth, Sharp, and Blocks.",
+      "payload": {
+        "command": "cycle_mode",
+        "action": "cycle_mode"
+      }
     },
+    {
+      "slot": "set_voxel_size_mm",
+      "label": "0.10",
+      "tooltip": "Click this Button, then type the voxel size in millimeters."
+    },
+    {
+      "slot": "set_adaptivity",
+      "label": "0.00",
+      "tooltip": "Click this Button, then type the voxel adaptivity."
+    },
+    {
+      "slot": "set_octree_depth",
+      "label": "6",
+      "tooltip": "Click this Button, then type the octree depth."
+    },
+    {
+      "slot": "set_scale",
+      "label": "0.90",
+      "tooltip": "Click this Button, then type the block scale."
+    },
+    {
+      "slot": "set_threshold",
+      "label": "0.10",
+      "tooltip": "Click this Button, then type the sharp threshold."
+    },
+    {
+      "slot": "set_sharpness",
+      "label": "1.00",
+      "tooltip": "Click this Button, then type the sharpness."
+    },
+    {
+      "slot": "toggle_smooth_shading",
+      "label": "SS",
+      "tooltip": "Toggle smooth shading on the remesh result.",
+      "payload": {
+        "command": "toggle_smooth_shading",
+        "action": "toggle_smooth_shading"
+      }
+    },
+    {
+      "slot": "toggle_remove_disconnected",
+      "label": "RD",
+      "tooltip": "Toggle removing disconnected geometry.",
+      "payload": {
+        "command": "toggle_remove_disconnected",
+        "action": "toggle_remove_disconnected"
+      }
+    },
+    {
+      "slot": "create_update_remesh",
+      "label": "Create",
+      "tooltip": "Create or update the Remesh modifier with the current values.",
+      "payload": {
+        "command": "create_update_remesh",
+        "action": "create_update_remesh"
+      }
+    },
+    {
+      "slot": "apply_remesh",
+      "label": "Apply",
+      "tooltip": "Apply the Remesh modifier with the current values.",
+      "payload": {
+        "command": "apply_remesh",
+        "action": "apply_remesh"
+      }
+    }
+  ],
+  "layout": {
+    "mode": "grid",
+    "columns": 4,
+    "gap": 8,
+    "padding": 8,
+    "width": 616,
+    "height": 158,
+    "placements": {
+      "mode_cycle": {
+        "x": 8,
+        "y": 8,
+        "width": 72,
+        "height": 44,
+        "zIndex": 0
+      },
+      "set_voxel_size_mm": {
+        "x": 80,
+        "y": 8,
+        "width": 72,
+        "height": 44,
+        "zIndex": 1
+      },
+      "set_adaptivity": {
+        "x": 152,
+        "y": 8,
+        "width": 72,
+        "height": 44,
+        "zIndex": 2
+      },
+      "set_octree_depth": {
+        "x": 224,
+        "y": 8,
+        "width": 72,
+        "height": 44,
+        "zIndex": 3
+      },
+      "set_scale": {
+        "x": 224,
+        "y": 52,
+        "width": 72,
+        "height": 44,
+        "zIndex": 7
+      },
+      "set_threshold": {
+        "x": 8,
+        "y": 52,
+        "width": 72,
+        "height": 44,
+        "zIndex": 4
+      },
+      "set_sharpness": {
+        "x": 80,
+        "y": 52,
+        "width": 72,
+        "height": 44,
+        "zIndex": 5
+      },
+      "toggle_smooth_shading": {
+        "x": 8,
+        "y": 96,
+        "width": 72,
+        "height": 44,
+        "zIndex": 8
+      },
+      "toggle_remove_disconnected": {
+        "x": 152,
+        "y": 52,
+        "width": 72,
+        "height": 44,
+        "zIndex": 6
+      },
+      "create_update_remesh": {
+        "x": 80,
+        "y": 96,
+        "width": 97,
+        "height": 45,
+        "zIndex": 9
+      },
+      "apply_remesh": {
+        "x": 177,
+        "y": 96,
+        "width": 117,
+        "height": 46,
+        "zIndex": 10
+      }
+    },
+    "fields": [
+      {
+        "id": "voxel_size_mm",
+        "label": "Voxel mm",
+        "payloadKey": "",
+        "defaultValue": 0.1,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "number",
+        "minimum": 0.001,
+        "maximum": 1000,
+        "step": 0.01
+      },
+      {
+        "id": "adaptivity",
+        "label": "Adaptivity",
+        "payloadKey": "",
+        "defaultValue": 0,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "step": 0.01
+      },
+      {
+        "id": "octree_depth",
+        "label": "Depth",
+        "payloadKey": "",
+        "defaultValue": 6,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "number",
+        "minimum": 1,
+        "maximum": 12,
+        "step": 1
+      },
+      {
+        "id": "scale",
+        "label": "Scale",
+        "payloadKey": "",
+        "defaultValue": 0.9,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "number",
+        "minimum": 0.1,
+        "maximum": 1,
+        "step": 0.01
+      },
+      {
+        "id": "threshold",
+        "label": "Threshold",
+        "payloadKey": "",
+        "defaultValue": 0.1,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "step": 0.01
+      },
+      {
+        "id": "sharpness",
+        "label": "Sharpness",
+        "payloadKey": "",
+        "defaultValue": 1,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "number",
+        "minimum": 0,
+        "maximum": 10,
+        "step": 0.1
+      },
+      {
+        "id": "smooth_shading",
+        "label": "Smooth Shading",
+        "payloadKey": "",
+        "defaultValue": false,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "toggle"
+      },
+      {
+        "id": "remove_disconnected",
+        "label": "Remove Disconnected",
+        "payloadKey": "",
+        "defaultValue": true,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true,
+        "kind": "toggle"
+      }
+    ],
+    "childBehaviors": {
+      "set_voxel_size_mm": {
+        "inlineEditField": "voxel_size_mm",
+        "execute": false
+      },
+      "set_adaptivity": {
+        "inlineEditField": "adaptivity",
+        "execute": false
+      },
+      "set_octree_depth": {
+        "inlineEditField": "octree_depth",
+        "execute": false
+      },
+      "set_scale": {
+        "inlineEditField": "scale",
+        "execute": false
+      },
+      "set_threshold": {
+        "inlineEditField": "threshold",
+        "execute": false
+      },
+      "set_sharpness": {
+        "inlineEditField": "sharpness",
+        "execute": false
+      },
+      "toggle_smooth_shading": {
+        "toggleFields": [
+          "smooth_shading"
+        ],
+        "execute": true
+      },
+      "toggle_remove_disconnected": {
+        "toggleFields": [
+          "remove_disconnected"
+        ],
+        "execute": true
+      },
+      "create_update_remesh": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "create_update_remesh",
+          "voxel_size_mm": {
+            "$field": "voxel_size_mm"
+          },
+          "adaptivity": {
+            "$field": "adaptivity"
+          },
+          "octree_depth": {
+            "$field": "octree_depth"
+          },
+          "scale": {
+            "$field": "scale"
+          },
+          "threshold": {
+            "$field": "threshold"
+          },
+          "sharpness": {
+            "$field": "sharpness"
+          }
+        }
+      },
+      "apply_remesh": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "apply_remesh",
+          "voxel_size_mm": {
+            "$field": "voxel_size_mm"
+          },
+          "adaptivity": {
+            "$field": "adaptivity"
+          },
+          "octree_depth": {
+            "$field": "octree_depth"
+          },
+          "scale": {
+            "$field": "scale"
+          },
+          "threshold": {
+            "$field": "threshold"
+          },
+          "sharpness": {
+            "$field": "sharpness"
+          }
+        }
+      }
+    },
+    "placementPresentation": {
+      "mode_cycle": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "set_voxel_size_mm": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "set_adaptivity": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "set_octree_depth": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "set_scale": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "set_threshold": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "set_sharpness": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "toggle_smooth_shading": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "toggle_remove_disconnected": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "create_update_remesh": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      },
+      "apply_remesh": {
+        "textFitMode": "shrink",
+        "textAlignment": "skin",
+        "textOffsetX": 0,
+        "textOffsetY": 0,
+        "minimumFontSize": 8,
+        "textSizeOverride": null,
+        "allowLabelResize": false,
+        "matchHitboxToSkin": false,
+        "allowStretching": false,
+        "highlightOnHover": false
+      }
+    }
+  },
   "appearance": {
     "skins": {
       "skin-1-Chipped-Concrete-Key-100-d": {
