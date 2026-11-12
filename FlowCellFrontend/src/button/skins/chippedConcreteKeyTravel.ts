@@ -93,7 +93,8 @@ function registerTravelProperties() {
   if (travelPropertiesRegistered) return;
   for (const [name, syntax, initialValue] of [
     [FRAME, "<percentage>", "0%"],
-    [LABEL_Y, "<length>", "0px"]
+    [LABEL_Y, "<length>", "0px"],
+    [SHADOW_FILTER, "*", "none"]
   ]) {
     try {
       CSS.registerProperty({ name, syntax, initialValue, inherits: true });
