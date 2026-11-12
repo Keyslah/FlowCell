@@ -26,6 +26,8 @@ for(const relative of manifests){
   const sourcePath=m.gitScriptsFolder+'/Files/Update Git Scripts';
   const packageRoot=safe(program,sourcePath);
   const contribution={id:m.programId+'.update-git-scripts',version:'1.0.1',panelName:'Files',sourcePath,importKind:'script',displayLabel:'Update Git Scripts',sourceKind:'script',required:false,dependencies:[],installEffects:['Downloads this program catalog only; preserves local edits and installed Buttons.'],installOnAdd:true};
+  const existingSelection=m.bundledSources.find(s=>s.id===contribution.id)?.installOnAdd;
+  if(typeof existingSelection==='boolean')contribution.installOnAdd=existingSelection;
   const files=['Update-Catalog.ps1',entry,...(entry.endsWith('.jsx')?['launch_updater.vbs']:[])];
   const metadata={schemaVersion:1,programId:m.programId,repository:'Keyslah/FlowCell',ref:'main',catalogPath:path.posix.dirname(relative)+'/'+m.gitScriptsFolder};
   if(write){
@@ -44,7 +46,7 @@ for(const relative of manifests){
   const selected=m.bundledSources.filter(s=>s.id===contribution.id);
   assert(selected.length===1,`${relative}: missing required Update Git Scripts contribution`);
   const s=selected[0];
-  assert(s.panelName==='Files' && s.sourcePath===sourcePath && s.installOnAdd===true && !s.installIfMissing && !s.required && s.importKind==='script' && s.sourceKind==='script',`${relative}: invalid optional updater contribution`);
+  assert(s.panelName==='Files' && s.sourcePath===sourcePath && typeof s.installOnAdd==='boolean' && !s.installIfMissing && !s.required && s.importKind==='script' && s.sourceKind==='script',`${relative}: invalid optional updater contribution`);
   assert(m.panels.some(p=>p.label==='Files'),`${relative}: missing Files setup inventory`);
   const pm=read(path.join(packageRoot,'flowcell.script.json'));
   assert(pm.source===entry && pm.label==='Update Git Scripts' && pm.program===m.label,`${relative}: invalid updater package manifest`);
