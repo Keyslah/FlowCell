@@ -3,7 +3,45 @@ import { parseCssDeclarations } from "./cssSyntax.js";
 const PROFILE = "--cc-travel-profile";
 const FRAME = "--cc-motion-frame";
 const LABEL_Y = "--cc-motion-label-y";
+const SHADOW_FILTER = "--cc-motion-shadow-filter";
 const FULL_TRAVEL_MS = 480;
+
+function mountRaisedShadowRemoval(core: HTMLElement | SVGElement) {
+  const sprite = core.querySelector?.<HTMLElement>('[data-anim="cc"]');
+  if (!sprite) return null;
+  const namespace = "http://www.w3.org/2000/svg";
+  const root = core.ownerDocument.createElementNS(namespace, "svg");
+  const filter = core.ownerDocument.createElementNS(namespace, "filter");
+  const transfer = core.ownerDocument.createElementNS(namespace, "feComponentTransfer");
+  const alpha = core.ownerDocument.createElementNS(namespace, "feFuncA");
+  const id = "flowcell-chipped-concrete-shadow-removal";
+  root.setAttribute("width", "0");
+  root.setAttribute("height", "0");
+  root.setAttribute("aria-hidden", "true");
+  root.style.position = "absolute";
+  root.style.pointerEvents = "none";
+  filter.id = id;
+  filter.setAttribute("color-interpolation-filters", "sRGB");
+  // The baked outer shadow is at most 189/255 alpha across the bundled frames.
+  // Remove alpha <= 75%; leave opaque concrete and its RGB values unchanged.
+  alpha.setAttribute("type", "linear");
+  alpha.setAttribute("slope", "4");
+  alpha.setAttribute("intercept", "-3");
+  transfer.append(alpha);
+  filter.append(transfer);
+  root.append(filter);
+  core.append(root);
+  const previous = sprite.style.filter;
+  sprite.style.filter = `${previous && previous !== "none" ? `${previous} ` : ""}var(${SHADOW_FILTER}, none)`;
+  return {
+    value: `url("#${id}")`,
+    dispose() {
+      sprite.style.filter = previous;
+      root.remove();
+      core.style.removeProperty(SHADOW_FILTER);
+    }
+  };
+}
 
 interface TravelFrame {
   depth: number;
@@ -71,10 +109,12 @@ export function mountChippedConcreteKeyTravel(
   { frames, hover, flush }: TravelProfile
 ) {
   registerTravelProperties();
+  const shadowRemoval = mountRaisedShadowRemoval(core);
   const press = frames.length - 1;
   const frameValues = frames.map(({ labelY }, index) => ({
     [FRAME]: `${index / press * 100}%`,
-    [LABEL_Y]: `${labelY}px`
+    [LABEL_Y]: `${labelY}px`,
+    ...(shadowRemoval ? { [SHADOW_FILTER]: index < flush ? shadowRemoval.value : "none" } : {})
   }));
   let input: TravelInput | undefined;
   let hoverBlocked = false;
@@ -157,6 +197,7 @@ export function mountChippedConcreteKeyTravel(
       motion = undefined;
       core.style.removeProperty(FRAME);
       core.style.removeProperty(LABEL_Y);
+      shadowRemoval?.dispose();
     }
   };
 }
