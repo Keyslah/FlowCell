@@ -143,3 +143,21 @@ test("Blender continues to own and declare its complete Theme page", () => {
   assert.ok(manifest.page.scripts.length > 0 && manifest.page.styles.length > 0);
   for (const reference of resources) assert.equal(statSync(packagePath(packageRoot, reference)).isFile(), true);
 });
+
+test("Blender Installation declares every Shapes script as a selectable button", () => {
+  const root = path.join(programsRoot, "Blender");
+  const program = JSON.parse(readFileSync(path.join(root, "flowcell.program.json"), "utf8"));
+  const shapeScripts = readdirSync(path.join(root, program.gitScriptsFolder, "Shapes"))
+    .filter((filename) => filename.endsWith(".py"))
+    .sort();
+  const sources = program.bundledSources.filter((source) => source.panelName === "Shapes");
+  assert.deepEqual(sources.map((source) => path.basename(source.sourcePath)).sort(), shapeScripts);
+  assert.deepEqual(sources.map((source) => source.displayLabel).sort(), ["Cone", "Cube", "Cylinder", "Hex", "Sphere", "Triangle"]);
+  assert.equal(new Set(sources.map((source) => source.id)).size, sources.length);
+  for (const source of sources) {
+    assert.equal(source.importKind, "script");
+    assert.equal(source.installOnAdd, true);
+    assert.equal(source.installIfMissing, true);
+    assert.equal(statSync(packagePath(root, source.sourcePath)).isFile(), true);
+  }
+});

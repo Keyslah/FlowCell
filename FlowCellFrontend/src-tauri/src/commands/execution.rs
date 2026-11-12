@@ -18,6 +18,35 @@ use windows_sys::Win32::System::IO::{
 
 pub(crate) static BLENDER_BRIDGE_REQUEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 pub(crate) static FUSION_BRIDGE_REQUEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+const BLENDER_THEME_APPLY_TIMEOUT_SECONDS: u64 = 20;
+
+fn lock_blender_bridge_request(
+    lock: &Mutex<()>,
+    deadline: Option<Instant>,
+    skip_if_busy: bool,
+) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+    if deadline.is_none() && !skip_if_busy {
+        return lock.lock()
+            .map_err(|_| "Blender bridge request lock was poisoned.".to_string());
+    }
+    loop {
+        if deadline.is_some_and(|limit| Instant::now() >= limit) {
+            return Err("FLOWCELL_THEME_NOT_STARTED: Blender Theme could not start within 20 seconds because another request is running. No Theme request was sent.".into());
+        }
+        match lock.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err("Blender bridge request lock was poisoned.".into());
+            }
+            Err(std::sync::TryLockError::WouldBlock) if skip_if_busy => {
+                return Err("Blender bridge status request skipped because another request is running.".into());
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                thread::sleep(Duration::from_millis(BLENDER_BRIDGE_RESPONSE_POLL_MS));
+            }
+        }
+    }
+}
 
 const DEFAULT_FUSION_BRIDGE_TIMEOUT_SECONDS: u64 = 20;
 const FUSION_BRIDGE_RESPONSE_POLL_MS: u64 = 4;
@@ -2276,19 +2305,16 @@ pub(crate) fn run_blender_bridge_action_direct(action: &str, data: Value) -> Res
 
 pub(crate) fn run_blender_bridge_action_direct_with_options(
     action: &str,
-    data: Value,
+    mut data: Value,
     timeout_override: Option<Duration>,
     skip_if_busy: bool,
 ) -> Result<Value, String> {
+    // A bundled Theme has no native prompts. Its budget includes queueing, and
+    // must finish before the embedded editor's 30-second operation deadline.
+    let theme_deadline = (data.get("command").and_then(Value::as_str) == Some("apply_theme_bundle"))
+        .then(|| Instant::now() + Duration::from_secs(BLENDER_THEME_APPLY_TIMEOUT_SECONDS));
     let lock = BLENDER_BRIDGE_REQUEST_LOCK.get_or_init(|| Mutex::new(()));
-    let _guard = if skip_if_busy {
-        lock.try_lock().map_err(|_| {
-            "Blender bridge status request skipped because another request is running.".to_string()
-        })?
-    } else {
-        lock.lock()
-            .map_err(|_| "Blender bridge request lock was poisoned.".to_string())?
-    };
+    let _guard = lock_blender_bridge_request(lock, theme_deadline, skip_if_busy)?;
 
     let config = read_blender_bridge_config()?;
     let bridge_root = resolve_blender_bridge_root(&config)
@@ -2310,6 +2336,15 @@ pub(crate) fn run_blender_bridge_action_direct_with_options(
         let _ = fs::remove_file(&response_path);
     }
 
+    if let Some(deadline) = theme_deadline {
+        let remaining = deadline.checked_duration_since(Instant::now())
+            .ok_or("FLOWCELL_THEME_NOT_STARTED: Blender Theme preparation exceeded 20 seconds. No Theme request was sent.")?;
+        let expires_at_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?.as_millis() + remaining.as_millis();
+        data.as_object_mut().ok_or("Blender Theme payload must be an object.")?
+            .insert("__flowcell_theme_deadline_ms".into(), json!(expires_at_ms as u64));
+    }
+
     let request_payload = json!({
         "id": request_id,
         "action": action,
@@ -2327,20 +2362,26 @@ pub(crate) fn run_blender_bridge_action_direct_with_options(
         )
     })?;
 
-    let timeout_duration = timeout_override.unwrap_or_else(|| {
-        Duration::from_secs(
-            config
-                .response_timeout_seconds
-                .unwrap_or(DEFAULT_BLENDER_BRIDGE_TIMEOUT_SECONDS)
-                .max(1),
-        )
-    });
+    let timeout_duration = if let Some(deadline) = theme_deadline {
+        deadline.saturating_duration_since(Instant::now())
+    } else {
+        timeout_override.unwrap_or_else(|| {
+            Duration::from_secs(
+                config.response_timeout_seconds
+                    .unwrap_or(DEFAULT_BLENDER_BRIDGE_TIMEOUT_SECONDS).max(1),
+            )
+        })
+    };
     let response = wait_for_blender_bridge_response(
         &response_path, &request_id, timeout_duration,
-        || timeout_override.is_none() && blender_process_has_visible_dialog(target_blender_process_id),
-    ).ok_or_else(|| format!(
-        "Blender did not finish the action '{action}' before the response timeout. Check Blender's dialogs and the FlowCell bridge add-on. If FlowCell was just installed or updated, save your work and restart Blender to load the changes."
-    ))?;
+        || theme_deadline.is_none() && timeout_override.is_none() && blender_process_has_visible_dialog(target_blender_process_id),
+    ).ok_or_else(|| {
+        if theme_deadline.is_some() {
+            "FLOWCELL_THEME_OUTCOME_UNKNOWN: Blender Theme did not finish within its 20-second total deadline. Blender may already have changed; refresh and verify it before retrying.".to_string()
+        } else {
+            format!("Blender did not finish the action '{action}' before the response timeout. Check Blender's dialogs and the FlowCell bridge add-on. If FlowCell was just installed or updated, save your work and restart Blender to load the changes.")
+        }
+    })?;
 
     let message = extract_blender_bridge_response_message(&response);
     write_last_action_status_message(&message);
@@ -2604,6 +2645,29 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos()
         ))
+    }
+
+    #[test]
+    fn blender_theme_queue_uses_a_deadline_without_poisoning_the_lock() {
+        let lock = std::sync::Mutex::new(());
+        let held = lock.lock().unwrap();
+        let started = std::time::Instant::now();
+        let deadline = started + Duration::from_millis(15);
+        let error = super::lock_blender_bridge_request(&lock, Some(deadline), false).unwrap_err();
+        assert!(error.contains("No Theme request was sent"));
+        assert!(started.elapsed() >= Duration::from_millis(15));
+        drop(held);
+        assert!(super::lock_blender_bridge_request(&lock, Some(deadline), false).is_err(),
+            "expired operations must not dispatch even after the lock becomes free");
+        assert!(super::lock_blender_bridge_request(&lock, None, false).is_ok());
+    }
+
+    #[test]
+    fn blender_status_still_skips_a_busy_request_without_waiting() {
+        let lock = std::sync::Mutex::new(());
+        let _held = lock.lock().unwrap();
+        let error = super::lock_blender_bridge_request(&lock, None, true).unwrap_err();
+        assert!(error.contains("status request skipped"));
     }
 
     #[test]

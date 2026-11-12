@@ -26,6 +26,119 @@ function parsedColorFallbacks(source) {
   return fallbacks;
 }
 
+function themeCallback(fileName, name, context) {
+  const source = ts.createSourceFile(fileName, read("src", "pages", "theme", fileName), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let callback;
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === name) callback = node.initializer;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.ok(callback, `${name} must exist`);
+  const compiled = ts.transpileModule(`return (${callback.getText(source)});`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
+  }).outputText;
+  return new Function(...Object.keys(context), compiled)(...Object.values(context));
+}
+
+test("legacy theme apply keeps omitted host fields out and reuses its captured transaction snapshot", async () => {
+  const previous = { version: 1, sourceId: "example.theme", sourceVersion: "1", assetFields: [],
+    state: { fields: { tabs_hex: "#111111", hdri_path: "C:/current.hdr", static_background_path: "C:/current.png", world_strength: 2 },
+      tone: { level: 0.5 } } };
+  const legacy = { state: { fields: { tabs_hex: "#123456" } } };
+  const latest = { revision: 7 };
+  const saved = { revision: 8 };
+  const descriptors = [{ sourceId: "example.theme" }];
+  const counts = { capture: 0, document: 0, descriptors: 0 };
+  let committedTheme;
+  let selectedSnapshot;
+  const apply = themeCallback("ThemeEditorPage.tsx", "applyLoadedTheme", {
+    contribution: { current: { loadLegacy: async () => legacy, validate: async () => {}, capture: async () => { counts.capture++; return previous; } } },
+    target: { kind: "program", programName: "Example" },
+    loadButtonStateDocument: async () => { counts.document++; return latest; },
+    getThemeToolDescriptors: async () => { counts.descriptors++; return descriptors; },
+    applyLegacyProgramAppearance: (document, _target, _settings, _appearance, actualDescriptors) => {
+      assert.equal(document, latest); assert.equal(actualDescriptors, descriptors);
+      return { document, skippedMissingPlacementCount: 0 };
+    },
+    legacyThemeIdentity: async () => "legacy-id",
+    capturePortableTheme: (options) => options,
+    commitCompleteTheme: async (theme, snapshot) => {
+      committedTheme = theme;
+      assert.equal(snapshot.previousContribution, previous);
+      assert.equal(snapshot.document, latest);
+      assert.equal(snapshot.descriptors, descriptors);
+      return { saved, warnings: [] };
+    },
+    updateContributionSelection: async (_theme, _path, snapshot) => { selectedSnapshot = snapshot; },
+    rememberTheme: () => {}, setStatus: () => {}, warningSuffix: () => "", errorMessage: String
+  });
+  await apply({ path: "Green.json", legacy: {} }, false);
+  assert.deepEqual(committedTheme.contributions[previous.sourceId].state, {
+    fields: { tabs_hex: "#123456" }, tone: previous.state.tone
+  });
+  assert.equal(previous.state.fields.hdri_path, "C:/current.hdr", "rollback must retain the full captured baseline");
+  assert.deepEqual(counts, { capture: 1, document: 1, descriptors: 1 });
+  assert.equal(selectedSnapshot.document, saved);
+  assert.equal(selectedSnapshot.descriptors, descriptors);
+});
+
+test("unknown and unsent host outcomes roll back local preparation without another host apply", async () => {
+  const source = ts.createSourceFile("ThemeContribution.tsx", read("src", "pages", "theme", "ThemeContribution.tsx"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const helpers = source.statements.filter((node) => ts.isFunctionDeclaration(node) && ["isThemeHostOutcomeUnknown", "isThemeHostNotStarted"].includes(node.name?.text))
+    .map((node) => node.getText(source).replace(/^export /, "")).join("\n");
+  const compiled = ts.transpileModule(helpers, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const classifiers = new Function(`${compiled}\nreturn { isThemeHostOutcomeUnknown, isThemeHostNotStarted };`)();
+  assert.equal(classifiers.isThemeHostOutcomeUnknown(new Error("reported host rejection")), false);
+  assert.equal(classifiers.isThemeHostOutcomeUnknown("FLOWCELL_THEME_OUTCOME_UNKNOWN: response timed out"), true);
+  assert.equal(classifiers.isThemeHostNotStarted(new Error("FLOWCELL_THEME_NOT_STARTED: no request was sent")), true);
+  for (const outcome of ["reported", "unknown", "unsent"]) {
+    const previous = { sourceId: "example.theme", assetFields: [], state: { fields: { tabs_hex: "#111111" } } };
+    let applyCount = 0;
+    let rollbackCount = 0;
+    const failure = new Error(outcome === "unknown" ? "FLOWCELL_THEME_OUTCOME_UNKNOWN: response timed out"
+      : outcome === "unsent" ? "FLOWCELL_THEME_NOT_STARTED: no request was sent" : "reported host rejection");
+    const commit = themeCallback("ThemeEditorPage.tsx", "commitCompleteTheme", {
+      contribution: { current: { sourceId: previous.sourceId, capture: async () => previous, validate: async () => {},
+        preservePoppedAppearance: async () => false, apply: async () => { if (++applyCount === 1) throw failure; } } },
+      poppedColors: { current: null }, stableJson: JSON.stringify,
+      target: { kind: "program", programName: "Example" },
+      invoke: async () => ({ token: null, descriptors: [] }),
+      preparePortableThemeImport: async () => ({ rollback: async () => { rollbackCount++; } }),
+      errorMessage: (error) => error.message ?? String(error), ...classifiers
+    });
+    await assert.rejects(commit({ contributions: { theme: { ...previous, state: { fields: { tabs_hex: "#123456" } } } }, theme: {} }),
+      outcome === "unknown" ? /may already have changed.*automatic host restore was skipped/
+        : outcome === "unsent" ? /FLOWCELL_THEME_NOT_STARTED: no request was sent/ : /reported host rejection/);
+    assert.equal(rollbackCount, 1);
+    assert.equal(applyCount, outcome === "reported" ? 2 : 1);
+  }
+});
+
+test("theme inspection ignores closed previews and uses a separate Applying status", async () => {
+  const inspection = { current: 0 };
+  const operations = [];
+  let finishRead;
+  let reviewCount = 0;
+  let selected;
+  const inspect = themeCallback("ThemeLibraryDialog.tsx", "inspect", {
+    inspection, setOperation: (value) => operations.push(value), setError: () => {}, setSelected: (value) => { selected = value; },
+    setIssues: () => {}, setRequirements: () => {}, onReview: async () => { reviewCount++; return []; }
+  });
+  const pending = inspect(() => new Promise((resolve) => { finishRead = resolve; }));
+  assert.deepEqual(operations, ["inspecting"]);
+  inspection.current++;
+  finishRead({ path: "closed.json" });
+  await pending;
+  assert.equal(reviewCount, 0, "closing before file read completes must not start contribution review");
+  assert.equal(selected, null);
+  const dialog = read("src", "pages", "theme", "ThemeLibraryDialog.tsx");
+  assert.match(dialog, /disabled=\{operation === "applying"\}>Close/);
+  assert.match(dialog, /inspection\.current \+= 1;\s*onClose\(\)/);
+  assert.match(dialog, /operation === "applying" \? "Applying…" : operation === "inspecting" \? "Checking…" : "Apply Theme"/);
+  assert.match(dialog, /setOperation\("applying"\);[\s\S]{0,200}onApply\(selected\)/);
+});
+
 test("Main and installed program contributions use the unified Theme Editor", () => {
   const main = read("src", "pages", "main", "MainPage.tsx");
   const layout = read("src", "pages", "main", "mainLayout.ts");

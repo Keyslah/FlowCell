@@ -14,8 +14,9 @@ function measureLabelWidth(label: string, textSizeOverride?: number): number | n
   if (cached !== undefined) return cached;
   if (typeof document === "undefined" || !document.body) return null;
 
-  // Measure the literal family's font and label insets, without mounting its sprite.
-  // Character counts cannot distinguish a wide label from a narrow one.
+  // Chipped Concrete owns this width rule: measure its authored font and add
+  // its authored side padding before selecting an existing sprite. Do not
+  // impose these insets on other skins through the shared text fitter.
   const template = document.createElement("template");
   template.innerHTML = skinForCount(counts[0]).structure;
   const sourceCore = template.content.querySelector<HTMLElement>("[data-core]");

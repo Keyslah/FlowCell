@@ -13,8 +13,10 @@ import type {
 import {
   DEFAULT_BUTTON_SURFACE_ID,
   createButtonStateDocument,
-  cloneButtonDocument
+  cloneButtonDocument,
+  ensureMainPageSkinDefaults
 } from "./buttonDefaults.js";
+import { CHIPPED_CONCRETE_BUTTON_SKIN_ID } from "../skins/chippedConcreteButtonSkin.js";
 import {
   buttonSpacingPixelsFromMillimeters,
   buttonRectsOverlap,
@@ -784,7 +786,7 @@ function addMigratedPlacement(
     surfaceId: surface.id,
     ...rect,
     zIndex: rect.zIndex ?? surface.placementIds.length,
-    skinOverrideId: null,
+    skinOverrideId: surface.kind === "panel" || surface.kind === "main" ? CHIPPED_CONCRETE_BUTTON_SKIN_ID : null,
     textFitMode: document.buttons[buttonId]?.defaultTextFitMode ?? "shrink",
     textAlignment: "skin",
     textOffsetX: 0,
@@ -1026,6 +1028,9 @@ export function reconcileBundledProgramSources(
   if (missing.length > 0) {
     document = mergeLegacyInstallsIntoDocument(document, missing);
   }
+  // Source bootstrap runs before Main's Editor/Pop discovery. Apply Main's own
+  // default here as well so first-run panel Buttons never inherit the gray Pop-out skin.
+  ensureMainPageSkinDefaults(document);
   return document;
 }
 
@@ -1052,8 +1057,6 @@ export async function synchronizeBundledButtonSources(
   const descriptors = response.sources.flatMap((source) =>
     source.status !== "failed" && source.descriptor ? [source.descriptor] : []
   );
-  if (descriptors.length === 0) return base;
-
   let current = base;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const next = reconcileBundledProgramSources(current, descriptors);

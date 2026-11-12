@@ -245,14 +245,18 @@ function buildBridgeSource(descriptor: InstalledPageDescriptor, nonce: string): 
     const pending = new Map();
     let sequence = 0;
     let themeHandler = null;
+    let activeThemeRequest = null;
+    const themeCancelled = () => new Error("FLOWCELL_THEME_OUTCOME_UNKNOWN: The Theme operation stopped waiting. Blender may already have changed; refresh before retrying.");
     const descriptor = Object.freeze(${JSON.stringify(publicDescriptor)});
     const request = (actionId, payload = {}) => new Promise((resolve, reject) => {
+      const themeRequest = activeThemeRequest;
+      if (themeRequest && themeRequest.cancelled) { reject(themeCancelled()); return; }
       if (typeof actionId !== "string" || !actionId.trim()) {
         reject(new Error("A declared page action ID is required."));
         return;
       }
       const requestId = String(Date.now()) + "-" + String(++sequence);
-      pending.set(requestId, { resolve, reject });
+      pending.set(requestId, { resolve, reject, themeRequest });
       sendNative({ channel, type: "request", nonce, requestId, actionId, payload });
     });
     if (!descriptor.coreOwned) (${installProgramUndoKeys.toString()})(window, (shortcut) => new Promise((resolve, reject) => {
@@ -283,16 +287,35 @@ function buildBridgeSource(descriptor: InstalledPageDescriptor, nonce: string): 
     addEventListener("message", (event) => {
       if (event.source !== window || !event.data || event.data.channel !== channel ||
           event.data.nonce !== nonce) return;
-      if (event.data.type === "theme-request" && descriptor.embeddedTheme) {
+      if (event.data.type === "theme-cancel" && descriptor.embeddedTheme) {
+        if (!activeThemeRequest || activeThemeRequest.id !== event.data.requestId) return;
+        activeThemeRequest.cancelled = true;
+        for (const [requestId, entry] of pending) {
+          if (entry.themeRequest !== activeThemeRequest) continue;
+          pending.delete(requestId);
+          entry.reject(themeCancelled());
+        }
+      } else if (event.data.type === "theme-request" && descriptor.embeddedTheme) {
         const message = event.data;
+        if (activeThemeRequest) {
+          sendNative({ channel, type: "theme-response", nonce, requestId: message.requestId,
+            ok: false, result: null, error: "A program Theme operation is already running." });
+          return;
+        }
+        const themeRequest = { id: message.requestId, cancelled: false };
+        activeThemeRequest = themeRequest;
         Promise.resolve().then(() => {
+          if (themeRequest.cancelled) throw themeCancelled();
           if (!themeHandler) throw new Error("The program Theme controls are still loading.");
           return themeHandler(message.operation, message.value);
+        }).then((result) => {
+          if (themeRequest.cancelled) throw themeCancelled();
+          return result;
         }).then((result) => sendNative({ channel, type: "theme-response", nonce,
           requestId: message.requestId, ok: true, result: result ?? null, error: null
         }), (error) => sendNative({ channel, type: "theme-response", nonce,
           requestId: message.requestId, ok: false, result: null, error: String(error && error.message || error)
-        }));
+        })).finally(() => { if (activeThemeRequest === themeRequest) activeThemeRequest = null; });
       } else if (event.data.type === "response") {
         const entry = pending.get(event.data.requestId);
         if (!entry) return;
@@ -403,7 +426,7 @@ export default function InstalledPageWindowPage({
   visibleRef.current = embeddedVisible;
   const callbacksRef = useRef({ onThemeBridge, onThemeLibrary });
   callbacksRef.current = { onThemeBridge, onThemeLibrary };
-  const themeRequests = useRef(new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>());
+  const themeRequests = useRef(new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>; operation: string }>());
   const readBounds = () => {
     const rect = hostRef.current?.getBoundingClientRect();
     if (!embedded || !rect) return undefined;
@@ -683,7 +706,7 @@ export default function InstalledPageWindowPage({
       if (updateBounds) window.removeEventListener("scroll", updateBounds, true);
       for (const pending of themeRequests.current.values()) {
         clearTimeout(pending.timer);
-        pending.reject(new Error("The selected program Theme changed before the operation completed."));
+        pending.reject(new Error(`${pending.operation === "apply" ? "FLOWCELL_THEME_OUTCOME_UNKNOWN: " : ""}The selected program Theme changed before the operation completed.`));
       }
       themeRequests.current.clear();
       callbacksRef.current.onThemeBridge?.(null);
@@ -739,9 +762,12 @@ export default function InstalledPageWindowPage({
       const requestId = crypto.randomUUID();
       const timer = setTimeout(() => {
         themeRequests.current.delete(requestId);
-        reject(new Error("The program Theme operation timed out after 30 seconds."));
+        void invoke("post_installed_page_webview_message", { messageJson: JSON.stringify({
+          channel: "flowcell-installed-page", type: "theme-cancel", nonce, requestId
+        }) }).catch(() => {});
+        reject(new Error(`${operation === "apply" ? "FLOWCELL_THEME_OUTCOME_UNKNOWN: " : ""}The program Theme ${operation} operation timed out after 30 seconds. Refresh the program controls before retrying.`));
       }, 30_000);
-      themeRequests.current.set(requestId, { resolve, reject, timer });
+      themeRequests.current.set(requestId, { resolve, reject, timer, operation });
       void invoke("post_installed_page_webview_message", { messageJson: JSON.stringify({
         channel: "flowcell-installed-page", type: "theme-request", nonce, requestId, operation, value
       }) }).catch((reason) => {

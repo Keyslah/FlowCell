@@ -16,8 +16,10 @@ not depend on downloading its separate catalog ZIP.
 Tauri resources and the bundled AutoHotkey runtime live inside the application
 installation. Setup starts the installed headless backend and registers the
 per-user `FlowCell Background.lnk` Windows startup shortcut. Setup includes a
-checked-by-default **Create a Toggle AutoHotkey desktop shortcut** option on its
-welcome page. Silent installation uses the same default (`/NS` suppresses desktop
+checked-by-default **Windows Files panel**, **Windows Utility panel**, and
+**Toggle AutoHotkey desktop shortcut** options on its welcome page. **Windows
+Startup panel (required)** is checked and cannot be disabled. Silent installation
+uses the same defaults (`/NS` suppresses desktop
 shortcuts). The toggle's Windows Script Host launcher, PowerShell script, green
 ON/red OFF icons, and AutoHotkey runtime are bundled in the application; neither
 the toggle nor background startup needs a checkout, development tools, or the UI.
@@ -39,17 +41,18 @@ package. Existing files are never overwritten; directory-only placeholders are
 preserved. Manual extraction into that local root remains available for older
 releases. Folder roles come from each program manifest.
 The installer carries a tracked, immutable Windows catalog at
-`bundled-programs/Windows` under its resource root. Initial Core launch requires
-Windows setup and offers checkboxes for Files, Utility and Startup, all checked
-initially. **Install Windows tools** registers Windows and installs the chosen
-panels; there is no separate Windows download or EXE picker. Its writable catalog,
+`bundled-programs/Windows` under its resource root. Setup saves the panel choices
+in `installation-defaults/windows-panels.json` in the local data root. Initial
+Core launch registers Windows and installs those panels automatically using the
+managed setup transaction. A compact progress/error notice replaces the blocking
+installation dialog; there is no separate Windows download or EXE picker. Its writable catalog,
 panels and owned scripts use the normal local Programs root. After setup the user
 may delete panels or Windows itself without normal launches adding them back.
 Existing configured Windows programs are preserved on upgrade. Other programs
 retain the separate import and registration steps in Add Program. Neither upgrade
 nor normal uninstall removes this user data.
 
-The Windows Startup panel, when selected, uses the usual Button ownership,
+The required Windows Startup panel uses the usual Button ownership,
 scripts and bindings. Setup preserves existing panel choices and settings.
 Sign-in registration passes `--logon` to the installed background launcher,
 which explicitly enables AutoHotkey for a new Windows sign-in and reuses an existing

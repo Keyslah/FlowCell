@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 const output = process.env.FLOWCELL_BUTTON_TEST_OUTPUT ?? ".compiled-button-system";
 const compiled = (path) => import(new URL(`./${output}/${path}.js`, import.meta.url));
 const { createButtonStateDocument, ensureMainPageSkinDefaults } = await compiled("button/state/buttonDefaults");
+const { mergeLegacyInstallsIntoDocument, reconcileBundledProgramSources } = await compiled("button/state/ButtonStateRepository");
 const { ensureDefaultPanelPopout, ensureRegularPopout } = await compiled("button/state/buttonDocumentOperations");
 const { applyPanelPopoutPreset, availablePanelPopoutPresets, availablePanelPopoutPresetsForPanel,
   panelPopoutPresetFromPath, panelPopoutPresetPath } = await compiled("button/state/buttonPanelPopoutPresets");
@@ -73,6 +74,42 @@ test("neutral shared defaults keep Concrete scoped to Main and preserve explicit
   assert.equal(document.placements["panel-script"].skinOverrideId, concrete);
   assert.equal(member.skinOverrideId, concrete);
   assert.equal(ensureMainPageSkinDefaults(document), false);
+});
+
+test("first-run source migration assigns Main Concrete before layout and keeps Pop-out defaults gray", () => {
+  const button = record("windows-backup", "backup.ps1", "FlowCell Back Up");
+  const document = mergeLegacyInstallsIntoDocument(createButtonStateDocument(), [{
+    ownerButtonId: button.id,
+    sourceIdentity: button.sourceIdentity,
+    executionTarget: button.executionTarget,
+    label: button.label,
+    tooltip: "",
+    children: []
+  }]);
+  const main = document.placements[`placement-${button.id}`];
+  assert.equal(main.skinOverrideId, concrete);
+  assert.equal(document.buttons[button.id].defaultSkinId, gray);
+  assert.notEqual(main.width, 160, "the new panel layout must use the Concrete key's natural proportions");
+  const unit = ensureRegularPopout(document, [document.buttons[button.id]]);
+  assert.equal(document.placements[unit.memberPlacementIds[0]].skinOverrideId, gray);
+});
+
+test("startup source reconciliation repairs unassigned Main skins without requiring Editor or Pop discovery", () => {
+  const document = createButtonStateDocument();
+  const plain = record("plain", "plain.py");
+  const explicit = record("explicit", "explicit.py");
+  addPanel(document, [plain, explicit]);
+  document.placements["panel-plain"].skinOverrideId = null;
+  document.placements["panel-explicit"].skinOverrideId = gray;
+  const unit = ensureRegularPopout(document, [plain]);
+  const beforeMain = structuredClone(document.placements["panel-plain"]);
+  const beforePopout = structuredClone(document.placements[unit.memberPlacementIds[0]]);
+  const next = reconcileBundledProgramSources(document, []);
+  assert.equal(document.placements["panel-plain"].skinOverrideId, null, "reconciliation must not mutate its input");
+  assert.deepEqual(next.placements["panel-plain"], { ...beforeMain, skinOverrideId: concrete });
+  assert.equal(next.placements["panel-explicit"].skinOverrideId, gray, "saved explicit assignments are preserved");
+  assert.deepEqual(next.placements[unit.memberPlacementIds[0]], beforePopout);
+  assert.deepEqual(reconcileBundledProgramSources(next, []), next);
 });
 
 test("new regular popups use gray even when their shared record still has Concrete", () => {

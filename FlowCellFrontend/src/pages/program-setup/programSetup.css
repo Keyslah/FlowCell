@@ -48,59 +48,41 @@
   margin-top: 0;
 }
 
-.program-setup--dialog.windows-setup {
+.windows-setup-status {
+  position: fixed;
+  inset: auto 16px 16px auto;
+  z-index: 100;
   box-sizing: border-box;
-  width: min(980px, calc(100vw - 32px));
-  height: min(820px, calc(100vh - 32px));
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 32px);
-  margin: auto;
-  overflow: hidden;
-  border: 1px solid rgba(231, 241, 235, 0.17);
-  border-radius: 12px;
-  padding: 0;
-  background: #111715;
-}
-
-.program-setup--dialog:not([open]) {
-  display: none;
-}
-
-.windows-setup {
-  width: min(640px, calc(100vw - 32px));
-  height: auto;
-  max-height: calc(100vh - 32px);
-  min-height: 0;
+  width: min(480px, calc(100vw - 32px));
+  max-height: min(220px, calc(100vh - 32px));
   overflow: auto;
   border: 1px solid rgba(231, 241, 235, 0.17);
-  border-radius: 12px;
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: #edf3ef;
+  background: #111715;
+  font: 14px/1.45 "Segoe UI", sans-serif;
 }
 
-.program-setup--dialog::backdrop,
-.windows-setup::backdrop {
-  background: rgba(0, 0, 0, 0.67);
+.windows-setup-status p {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
-.windows-setup__panels {
-  display: grid;
-  gap: 16px;
-  margin-inline: 0;
-}
-
-.windows-setup__panel {
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.windows-setup__description {
-  display: block;
-  margin-top: 3px;
-  color: rgba(237, 243, 239, 0.66);
-}
-
-.windows-setup__error {
+.windows-setup-status [role="alert"] {
   color: #ffb4ab;
   white-space: pre-wrap;
+}
+
+.windows-setup-status button {
+  margin-top: 8px;
+  padding: 6px 10px;
+  color: inherit;
+  background: #26372f;
+  border: 1px solid rgba(231, 241, 235, 0.25);
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
 }
 
 .program-setup button,
@@ -258,6 +240,24 @@
 
 .program-setup__inline button {
   margin-top: 6px;
+}
+
+.program-setup__path,
+.program-setup__executables button {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  text-align: left;
+}
+
+.program-setup__path {
+  margin: 8px 0 0;
+}
+
+.program-setup__executables {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .program-setup__modes {

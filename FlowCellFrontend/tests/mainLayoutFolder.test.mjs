@@ -347,6 +347,59 @@ for (const unavailable of [false, true]) {
   });
 }
 
+test("layout restores retired Theme pages through Main while retaining ordinary installed pages", async () => {
+  const source = readSource("src", "pages", "main", "MainPage.tsx");
+  const start = source.indexOf("const restoreLayoutSnapshotState =");
+  const end = source.indexOf("const handleSaveLayout =", start);
+  assert.ok(start >= 0 && end > start, "execute the actual Main layout restore handler");
+  const compiled = ts.transpileModule(source.slice(start, end) + "\nglobalThis.restore = restoreLayoutSnapshotState;", {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+  }).outputText;
+  const bounds = { Left: 10, Top: 20, Width: 920, Height: 720 };
+  const snapshot = { Windows: [
+    { Kind: "installed-page", ProgramName: "Blender", PanelName: "toolset", ButtonOwnerId: "theme",
+      InstalledPageFileName: "theme.flowcell-source.json", InstalledPageId: "blender.theme", Bounds: bounds },
+    { Kind: "installed-page", ProgramName: "Illustrator", PanelName: "Layers", ButtonOwnerId: "tree",
+      InstalledPageFileName: "layers.flowcell-source.json", InstalledPageId: "illustrator.layer-tree", Bounds: bounds },
+    { Kind: "installed-page", ProgramName: "Krita", PanelName: "Tools", ButtonOwnerId: "future",
+      InstalledPageFileName: "future.flowcell-source.json", InstalledPageId: "krita.future", Bounds: bounds }
+  ] };
+  const original = structuredClone(snapshot);
+  const window = { title: "Installed Page", width: 360, height: 640, minWidth: 300, minHeight: 400, alwaysOnTop: true };
+  const descriptors = new Map([
+    ["theme", { window, themeContribution: { version: 1 } }],
+    ["tree", { window }],
+    ["future", { window, themeContribution: { version: 2 } }]
+  ]);
+  const events = [];
+  const plain = value => JSON.parse(JSON.stringify(value));
+  const sandbox = {
+    isValidFlowCellBounds: () => true,
+    resolveInstalledPageOpenDescriptor: async (args) => {
+      events.push(["resolve", plain(args)]);
+      assert.ok(descriptors.has(args.ownerButtonId));
+      return descriptors.get(args.ownerButtonId);
+    },
+    closeManagedLayoutWindows: async () => events.push("close"),
+    connectRunningLayoutPrograms: async (names) => events.push(["connect", ...names]),
+    openThemeEditorWindow: async (args) => events.push(["theme-editor", plain(args)]),
+    openInstalledPageWindow: async (args) => events.push(["installed-page", plain(args)])
+  };
+  vm.runInNewContext(compiled, sandbox);
+  await sandbox.restore(snapshot);
+  const identity = entry => ({ ownerButtonId: entry.ButtonOwnerId, programName: entry.ProgramName,
+    panelName: entry.PanelName, fileName: entry.InstalledPageFileName, pageId: entry.InstalledPageId });
+  assert.deepEqual(events, [
+    ...snapshot.Windows.map(entry => ["resolve", identity(entry)]),
+    "close", ["connect", "Blender", "Illustrator", "Krita"],
+    ["theme-editor", { target: "Blender" }],
+    ...snapshot.Windows.slice(1).map(entry => ["installed-page", {
+      ...identity(entry), ...window, bounds
+    }])
+  ], "resolve every saved identity before closing windows, then redirect only supported Theme contributions");
+  assert.deepEqual(snapshot, original, "retiring a Theme window must not change the saved layout");
+});
+
 async function runStartupScenario({ savedLayout = false, connectionFails = false,
   programListFails = false, layoutLoadFails = false } = {}) {
   const source = readSource("src", "pages", "main", "MainPage.tsx");

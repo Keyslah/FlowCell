@@ -346,9 +346,10 @@ select:focus-visible {
 }
 
 .button-theme-buckets {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 5px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .button-theme-gradients {
@@ -796,11 +797,15 @@ select:focus-visible {
 }
 
 .button-theme-bucket {
-  display: grid;
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
   gap: 4px;
+  width: max-content;
   min-width: 0;
-  min-height: 52px;
-  padding: 5px;
+  max-width: 100%;
+  min-height: 26px;
+  padding: 4px;
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.035);
 }
@@ -810,6 +815,10 @@ select:focus-visible {
 }
 
 .button-theme-bucket__label {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
   color: var(--muted);
   font-size: 0.62rem;
   overflow-wrap: anywhere;
@@ -820,7 +829,6 @@ select:focus-visible {
   align-items: center;
   gap: 4px;
   max-width: 100%;
-  margin-right: 8px;
 }
 
 .button-theme-bucket__participation input[type="checkbox"] {
@@ -830,6 +838,13 @@ select:focus-visible {
 
 .button-theme-bucket__participation span {
   min-width: 0;
+}
+
+.button-theme-bucket > input[type="color"] {
+  flex: 0 0 18px;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
 }
 
 .button-theme-bucket__materials {
@@ -912,10 +927,6 @@ select:focus-visible {
 }
 
 @media (max-width: 780px) {
-  .button-theme-buckets {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .button-theme-gradients {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -939,7 +950,6 @@ select:focus-visible {
   }
 
   .button-theme-gradient,
-  .button-theme-buckets,
   .gradient-curve {
     grid-template-columns: minmax(0, 1fr);
   }

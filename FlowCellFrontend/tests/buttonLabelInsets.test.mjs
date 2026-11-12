@@ -10,68 +10,100 @@ const transpile = source => ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
 }).outputText;
 
-function fixture(ratio = 1, svg = false) {
+// These deterministic glyph measurements exercise fitting policy only. They do
+// not assert actual browser font metrics or the screenshot's rendered font size.
+function fixture({
+  ratio = 1,
+  svg = false,
+  width = 76.64803072980384,
+  height = 36.54620361328125,
+  naturalWidth = 44,
+  padded = true
+} = {}) {
   const core = {
-    clientWidth: 72, clientHeight: 37.295, parentElement: null,
-    getBoundingClientRect: () => ({ width: 72 * ratio, height: 37.295 * ratio }),
-    css: { width: "72px", height: "37.295px", boxSizing: "border-box" }
+    clientWidth: width, clientHeight: height, parentElement: null,
+    getBoundingClientRect: () => ({ width: width * ratio, height: height * ratio }),
+    css: { width: `${width}px`, height: `${height}px`, boxSizing: "border-box" }
   };
   const carrier = {
     parentElement: core,
     getBoundingClientRect: core.getBoundingClientRect,
-    css: { ...core.css, paddingLeft: "7px", paddingRight: "7px" }
+    css: {
+      ...core.css,
+      paddingLeft: padded ? "24px" : "0px", paddingRight: padded ? "24px" : "0px",
+      paddingTop: padded ? "16px" : "0px", paddingBottom: padded ? "16px" : "0px"
+    }
   };
   const labelNode = {
-    parentElement: carrier, svg, lines: [], fontSize: 15,
-    style: { setProperty() {} }, css: { fontSize: "15px" }
+    parentElement: carrier, svg, lines: [], fontSize: 16,
+    style: { setProperty() {} }, css: { fontSize: "16px" }
   };
   const box = {
     exports: {},
     getComputedStyle: node => node.css,
     isSvgElement: node => Boolean(node.svg),
-    applyLabelLines(node, lines, fontSize) { node.lines = [...lines]; node.fontSize = fontSize ?? 15; },
+    applyLabelLines(node, lines, fontSize) { node.lines = [...lines]; node.fontSize = fontSize ?? 16; },
     readLabelTextMeasurement: node => ({
-      width: 64 * node.fontSize / 15 * ratio,
-      height: 18 * node.fontSize / 15 * ratio
+      width: naturalWidth * node.fontSize / 16 * ratio,
+      height: 19 * node.fontSize / 16 * ratio
     })
   };
   vm.runInNewContext(transpile(textFit), box);
   Object.assign(box, box.exports);
-  const start = renderer.indexOf("function readLabelFitSize(");
+  const fitStart = renderer.indexOf("function applyTextFit(");
+  const insetStart = renderer.indexOf("function readLabelFitSize(");
+  // Include the former helper when checking the regression against old source,
+  // so it fails on the shrunken label rather than an unresolved dependency.
+  const start = insetStart >= 0 ? insetStart : fitStart;
   const end = renderer.indexOf("function applyTextAlignment(", start);
-  assert.ok(start >= 0 && end > start);
+  assert.ok(fitStart >= 0 && start >= 0 && end > fitStart);
   vm.runInNewContext(transpile(renderer.slice(start, end) +
-    "\nglobalThis.bounds = readLabelFitSize; globalThis.fit = applyTextFit;"), box);
-  return { box, mounted: { core, labelNode }, core, carrier, labelNode };
+    "\nglobalThis.fit = applyTextFit;"), box);
+  return { box, mounted: { core, labelNode }, labelNode };
 }
 
 for (const ratio of [1, 1.05, 1.575]) {
-  test(`label fitting retains both 7 CSS px insets at WebView ratio ${ratio}`, () => {
-    const { box, mounted, labelNode } = fixture(ratio);
-    const bounds = box.bounds(mounted);
-    assert.ok(Math.abs(bounds.width - 58 * ratio) < 0.000001);
-    assert.equal(box.fit(mounted, "Fixture label", "shrink", 8, true), false);
-    assert.equal(labelNode.fontSize, 13.5, "64 CSS px text must shrink to the 58 CSS px content area");
-    assert.deepEqual(labelNode.lines, ["Fixture label"]);
+  test(`compact pill padding does not shrink a fitting label at WebView ratio ${ratio}`, () => {
+    const { box, mounted, labelNode } = fixture({ ratio });
+    const overflow = box.fit(mounted, "Group", "shrink", 8, true);
+    assert.equal(labelNode.fontSize, 16, "the label fits the full semantic core at its authored size");
+    assert.equal(overflow, false);
+    assert.deepEqual(labelNode.lines, ["Group"]);
   });
 }
 
-test("content-box padding and borders are converted with the same live scale", () => {
-  const { box, mounted, carrier } = fixture(1.5);
-  carrier.css = {
-    width: "54px", height: "27.295px", boxSizing: "content-box",
-    paddingLeft: "7px", paddingRight: "7px", borderLeftWidth: "2px", borderRightWidth: "2px",
-    paddingTop: "3px", paddingBottom: "3px", borderTopWidth: "2px", borderBottomWidth: "2px"
-  };
-  const bounds = box.bounds(mounted);
-  assert.ok(Math.abs(bounds.width - 81) < 0.000001);
-  assert.ok(Math.abs(bounds.height - 40.9425) < 0.000001);
+test("a narrow padded Rotate pill keeps a short label at its authored size", () => {
+  const { box, mounted, labelNode } = fixture({ width: 49, height: 41, naturalWidth: 32 });
+  const overflow = box.fit(mounted, "270", "shrink", 8, true);
+  assert.equal(labelNode.fontSize, 16);
+  assert.equal(overflow, false);
 });
 
-test("an unpadded HTML label retains its complete core and SVG fitting remains unchanged", () => {
-  const html = fixture();
-  html.carrier.css = { ...html.core.css };
-  assert.equal(html.box.bounds(html.mounted).width, 72);
-  const svg = fixture(1.05, true);
-  assert.equal(svg.box.bounds(svg.mounted).width, 72 * 1.05);
+test("a long Collections label shrinks only enough to fit the full core", () => {
+  const { box, mounted, labelNode } = fixture({ width: 92.25982793135026, height: 44, naturalWidth: 128 });
+  const overflow = box.fit(mounted, "Make Collections", "shrink", 8, true);
+  assert.equal(labelNode.fontSize, 11.5, "the fixture's 128 CSS px label fits at 92 CSS px without reaching its minimum");
+  assert.equal(overflow, false);
+  assert.deepEqual(labelNode.lines, ["Make Collections"]);
+});
+
+for (const svg of [false, true]) {
+  test(`${svg ? "SVG" : "unpadded HTML"} fitting retains the full semantic core`, () => {
+    const { box, mounted, labelNode } = fixture({ ratio: 1.05, svg, padded: false });
+    assert.equal(box.fit(mounted, "Group", "shrink", 8, true), false);
+    assert.equal(labelNode.fontSize, 16);
+  });
+}
+
+test("a fitting explicit font size survives padded skin fitting", () => {
+  const { box, mounted, labelNode } = fixture();
+  const overflow = box.fit(mounted, "Group", "shrink", 8, true, 20);
+  assert.equal(labelNode.fontSize, 20);
+  assert.equal(overflow, false);
+});
+
+test("actual core overflow still honors the saved minimum and reports overflow", () => {
+  const { box, mounted, labelNode } = fixture({ width: 40, height: 44, naturalWidth: 128 });
+  assert.equal(box.fit(mounted, "Make Collections", "shrink", 8, true), true);
+  assert.equal(labelNode.fontSize, 8);
 });

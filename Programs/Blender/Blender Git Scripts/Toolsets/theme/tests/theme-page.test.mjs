@@ -380,7 +380,7 @@ test("theme roles and gradient stops use the original native color popups for nu
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.1.2");
+  assert.equal(contribution.version, "3.1.3");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -1447,6 +1447,7 @@ test("every program action resolves to an existing fixed theme.py command", () =
     "status",
     "absorb_theme",
     "apply_theme_from_photo_manual_colors",
+    "apply_theme_bundle",
     "apply_theme_bucket",
     "place_picture",
     "set_grid_spacing",
@@ -2997,9 +2998,9 @@ test("embedded contribution captures declared persistent settings and assets wit
   assert.deepEqual(page.themeContribution.assetFieldIds, ["theme_image_path", "static_background_path", "hdri_path"]);
 });
 
-test("embedded stage is partial and read-only, while explicit apply calls only relevant existing integration commands", async () => {
+test("embedded stage is read-only and partial apply batches only explicitly included integration settings", async () => {
   const root = await renderThemePage({ fields: { grid_scale: 0.2, world_strength: 4 } },
-    { "button-theme.settings": { settings: poppedSettings(), configured: true }, "environment.strength": {} }, true);
+    { "button-theme.settings": { settings: poppedSettings(), configured: true } }, true);
   const previousRequestCount = root.requests.length;
   await root.themeRequest("validate", { fields: { tabs_hex: "#123456" } });
   await assert.rejects(root.themeRequest("validate", { fields: { tabs_hex: "wrong" } }), /Invalid program Theme value/);
@@ -3013,8 +3014,8 @@ test("embedded stage is partial and read-only, while explicit apply calls only r
   await assert.rejects(root.themeRequest("stage", { fields: { host_exe: "unexpected" } }), /Unsupported program Theme field/);
   await root.themeRequest("apply", { fields: { world_strength: 3 } });
   const applied = root.requests.slice(previousRequestCount);
-  assert.deepEqual(applied.map(({ actionId }) => actionId), ["environment.strength"]);
-  assert.deepEqual(plain(applied[0].payload), { world_strength: 3 });
+  assert.deepEqual(applied.map(({ actionId }) => actionId), ["theme.apply-bundle"]);
+  assert.deepEqual(plain(applied[0].payload), { environment: { world_strength: 3 } });
 });
 
 
@@ -3042,20 +3043,21 @@ test("embedded named-theme selection preserves the lock and restores the selecte
 });
 
 
-test("embedded theme apply orders environment then picture then startup snapshot and retains incoming values", async () => {
+test("embedded theme apply sends one bundle with environment, picture and startup snapshot settings", async () => {
   const root = await renderThemePage({}, {
     "button-theme.settings": { settings: poppedSettings(), configured: true },
-    "environment.apply": { fieldPatch: { world_strength: 99 } },
-    "picture.apply": {}, "theme.apply": {}
+    "theme.apply-bundle": { fieldPatch: { world_strength: 99 } }
   }, true);
   const start = root.requests.length;
   await root.themeRequest("apply", { fields: {
     hdri_path: "C:/theme/sky.hdr", world_strength: 2.5, static_background_path: "C:/theme/picture.png", tabs_hex: "#123456"
   } });
   const requests = root.requests.slice(start);
-  assert.deepEqual(requests.map(({ actionId }) => actionId), ["environment.apply", "environment.strength", "picture.apply", "theme.apply"]);
-  assert.equal(requests[1].payload.world_strength, 2.5);
-  assert.equal(requests.at(-1).payload.tabs_hex, "#123456");
+  assert.deepEqual(requests.map(({ actionId }) => actionId), ["theme.apply-bundle"]);
+  assert.deepEqual(plain(requests[0].payload.environment), { hdri_path: "C:/theme/sky.hdr", world_strength: 2.5 });
+  assert.equal(requests[0].payload.picture.mode, "replace");
+  assert.equal(requests[0].payload.picture.static_background_path, "C:/theme/picture.png");
+  assert.equal(requests[0].payload.theme.tabs_hex, "#123456");
   assert.equal((await root.themeRequest("capture")).fields.world_strength, 2.5);
 });
 
@@ -3063,14 +3065,17 @@ test("embedded themes with no HDRI restore picture and grid without loading a de
   for (const grid_enabled of [true, false]) {
     const root = await renderThemePage({ fields: { static_background_path: "C:/previous.png", grid_scale: 0.2 } }, {
       "button-theme.settings": { settings: poppedSettings(), configured: true },
-      "picture.clear": { fieldPatch: { grid_enabled: !grid_enabled, grid_scale: 1 } }
+      "theme.apply-bundle": {}
     }, true);
     const start = root.requests.length;
     await root.themeRequest("apply", { fields: { hdri_path: "", rotation_x_deg: 40, world_strength: 2.5,
       static_background_path: "", grid_enabled, tabs_hex: "#123456" } });
     const requests = root.requests.slice(start);
-    assert.deepEqual(requests.map(({ actionId }) => actionId), ["environment.clear", "picture.clear",
-      grid_enabled ? "picture.grid" : "picture.grid.remove", "theme.apply"]);
+    assert.deepEqual(requests.map(({ actionId }) => actionId), ["theme.apply-bundle"]);
+    assert.deepEqual(plain(requests[0].payload.environment), { hdri_path: "" });
+    assert.equal(requests[0].payload.picture.mode, "replace");
+    assert.equal(requests[0].payload.picture.static_background_path, "");
+    assert.equal(requests[0].payload.picture.grid_enabled, grid_enabled);
     const fields = (await root.themeRequest("capture")).fields;
     assert.equal(fields.grid_enabled, grid_enabled);
     assert.equal(fields.grid_scale, 0.2, "omitted grid scale keeps its prior value");
@@ -3082,6 +3087,48 @@ test("embedded themes with no HDRI restore picture and grid without loading a de
   const start = root.requests.length;
   await root.themeRequest("apply", { fields: { hdri_path: "" } });
   const requests = root.requests.slice(start);
-  assert.deepEqual(requests.map(({ actionId }) => actionId), ["environment.clear", "picture.apply"]);
-  assert.equal(requests[1].payload.static_background_path, "C:/keep.png", "omitted picture stays intact across clear-world integration");
+  assert.deepEqual(requests.map(({ actionId }) => actionId), ["theme.apply-bundle"]);
+  assert.equal(requests[0].payload.picture.static_background_path, "C:/keep.png", "omitted picture stays intact across clear-world integration");
+});
+
+test("embedded apply omits unrelated groups and reapplies explicitly included equal theme values", async () => {
+  const root = await renderThemePage({ fields: { tabs_hex: "#123456", hdri_path: "C:/keep.hdr", static_background_path: "C:/keep.png" } },
+    { "button-theme.settings": { settings: poppedSettings(), configured: true } }, true);
+  const start = root.requests.length;
+  await root.themeRequest("apply", { fields: { tabs_hex: "#123456" } });
+  const requests = root.requests.slice(start);
+  assert.deepEqual(requests.map(({ actionId }) => actionId), ["theme.apply-bundle"]);
+  assert.deepEqual(Object.keys(requests[0].payload), ["theme"]);
+  assert.equal(requests[0].payload.theme.tabs_hex, "#123456");
+  await root.themeRequest("apply", { fields: { theme_image_path: "C:/sample.png" } });
+  assert.equal(root.requests.length, start + 1, "sample-only metadata makes no Blender host request");
+  const fields = (await root.themeRequest("capture")).fields;
+  assert.equal(fields.hdri_path, "C:/keep.hdr");
+  assert.equal(fields.static_background_path, "C:/keep.png");
+});
+
+test("embedded grid-only apply preserves the picture and omits environment and theme changes", async () => {
+  const root = await renderThemePage({ fields: { static_background_path: "C:/keep.png" } },
+    { "button-theme.settings": { settings: poppedSettings(), configured: true } }, true);
+  const start = root.requests.length;
+  await root.themeRequest("apply", { fields: { grid_enabled: false } });
+  const requests = root.requests.slice(start);
+  assert.deepEqual(requests.map(({ actionId }) => actionId), ["theme.apply-bundle"]);
+  assert.deepEqual(Object.keys(requests[0].payload), ["picture"]);
+  assert.equal(requests[0].payload.picture.mode, "grid");
+  assert.equal(requests[0].payload.picture.static_background_path, "C:/keep.png");
+});
+
+test("embedded failed bundle restores staged fields and reports unconfirmed results without pretending to restore Blender", async () => {
+  for (const unknown of [false, true]) {
+    const root = await renderThemePage({ fields: { tabs_hex: "#111111" } }, {
+      "button-theme.settings": { settings: poppedSettings(), configured: true },
+      "theme.apply-bundle": () => { throw new Error(unknown ? "FLOWCELL_THEME_OUTCOME_UNKNOWN: expired" : "missing image"); }
+    }, true);
+    const start = root.requests.length;
+    await assert.rejects(root.themeRequest("apply", { fields: { tabs_hex: "#123456" } }), unknown ? /OUTCOME_UNKNOWN/ : /missing image/);
+    assert.deepEqual(root.requests.slice(start).map(({ actionId }) => actionId), ["theme.apply-bundle"]);
+    assert.equal((await root.themeRequest("capture")).fields.tabs_hex, unknown ? "#123456" : "#111111");
+    if (unknown) assert.match(root.status.textContent, /could not be confirmed/);
+  }
 });

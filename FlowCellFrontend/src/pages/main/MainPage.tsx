@@ -812,6 +812,7 @@ export default function MainPage() {
   const [buttonBootstrapError, setButtonBootstrapError] = useState<string | null>(null);
   const [buttonBootstrapReady, setButtonBootstrapReady] = useState(false);
   const [windowsSetupComplete, setWindowsSetupComplete] = useState(false);
+  const [windowsSetupPending, setWindowsSetupPending] = useState(true);
   const buttonDocumentRef = useRef<ButtonStateDocument | null>(null);
   const previousButtonDocumentRef = useRef<ButtonStateDocument | null>(null);
   const mainPopDraftSessionsRef = useRef<Map<string, MainPopDraftSession>>(new Map());
@@ -1962,6 +1963,10 @@ export default function MainPage() {
             const descriptor = resolvedInstalledPages.get(windowEntry);
             if (!descriptor) {
               throw new Error("The installed Page was not resolved before layout restore.");
+            }
+            if (descriptor.themeContribution?.version === 1) {
+              await openThemeEditorWindow({ target: windowEntry.ProgramName });
+              break;
             }
             await openInstalledPageWindow({
               ownerButtonId: windowEntry.ButtonOwnerId,
@@ -3977,8 +3982,11 @@ export default function MainPage() {
         </div>
       </ExactPageFrame>
     </main>
-    {buttonBootstrapReady && !windowsSetupComplete ? (
-      <WindowsSetup onComplete={() => setWindowsSetupComplete(true)} />
+    {buttonBootstrapReady && windowsSetupPending ? (
+      <WindowsSetup
+        onStartupReady={() => setWindowsSetupComplete(true)}
+        onComplete={() => { setWindowsSetupComplete(true); setWindowsSetupPending(false); }}
+      />
     ) : null}
     </>
   );

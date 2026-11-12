@@ -32,6 +32,15 @@ export interface ThemeContributionController {
   }>;
 }
 
+/** A timeout can leave the host action running; restoring another theme would race it. */
+export function isThemeHostOutcomeUnknown(error: unknown): boolean {
+  return (error instanceof Error ? error.message : String(error)).includes("FLOWCELL_THEME_OUTCOME_UNKNOWN:");
+}
+
+export function isThemeHostNotStarted(error: unknown): boolean {
+  return (error instanceof Error ? error.message : String(error)).includes("FLOWCELL_THEME_NOT_STARTED:");
+}
+
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : null;

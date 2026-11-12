@@ -120,6 +120,7 @@ test("Theme Save embeds the donor's disk family and restores future variants in 
   const unit = Object.values(donor.popoutUnits)[0];
   const ownerPlacement = Object.values(donor.placements).find((entry) => entry.buttonId === "owner");
   const skin = donor.skins[donor.settings.defaultSkinId];
+  ownerPlacement.skinOverrideId = skin.id; // Exercise a family explicitly shared by Main owner and children.
   skin.metadata = { buttonSkinFamily: "Keys", buttonSkinFamilyBaseline: { [ownerPlacement.id]: 6 }, donorOnly: true };
   const source = (marker) => serializeButtonSkinSections({ ...skin, base: `${skin.base}\n--disk-family:${marker};` });
   const sources = { "C:/Donor/Skins/Keys/keys3.flowcell-button-skin.txt": source("three"),
@@ -163,13 +164,15 @@ test("tool-set export captures scoped skins and geometry without local execution
   const capture = await captureToolsetPackage(document, unit, async () => { throw Error("Unexpected library access"); });
   assert.equal(JSON.stringify(document), before);
   assert.equal(capture.ownerButtonId, "owner");
-  assert.equal(Object.keys(capture.appearance.skins).length, 1);
-  assert.equal(capture.appearance.owner, capture.appearance.children.run);
+  assert.equal(Object.keys(capture.appearance.skins).length, 2);
+  assert.notEqual(capture.appearance.owner, capture.appearance.children.run);
   assert.deepEqual(capture.presentation.children.run, { label: "Run", tooltip: "" });
   assert.equal(capture.appearance.skins[capture.appearance.owner].source,
+    serializeButtonSkinSections(document.skins[document.placements["placement-owner"].skinOverrideId]));
+  assert.equal(capture.appearance.skins[capture.appearance.children.run].source,
     serializeButtonSkinSections(document.skins[document.settings.defaultSkinId]));
   assert.equal(capture.layout.placements.run.width, document.placements[unit.childPlacementIds[0]].width);
-  assert.equal(JSON.stringify(capture).includes("999"), false);
+  assert.doesNotMatch(JSON.stringify(capture), /"desktopBounds(?:Envelope)?":/);
   assert.equal("executionTarget" in capture, false);
 });
 

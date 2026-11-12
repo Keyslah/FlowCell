@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import ts from "typescript";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 const frontendRoot = join(import.meta.dirname, "..");
 const repoRoot = join(frontendRoot, "..");
@@ -97,7 +99,7 @@ test("Installation offers registration-only executable setup without importing a
   );
   assert.match(addProgram, /Add an application without a ZIP/);
   assert.match(addProgram, /<label>Program name/);
-  assert.match(addProgram, /<label>Application \.exe path/);
+  assert.match(addProgram, /<label\b[^>]*>Application \.exe path/);
   const parsed = ts.createSourceFile("AddProgramWindowPage.tsx", addProgram, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const component = parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "AddProgramWindowPage");
   const declarations = component.body.statements.filter(ts.isVariableStatement).flatMap(node => [...node.declarationList.declarations]);
@@ -120,6 +122,91 @@ test("Installation offers registration-only executable setup without importing a
   assert.doesNotMatch(addProgram, /I confirm this EXE filename identifies/);
   assert.doesNotMatch(addProgram, />Review program<\/button>/);
   assert.equal((addProgram.match(/<footer className="program-setup__footer"/g) ?? []).length, 1);
+});
+
+function installationRenderHarness(overrides = {}) {
+  const source = read(frontendRoot, "src", "pages", "program-setup", "AddProgramWindowPage.tsx");
+  const parsed = ts.createSourceFile("AddProgramWindowPage.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const component = parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "AddProgramWindowPage");
+  const returned = component.body.statements.find(ts.isReturnStatement).expression;
+  const compiled = ts.transpileModule(`return (${returned.getText(parsed)});`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React }
+  }).outputText;
+  const state = {
+    busy: false, setupStatusError: "", completedSetup: null, installationComplete: false,
+    setupStatuses: [], inventory: { packages: [], rejectedPackages: [] }, setupSource: "package",
+    selectedProgram: { programName: "Blender", executableCandidates: [], panels: [], sources: [] },
+    executablePath: "", plainExecutablePath: "", plainProgramName: "Fixture", mode: "custom",
+    selectedPanels: new Set(), selectedSources: new Set(), dependencyLocks: new Set(),
+    status: "", progress: null, canInstall: false, selectionChanges: 0, ...overrides
+  };
+  return {
+    state,
+    render() {
+      const context = { ...state, React,
+        setExecutablePath: path => { state.executablePath = path; },
+        setPlainExecutablePath: path => { state.plainExecutablePath = path; },
+        setStatus() {}, markSelectionChanged: () => { state.selectionChanges += 1; }
+      };
+      return new Function(...Object.keys(context), compiled)(...Object.values(context));
+    }
+  };
+}
+
+function installationElements(node) {
+  if (Array.isArray(node)) return node.flatMap(installationElements);
+  return React.isValidElement(node) ? [node, ...installationElements(node.props.children)] : [];
+}
+
+test("Installation renders full executable choices and selecting another version updates its path", () => {
+  const paths = ["C:\\Program Files\\Blender Foundation\\Blender 5.0\\blender.exe", "C:\\Program Files\\Blender Foundation\\Blender 5.1\\blender.exe"];
+  const h = installationRenderHarness({
+    executablePath: paths[0],
+    selectedProgram: { programName: "Blender", executableCandidates: paths.map(path => ({ path })), panels: [], sources: [] }
+  });
+  const choices = tree => installationElements(tree).filter(node => node.type === "button" && paths.includes(node.props.children));
+  let tree = h.render();
+  assert.deepEqual(choices(tree).map(node => node.props.children), paths);
+  assert.deepEqual(choices(tree).map(node => node.props["aria-pressed"]), [true, false]);
+  assert.ok(paths.every(path => renderToStaticMarkup(tree).includes(path)));
+  choices(tree)[1].props.onClick();
+  tree = h.render();
+  assert.equal(installationElements(tree).find(node => node.props.id === "program-executable").props.value, paths[1]);
+  assert.equal(installationElements(tree).find(node => node.props["aria-label"] === "Selected executable path").props.children, paths[1]);
+  assert.deepEqual(choices(tree).map(node => node.props["aria-pressed"]), [false, true]);
+  assert.equal(h.state.selectionChanges, 1);
+  h.state.busy = true;
+  assert.ok(choices(h.render()).every(node => node.props.disabled));
+});
+
+test("Installation displays the complete manually entered path in both application setup modes", () => {
+  const path = `D:\\${"Long application folder\\".repeat(12)}fixture.exe`;
+  for (const setupSource of ["plain", "package"]) {
+    const h = installationRenderHarness({ setupSource });
+    const inputId = setupSource === "plain" ? "plain-program-executable" : "program-executable";
+    const input = installationElements(h.render()).find(node => node.props.id === inputId);
+    input.props.onChange({ target: { value: path } });
+    const tree = h.render();
+    assert.equal(installationElements(tree).find(node => node.props["aria-label"] === "Selected executable path").props.children, path);
+    assert.ok(renderToStaticMarkup(tree).includes(path));
+  }
+});
+
+test("Installation renders all 6 catalog Shapes with their individual checkboxes", () => {
+  const manifest = JSON.parse(read(repoRoot, "Programs", "Blender", "flowcell.program.json"));
+  const sources = manifest.bundledSources.filter(source => source.panelName === "Shapes").map(source => ({
+    ...source, label: source.displayLabel
+  }));
+  const h = installationRenderHarness({ selectedProgram: {
+    programName: "Blender", executableCandidates: [], panels: manifest.panels.filter(panel => panel.label === "Shapes"), sources
+  } });
+  const tree = h.render();
+  const labels = installationElements(tree).filter(node => node.props.className === "program-setup__source");
+  assert.equal(labels.length, 6);
+  assert.deepEqual(labels.flatMap(label => installationElements(label).filter(node => node.type === "span").map(node => node.props.children)).sort(),
+    ["Cone", "Cube", "Cylinder", "Hex", "Sphere", "Triangle"]);
+  assert.equal(labels.flatMap(installationElements).filter(node => node.type === "input" && node.props.type === "checkbox").length, 6);
+  assert.match(renderToStaticMarkup(tree), /6 buttons/);
 });
 
 function addProgramCloseHarness(componentName = "AddProgramWindowPage") {

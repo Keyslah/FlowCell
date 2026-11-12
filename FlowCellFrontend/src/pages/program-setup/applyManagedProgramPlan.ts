@@ -46,20 +46,29 @@ export async function applyManagedProgramPlan(
     const applied = await operations.apply(request);
     token = applied.transactionToken;
     onProgress("Saving installed buttons and panel choices…");
-    const base = await operations.load();
-    const next = reconcileBundledProgramSources(base, applied.descriptors);
-    const panels = reconcileProgramPanelOwners(next, {
-      programName: applied.programName,
-      panels: buildPanelRailOwnerEntries(applied.panels),
-      surfaceBounds: panelRailOwnerSurfaceBounds,
-      removeStaleOwners: false
-    });
-    const expectedIds = [
-      ...applied.descriptors.map((descriptor) => String(descriptor.ownerButtonId ?? "")),
-      ...panels.owners.map((owner) => owner.buttonId)
-    ].filter(Boolean);
-    await operations.prepare(token, expectedIds);
-    if (!buttonStateDocumentsEqual(next, base)) await operations.commit(next, base.revision);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const base = await operations.load();
+      const next = reconcileBundledProgramSources(base, applied.descriptors);
+      const panels = reconcileProgramPanelOwners(next, {
+        programName: applied.programName,
+        panels: buildPanelRailOwnerEntries(applied.panels),
+        surfaceBounds: panelRailOwnerSurfaceBounds,
+        removeStaleOwners: false
+      });
+      const expectedIds = [
+        ...applied.descriptors.map((descriptor) => String(descriptor.ownerButtonId ?? "")),
+        ...panels.owners.map((owner) => owner.buttonId)
+      ].filter(Boolean);
+      await operations.prepare(token, expectedIds);
+      try {
+        if (!buttonStateDocumentsEqual(next, base)) await operations.commit(next, base.revision);
+        break;
+      } catch (error) {
+        // Main stays usable during setup. Merge a concurrent Button save into
+        // the same native transaction instead of rolling that transaction back.
+        if (attempt === 2 || !message(error).includes("Button state changed before Save.")) throw error;
+      }
+    }
     onProgress("Finishing application setup…");
     result = await operations.finalize(token);
   } catch (error) {

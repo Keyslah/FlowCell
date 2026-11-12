@@ -4542,11 +4542,87 @@ def unregister_flowcell_action_lifecycle(reason: str = "bridge-shutdown") -> Non
         raise RuntimeError(" ".join(cleanup_errors))
 
 
+def _apply_theme_bundle(context, payload):
+    """Apply explicitly included sections in one bridge/undo transaction."""
+    deadline_ms = int(payload.get("__flowcell_theme_deadline_ms", 0))
+
+    def check_deadline():
+        if deadline_ms and time.time() * 1000 >= deadline_ms:
+            raise RuntimeError("FLOWCELL_THEME_OUTCOME_UNKNOWN: The Blender Theme deadline expired; refresh Blender before retrying.")
+
+    check_deadline()
+    environment = payload.get("environment")
+    picture = payload.get("picture")
+    theme = payload.get("theme")
+    for name, section in (("environment", environment), ("picture", picture), ("theme", theme)):
+        if section is not None and not isinstance(section, dict):
+            raise ValueError(f"Theme bundle {name} must be an object.")
+    if picture is not None and picture.get("mode") not in {"replace", "grid"}:
+        raise ValueError("Theme bundle picture mode must be replace or grid.")
+    clears_environment = environment is not None and "hdri_path" in environment and not str(environment["hdri_path"]).strip()
+    if clears_environment and (picture is None or picture.get("mode") != "replace"):
+        raise ValueError("Clearing the theme environment requires its picture/grid restore settings.")
+
+    # Resolve asset paths before changing the world or overlay, so a missing
+    # imported file cannot leave an earlier section partially applied.
+    if environment is not None and environment.get("hdri_path"):
+        _resolve_hdri_path(environment["hdri_path"])
+    if picture is not None and picture.get("mode") == "replace" and picture.get("static_background_path"):
+        _resolve_optional_image_path(picture["static_background_path"])
+
+    if environment:
+        check_deadline()
+        if clears_environment:
+            _clear_world_state(context)
+        else:
+            world = _ensure_world_state(context)
+            if "hdri_path" in environment:
+                check_deadline()
+                _apply_hdri_image(world["env"], environment)
+            for index, key in enumerate(("rotation_x_deg", "rotation_y_deg", "rotation_z_deg")):
+                if key in environment:
+                    check_deadline()
+                    _ensure_hdri_image_if_missing(world["env"], environment)
+                    check_deadline()
+                    _set_rotation(world["mapping"], index, _read_float(environment, key, 0.0))
+            if "world_strength" in environment:
+                check_deadline()
+                _ensure_hdri_image_if_missing(world["env"], environment)
+                check_deadline()
+                _set_world_strength(world["background"], _read_float(environment, "world_strength", DEFAULT_WORLD_STRENGTH))
+
+    if picture is not None:
+        check_deadline()
+        if picture["mode"] == "replace":
+            if picture.get("static_background_path"):
+                _place_picture_image(context, picture)
+            else:
+                _clear_place_picture_overlay(context)
+                check_deadline()
+                if picture.get("grid_enabled"):
+                    _apply_grid_spacing(context, picture)
+                else:
+                    _remove_place_picture_grid(context)
+        elif picture.get("grid_enabled"):
+            _apply_grid_spacing(context, picture)
+        else:
+            _remove_place_picture_grid(context)
+
+    # Theme Apply captures startup picture state, so it must run last.
+    if theme is not None:
+        check_deadline()
+        _apply_theme_from_photo_manual_colors(context, theme)
+    check_deadline()
+    return _result("Blender theme bundle applied.")
+
+
 def run_flowcell_action(context=None, data=None):
     payload = data or {}
     command = _read_string(payload, "command", "status").lower()
     if command == "status":
         return _result("Blender Theme action is ready.")
+    if command == "apply_theme_bundle":
+        return _apply_theme_bundle(context, payload)
     if command == "read_project_startup_state":
         return _read_project_startup_state(context)
     if command == "restore_project_startup_state":

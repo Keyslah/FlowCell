@@ -8621,7 +8621,9 @@ test("theme contribution synchronization retains its owner and settings without 
   };
   const result = reconcileBundledProgramSources(document, [descriptor]);
   assert.deepEqual(result.buttons.theme, { ...originalOwner, metadata: { ...originalOwner.metadata, themeContributionOnly: true } });
-  assert.deepEqual(result.placements["placement-panel-other"], otherPlacement);
+  assert.deepEqual(result.placements["placement-panel-other"], {
+    ...otherPlacement, skinOverrideId: "skin-chipped-concrete-family-default"
+  });
   assert.deepEqual(result.surfaces.panel.placementIds, ["placement-panel-other"]);
   assert.equal(result.placements["placement-panel-theme"], undefined);
   assert.deepEqual(reconcileBundledProgramSources(result, [descriptor]), result);

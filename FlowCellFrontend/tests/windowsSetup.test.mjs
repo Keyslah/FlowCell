@@ -42,20 +42,138 @@ test("Windows selection installs default tools only in checked panels", () => {
   assert.equal(plan.executablePath, "C:\\Windows\\explorer.exe");
 });
 
-test("all Windows panels include every default contribution and no panels still registers Windows", () => {
+test("all Windows panels include every default contribution and Startup is mandatory", () => {
   const all = buildWindowsSetupPlan(program, new Set(program.panels.map(panel => panel.label)));
   assert.equal(all.selectedPanels.length, 3);
   assert.deepEqual(all.selectedSources.map(source => source.sourceId), program.sources.map(source => source.id));
   const none = buildWindowsSetupPlan(program, new Set());
   assert.equal(none.programName, "Windows");
-  assert.deepEqual(none.selectedPanels, []);
-  assert.deepEqual(none.selectedSources, []);
+  assert.deepEqual(none.selectedPanels, ["Startup"]);
+  assert.deepEqual(none.selectedSources.map(source => source.sourceId), program.sources.filter(source => source.panelName === "Startup").map(source => source.id));
 });
 
 test("Windows selection cannot install another program or undeclared panel", () => {
   assert.throws(() => buildWindowsSetupPlan({ ...program, programId: "blender" }, new Set()), /different program/);
   const plan = buildWindowsSetupPlan(program, new Set(["Unknown"]));
-  assert.deepEqual(plan.selectedPanels, []);
+  assert.deepEqual(plan.selectedPanels, ["Startup"]);
+});
+
+test("automatic Windows setup failure retains a retryable error and retries the selected plan once", async () => {
+  const setup = componentSource("pages/program-setup/WindowsSetup.tsx", "WindowsSetup");
+  const state = { error: "", complete: false, loading: false, startupReady: false };
+  const runningRef = { current: false };
+  let attempts = 0;
+  const run = evaluate(initializerOf(setup.component, setup.parsed, "checkRequirement").arguments[0], setup.parsed, {
+    window: { setTimeout, clearTimeout }, onStartupReadyRef: { current: () => { state.startupReady = true; } },
+    runningRef, getWindowsSetupRequirement: async () => ({ ...program, panels: program.panels.map(panel => ({ ...panel, defaultSelected: false })) }),
+    buildWindowsSetupPlan,
+    applyManagedProgramPlan: async plan => {
+      attempts += 1;
+      assert.deepEqual(plan.selectedPanels, ["Startup"]);
+      if (attempts === 1) throw new Error("Windows write failed");
+    },
+    setLoading: value => { state.loading = value; }, setStatus() {}, setError: value => { state.error = value; },
+    onCompleteRef: { current: () => { state.complete = true; } }
+  });
+  await run();
+  assert.equal(state.error, "Windows write failed");
+  assert.equal(state.complete, false);
+  assert.equal(state.loading, false);
+  assert.equal(state.startupReady, true, "a setup error must release Main startup and layout restoration");
+  assert.equal(runningRef.current, false);
+  await run();
+  assert.equal(attempts, 2);
+  assert.equal(state.error, "");
+  assert.equal(state.complete, true);
+});
+
+test("a Windows requirement check releases startup after 10000 ms and safely finishes its single late request", async () => {
+  const setup = componentSource("pages/program-setup/WindowsSetup.tsx", "WindowsSetup");
+  let waitingCallback;
+  let finishCheck;
+  let checks = 0;
+  let installs = 0;
+  const state = { startupReady: false, complete: false, status: "" };
+  const runningRef = { current: false };
+  const run = evaluate(initializerOf(setup.component, setup.parsed, "checkRequirement").arguments[0], setup.parsed, {
+    window: { setTimeout: (callback, delay) => { assert.equal(delay, 10_000); waitingCallback = callback; return 7; }, clearTimeout: token => assert.equal(token, 7) },
+    runningRef,
+    onStartupReadyRef: { current: () => { state.startupReady = true; } },
+    onCompleteRef: { current: () => { state.complete = true; } },
+    getWindowsSetupRequirement: () => { checks += 1; return new Promise(resolve => { finishCheck = resolve; }); },
+    buildWindowsSetupPlan,
+    applyManagedProgramPlan: async plan => { installs += 1; assert.deepEqual(plan.selectedPanels, ["Startup"]); },
+    setLoading() {}, setError() {}, setStatus: status => { state.status = status; }
+  });
+  const pending = run();
+  waitingCallback();
+  assert.equal(state.startupReady, true);
+  assert.equal(state.complete, false);
+  assert.match(state.status, /keep using FlowCell/);
+  await run();
+  assert.equal(checks, 1);
+  finishCheck({ ...program, panels: program.panels.map(panel => ({ ...panel, defaultSelected: false })) });
+  await pending;
+  assert.equal(installs, 1);
+  assert.equal(state.complete, true);
+  assert.equal(runningRef.current, false);
+});
+
+test("a slow Windows installation releases startup after 10000 ms without starting another transaction", async () => {
+  const setup = componentSource("pages/program-setup/WindowsSetup.tsx", "WindowsSetup");
+  let waitingCallback;
+  let finishInstall;
+  let installs = 0;
+  let cleared = false;
+  const state = { startupReady: false, complete: false };
+  const runningRef = { current: false };
+  const run = evaluate(initializerOf(setup.component, setup.parsed, "checkRequirement").arguments[0], setup.parsed, {
+    window: { setTimeout: (callback, delay) => { assert.equal(delay, 10_000); waitingCallback = callback; return 7; }, clearTimeout: token => { assert.equal(token, 7); cleared = true; } },
+    runningRef,
+    onStartupReadyRef: { current: () => { state.startupReady = true; } },
+    onCompleteRef: { current: () => { state.complete = true; } },
+    getWindowsSetupRequirement: async () => program,
+    buildWindowsSetupPlan,
+    applyManagedProgramPlan: () => { installs += 1; return new Promise(resolve => { finishInstall = resolve; }); },
+    setLoading() {}, setError() {}, setStatus() {}
+  });
+  const pending = run();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(cleared, false, "the startup timer must cover native installation too");
+  waitingCallback();
+  assert.equal(state.startupReady, true);
+  assert.equal(state.complete, false);
+  assert.equal(runningRef.current, true);
+  await run();
+  assert.equal(installs, 1);
+  finishInstall();
+  await pending;
+  assert.equal(state.complete, true);
+  assert.equal(cleared, true);
+});
+
+test("automatic Windows setup deduplicates concurrent effects and preserves an existing installation", async () => {
+  const setup = componentSource("pages/program-setup/WindowsSetup.tsx", "WindowsSetup");
+  let release;
+  let checks = 0;
+  let complete = 0;
+  const runningRef = { current: false };
+  const run = evaluate(initializerOf(setup.component, setup.parsed, "checkRequirement").arguments[0], setup.parsed, {
+    window: { setTimeout, clearTimeout }, onStartupReadyRef: { current() {} },
+    runningRef,
+    getWindowsSetupRequirement: () => { checks += 1; return new Promise(resolve => { release = () => resolve(null); }); },
+    applyManagedProgramPlan: () => assert.fail("existing Windows tools must not be reinstalled"),
+    setLoading() {}, setStatus() {}, setError() {},
+    onCompleteRef: { current: () => { complete += 1; } }
+  });
+  const first = run();
+  await run();
+  assert.equal(checks, 1);
+  assert.equal(complete, 0);
+  release();
+  await first;
+  assert.equal(complete, 1);
+  assert.equal(runningRef.current, false);
 });
 
 const request = buildWindowsSetupPlan(program, new Set(["Files"]));
@@ -195,11 +313,10 @@ function installationHarness(overrides = {}) {
     busyRef, setBusy: value => { busyRef.current = value; events.push(`busy:${value}`); },
     setProgress() {}, setStatus: value => statuses.push(value),
     setInstallationComplete: value => { state.complete = value; },
-    installWindows: async () => { events.push("Windows"); },
     setupSource: "package", selectedProgram: { programName: "Blender" },
     addPlainProgram: async () => { events.push("plain"); },
     installProgram: async () => { events.push("Blender"); return { status: "ready", restartNotes: "" }; },
-    onWindowsComplete: () => events.push("complete"), errorMessage: error => error.message,
+    errorMessage: error => error.message,
     ...overrides
   };
   return {
@@ -208,27 +325,18 @@ function installationHarness(overrides = {}) {
   };
 }
 
-test("one installation action finishes Windows and the selected program before releasing first-run setup", async () => {
+test("application installation handles only the selected program", async () => {
   const h = installationHarness();
   await h.install();
-  assert.deepEqual(h.events, ["busy:true", "Windows", "Blender", "complete", "busy:false"]);
+  assert.deepEqual(h.events, ["busy:true", "Blender", "busy:false"]);
   assert.equal(h.statuses.at(-1), "Installation complete.");
   assert.equal(h.state.complete, true);
-});
-
-test("Windows installation failure keeps first-run setup open and does not install the optional program", async () => {
-  const h = installationHarness({ installWindows: async () => { throw new Error("Windows write failed"); } });
-  await h.install();
-  assert.deepEqual(h.events, ["busy:true", "busy:false"]);
-  assert.match(h.statuses.at(-1), /Windows write failed/);
-  assert.equal(h.busyRef.current, false);
-  assert.equal(h.state.complete, false);
 });
 
 test("optional program installation failure does not report first-run completion", async () => {
   const h = installationHarness({ installProgram: async () => { throw new Error("Blender setup failed"); } });
   await h.install();
-  assert.deepEqual(h.events, ["busy:true", "Windows", "busy:false"]);
+  assert.deepEqual(h.events, ["busy:true", "busy:false"]);
   assert.match(h.statuses.at(-1), /Blender setup failed/);
   assert.equal(h.state.complete, false);
 });
@@ -240,7 +348,7 @@ test("application initialization and restart notes remain visible before first-r
   ]) {
     const h = installationHarness({ installProgram: async () => result });
     await h.install();
-    assert.deepEqual(h.events, ["busy:true", "Windows", "busy:false"]);
+    assert.deepEqual(h.events, ["busy:true", "busy:false"]);
     assert.equal(h.state.complete, true, "the completed installation is retained while the user reads the application notes");
   }
 });
@@ -310,14 +418,14 @@ test("an imported package that cannot supply setup inventory reports its specifi
   assert.deepEqual(busy, [true, false]);
 });
 
-for (const selectedPanelNames of [["Files", "Startup"], ["Files", "Utility", "Startup"], []]) {
-  test(`fresh Windows setup exposes its program Button and exactly ${selectedPanelNames.length} selected panel Buttons`, async () => {
+for (const installerPanelNames of [["Files", "Startup"], ["Files", "Utility", "Startup"], [], ["Utility"]]) {
+  const selectedPanelNames = program.panels.filter(panel => panel.label === "Startup" || installerPanelNames.includes(panel.label)).map(panel => panel.label);
+  test(`automatic Windows setup uses installer choices ${JSON.stringify(installerPanelNames)} with mandatory Startup`, async () => {
     const gate = componentSource("pages/program-setup/WindowsSetup.tsx", "WindowsSetup");
-    const setup = componentSource("pages/program-setup/AddProgramWindowPage.tsx", "AddProgramWindowPage");
     const main = componentSource("pages/main/MainPage.tsx", "MainPage");
     const selection = main.parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "resolveFolderSelection");
     const resolveFolderSelection = evaluate(selection, main.parsed, {});
-    const state = { program: null, panels: new Set(), complete: false, error: "", programs: [], panelNames: [] };
+    const state = { complete: false, error: "", programs: [], panelNames: [] };
     let registeredPrograms = [];
     let installedPanels = [];
     let savedDocument = JSON.stringify(createButtonStateDocument());
@@ -341,20 +449,8 @@ for (const selectedPanelNames of [["Files", "Startup"], ["Files", "Utility", "St
     assert.equal(buildProgramRailButtons(state.programs, null).filter(button => button.folderName === "Windows").length, 0);
     const onCompleteRef = { current: () => { state.complete = true; } };
     const callback = initializerOf(gate.component, gate.parsed, "checkRequirement").arguments[0];
-    await evaluate(callback, gate.parsed, {
-      getWindowsSetupRequirement: async () => program,
-      setLoading() {}, setError: error => { state.error = error; },
-      setProgram: value => { state.program = value; },
-      onCompleteRef
-    })();
-    assert.equal(state.complete, false, "fresh setup waits for the user's choices");
-    state.panels = evaluate(initializerOf(setup.component, setup.parsed, "selectedWindowsPanels").arguments[0], setup.parsed, {
-      requiredWindowsProgram: state.program
-    })();
-    assert.deepEqual([...state.panels], ["Files", "Utility", "Startup"]);
-    state.panels = new Set(selectedPanelNames);
-    const expectedPlan = buildWindowsSetupPlan(program, state.panels);
-    const busyRef = { current: false };
+    const expectedPlan = buildWindowsSetupPlan(program, new Set(installerPanelNames));
+    const runningRef = { current: false };
     const operations = {
       apply: async request => {
         assert.deepEqual(request, expectedPlan);
@@ -390,23 +486,18 @@ for (const selectedPanelNames of [["Files", "Startup"], ["Files", "Utility", "St
       }
     };
     try {
-      const installWindows = evaluate(initializerOf(setup.component, setup.parsed, "installWindows"), setup.parsed, {
-        windowsProgram: state.program, selectedWindowsPanels: state.panels,
+      await evaluate(callback, gate.parsed, {
+        window: { setTimeout, clearTimeout }, onStartupReadyRef: { current() {} },
+        runningRef,
+        getWindowsSetupRequirement: async () => ({ ...program, panels: program.panels.map(panel => ({ ...panel, defaultSelected: installerPanelNames.includes(panel.label) })) }),
         buildWindowsSetupPlan,
         applyManagedProgramPlan: request => applyManagedProgramPlan(request, operations),
-        setStatus() {},
-        setWindowsProgram: value => { state.program = value; }
-      });
-      await evaluate(initializerOf(setup.component, setup.parsed, "install"), setup.parsed, {
-        busyRef, setBusy: busy => { busyRef.current = busy; }, setProgress() {},
-        setInstallationComplete() {},
-        setStatus: status => { if (status.startsWith("Program setup failed:")) state.error = status; },
-        installWindows, setupSource: "package", selectedProgram: null,
-        onWindowsComplete: () => onCompleteRef.current(), errorMessage: error => error.message
+        setLoading() {}, setStatus() {}, setError: error => { state.error = error; },
+        onCompleteRef
       })();
       assert.equal(state.error, "");
       assert.equal(state.complete, true);
-      assert.equal(busyRef.current, false);
+      assert.equal(runningRef.current, false);
       assert.deepEqual(state.programs, ["Windows"]);
       assert.deepEqual(state.panelNames, selectedPanelNames);
       assert.equal(state.selectedProgram, "Windows");
@@ -460,8 +551,9 @@ async function startupAfterBootstrapFailure({ canonicalAvailable }) {
       .flatMap(node => [...node.declarationList.declarations])
       .find(node => node.name.getText(setup.parsed) === "checkRequirement");
     await evaluate(declaration.initializer.arguments[0], setup.parsed, {
+      window: { setTimeout, clearTimeout }, onStartupReadyRef: { current() {} },
       getWindowsSetupRequirement: async () => null,
-      setLoading() {}, setError() {},
+      runningRef: { current: false }, setStatus() {}, setLoading() {}, setError() {},
       onCompleteRef: { current: () => { state.complete = true; } }
     })();
   }

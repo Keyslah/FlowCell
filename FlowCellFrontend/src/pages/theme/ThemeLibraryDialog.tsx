@@ -34,23 +34,25 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
   const [selected, setSelected] = useState<ReadThemeResult | null>(null);
   const [issues, setIssues] = useState<string[]>([]);
   const [requirements, setRequirements] = useState<string[]>([]);
-  const [pending, setPending] = useState(false);
+  const [operation, setOperation] = useState<"inspecting" | "applying" | null>(null);
+  const pending = operation !== null;
   const [error, setError] = useState("");
   const inspection = useRef(0);
   useEffect(() => {
     let disposed = false;
     inspection.current += 1;
-    setSelected(null); setIssues([]); setRequirements([]); setError(""); setPending(false);
+    setSelected(null); setIssues([]); setRequirements([]); setError(""); setOperation(null);
     void listThemeLibrary(target).then((items) => { if (!disposed) setEntries(items); })
-      .catch((reason) => { if (!disposed) setError(String(reason)); });
+      .catch((reason) => { if (!disposed) setError(`Theme library could not be opened: ${String(reason)}`); });
     return () => { disposed = true; inspection.current += 1; };
   }, [target, mode]);
   const inspect = async (load: () => Promise<ReadThemeResult | null>) => {
     const generation = ++inspection.current;
-    setPending(true); setError(""); setSelected(null); setIssues([]); setRequirements([]);
+    setOperation("inspecting"); setError(""); setSelected(null); setIssues([]); setRequirements([]);
     try {
       const value = await load();
       if (!value) return;
+      if (generation !== inspection.current) return;
       const reviewIssues = await onReview?.(value) ?? [];
       if (generation !== inspection.current) return;
       let missing: string[] = [];
@@ -63,14 +65,17 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
       setIssues([...new Set(reviewIssues)]);
       setRequirements(missing);
       setSelected(value);
-    } catch (reason) { if (generation === inspection.current) setError(String(reason)); }
-    finally { if (generation === inspection.current) setPending(false); }
+    } catch (reason) { if (generation === inspection.current) setError(`Theme inspection failed: ${String(reason).replace(/FLOWCELL_THEME_(?:OUTCOME_UNKNOWN|NOT_STARTED):\s*/g, "")}`); }
+    finally { if (generation === inspection.current) setOperation(null); }
   };
   const colors = selected ? [...new Set(JSON.stringify(selected.theme ?? selected.legacy).match(/#[0-9a-f]{6}(?:[0-9a-f]{2})?\b/gi) ?? [])].slice(0, 12) : [];
   const thumbnail = portableThemeThumbnail(selected?.portable);
   return <div className="theme-library-backdrop">
     <section className="theme-library-dialog" role="dialog" aria-modal="true" aria-label={mode === "import" ? "Import Theme" : "Open Theme"}>
-      <header><h2>{mode === "import" ? "Import Theme" : "Open Theme"}</h2><button type="button" onClick={onClose} disabled={pending}>Close</button></header>
+      <header><h2>{mode === "import" ? "Import Theme" : "Open Theme"}</h2><button type="button" onClick={() => {
+        inspection.current += 1;
+        onClose();
+      }} disabled={operation === "applying"}>Close</button></header>
       <p>{target.kind === "program" ? target.programName : "Main"} themes</p>
       <div className="theme-library-columns">
         <div className="theme-library-list">
@@ -94,14 +99,15 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
             {requirements.length > 0 && <><p>Tools to install when you apply:</p><ul>{requirements.map((item) => <li key={item}>{item}</li>)}</ul></>}
             {issues.length > 0 && <><p>Resolve these requirements before applying:</p><ul>{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></>}
           </> : <p>Select a theme to preview its colors, included settings, and required tools.</p>}
+          {operation && <p role="status">{operation === "applying" ? "Applying theme and saving settings…" : "Checking theme settings and requirements…"}</p>}
           {error && <p role="alert">{error}</p>}
         </div>
       </div>
       <footer><button type="button" disabled={pending || !selected || issues.length > 0} onClick={() => {
         if (!selected) return;
-        setPending(true); setError("");
-        void onApply(selected).then(onClose).catch((reason) => setError(String(reason))).finally(() => setPending(false));
-      }}>{pending ? "Checking…" : "Apply Theme"}</button></footer>
+        setOperation("applying"); setError("");
+        void onApply(selected).then(onClose).catch((reason) => setError(`Theme apply failed: ${String(reason).replace(/FLOWCELL_THEME_(?:OUTCOME_UNKNOWN|NOT_STARTED):\s*/g, "")}`)).finally(() => setOperation(null));
+      }}>{operation === "applying" ? "Applying…" : operation === "inspecting" ? "Checking…" : "Apply Theme"}</button></footer>
     </section>
   </div>;
 }

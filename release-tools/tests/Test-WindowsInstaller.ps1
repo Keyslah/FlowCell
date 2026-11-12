@@ -67,9 +67,18 @@ function Launch-And-Check([string]$expectedLocal) {
     if(-not (Test-Path -LiteralPath (Join-Path $windowsCatalog 'flowcell.program.json') -PathType Leaf)){throw 'Installer is missing its mandatory Windows program catalog.'}
     if(-not (Test-Path -LiteralPath (Join-Path $windowsCatalog 'Windows Git Scripts') -PathType Container)){throw 'Installer is missing its Windows tools.'}
     foreach($mutable in @('Panels','Windows Local Scripts','flowcell.install.json')){if(Test-Path -LiteralPath (Join-Path $windowsCatalog $mutable)){throw "Mutable user state bundled with Windows: $mutable"}}
-    # The required first-launch chooser owns panel selection and registration.
-    # This unattended smoke test does not claim completion of that interactive UI.
-    if(-not (Test-Path -LiteralPath (Join-Path $expectedLocal 'bindings.ini'))){throw 'Bindings were not written to the resolved local root.'}
+    # First launch applies the installer defaults without an interactive chooser.
+    # Wait for its committed receipt before stopping the UI or testing an upgrade.
+    $windowsReceipt=Join-Path $expectedLocal 'program-setup-status/77696e646f7773.json'
+    $setupDeadline=[DateTime]::UtcNow.AddSeconds(90)
+    while(-not (Test-Path -LiteralPath $windowsReceipt -PathType Leaf) -and [DateTime]::UtcNow -lt $setupDeadline){Start-Sleep -Milliseconds 400}
+    if(-not (Test-Path -LiteralPath $windowsReceipt -PathType Leaf)){throw 'Automatic Windows setup did not commit within 90 seconds. Review windows-setup.log and program-setup.log.'}
+    $setupStatus=Get-Content -LiteralPath $windowsReceipt -Raw|ConvertFrom-Json
+    if($setupStatus.result.programName -cne 'Windows' -or $setupStatus.result.status -cne 'ready' -or -not $setupStatus.committedTransaction.transactionToken){throw 'Automatic Windows setup did not save a ready transaction receipt.'}
+    $bindingsPath=Join-Path $expectedLocal 'bindings.ini'
+    if(-not (Test-Path -LiteralPath $bindingsPath -PathType Leaf)){throw 'Bindings were not written to the resolved local root.'}
+    if([IO.File]::ReadAllText($bindingsPath) -notmatch '(?im)^NormalizedName=windows\s*$'){throw 'Automatic Windows setup did not register Windows.'}
+    foreach($panel in @('Startup','Files','Utility')){if(-not (Test-Path -LiteralPath (Join-Path $expectedLocal ('Programs/Windows/Panels/'+$panel)) -PathType Container)){throw "Automatic Windows setup is missing its default $panel panel."}}
     foreach($forbidden in @('Programs','local','flowcellbackend/local')){if(Test-Path -LiteralPath (Join-Path $install $forbidden)){throw "Writable data appeared inside installation: $forbidden"}}
     foreach($forbidden in @('panels','scripts')){if(Test-Path -LiteralPath (Join-Path $expectedLocal $forbidden)){throw "Global mutable folder created: $forbidden"}}
     Stop-SmokeApp
@@ -107,4 +116,4 @@ if(Test-Path -LiteralPath $startupPath){throw 'Owned startup shortcut remained a
 if(Test-Path -LiteralPath $togglePath){throw 'Owned desktop toggle remained after uninstall.'}
 $remainingPointer=Get-ItemProperty -LiteralPath 'HKCU:\Software\FlowCell' -ErrorAction SilentlyContinue
 if($remainingPointer -and $remainingPointer.PSObject.Properties['InstalledResourceRoot'] -and $remainingPointer.InstalledResourceRoot -eq $install){throw 'Owned installed resource pointer remained after uninstall.'}
-Write-Output 'PASS: installer/startup backend and default desktop toggle, fresh Start Menu launch, backend persistence after UI closes, unrelated cwd, spaces, physical config over inherited environment, upgrade/uninstall user-data preservation and owned shortcut removal.'
+Write-Output 'PASS: installer/startup backend and default desktop toggle, automatic Windows panel setup, fresh Start Menu launch, backend persistence after UI closes, unrelated cwd, spaces, physical config over inherited environment, upgrade/uninstall user-data preservation and owned shortcut removal.'

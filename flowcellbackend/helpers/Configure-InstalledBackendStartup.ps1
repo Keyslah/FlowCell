@@ -2,8 +2,8 @@
 Purpose: Register the installed background backend at Windows sign-in independently of the UI.
 Context: Per-user installer hooks. The installed launcher supplies explicit role and paths.
 Inputs: ResourceRoot; LocalRoot for first registration; fixture startup, desktop and registry paths.
-Changes: Startup/optional desktop shortcuts, installed registry pointer, first-use config and preserved legacy migration.
-Constraints: No user settings or program panels are changed; a different installation's shortcut is preserved.
+Changes: Startup/optional desktop shortcuts, installed registry pointer, first-use config/panel choices and preserved legacy migration.
+Constraints: Existing panel choices/user settings are preserved; native setup installs the selected panels on first launch.
 #>
 [CmdletBinding()]
 param(
@@ -12,6 +12,8 @@ param(
     [string]$StartupDirectory = [Environment]::GetFolderPath('Startup'),
     [string]$DesktopDirectory = [Environment]::GetFolderPath('Desktop'),
     [ValidateSet('Install','Skip')][string]$DesktopToggle = 'Install',
+    [ValidateSet('Install','Skip')][string]$WindowsFiles = 'Install',
+    [ValidateSet('Install','Skip')][string]$WindowsUtility = 'Install',
     [string]$RegistryPath = 'HKCU:\Software\FlowCell',
     [string]$LocalRoot,
     [switch]$Start
@@ -62,6 +64,29 @@ if (-not (Test-Path -LiteralPath $runtimeConfig -PathType Leaf)) {
     @{ localRoot = $physicalLocalRoot } | ConvertTo-Json | Set-Content -LiteralPath $runtimeConfig -Encoding UTF8
 }
 . (Join-Path $root 'flowcellbackend\helpers\FlowCellPaths.ps1')
+$defaultsRoot = Join-Path $FlowCellLocalRoot 'installation-defaults'
+$panelChoices = Join-Path $defaultsRoot 'windows-panels.json'
+$windowsReceipt = Join-Path $FlowCellLocalRoot 'program-setup-status\77696e646f7773.json'
+$windowsCompleted = Join-Path $defaultsRoot 'windows.json'
+$bindingsPath = Join-Path $FlowCellLocalRoot 'bindings.ini'
+$windowsRegistered = (Test-Path -LiteralPath $bindingsPath -PathType Leaf) -and
+    ([IO.File]::ReadAllText($bindingsPath) -match '(?im)^NormalizedName=windows\s*$')
+if (-not $windowsRegistered -and -not (Test-Path -LiteralPath $windowsReceipt) -and
+    -not (Test-Path -LiteralPath $windowsCompleted) -and -not (Test-Path -LiteralPath $panelChoices)) {
+    $panels = @('Startup')
+    if ($WindowsFiles -eq 'Install') { $panels += 'Files' }
+    if ($WindowsUtility -eq 'Install') { $panels += 'Utility' }
+    [IO.Directory]::CreateDirectory($defaultsRoot) | Out-Null
+    $json = @{ schemaVersion = 1; selectedPanels = @($panels) } | ConvertTo-Json
+    $pendingChoices = Join-Path $defaultsRoot ('windows-panels-' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        [IO.File]::WriteAllText($pendingChoices, $json, (New-Object Text.UTF8Encoding($false)))
+        # Same-directory rename publishes complete JSON without replacing an existing choice.
+        [IO.File]::Move($pendingChoices, $panelChoices)
+    } finally {
+        if (Test-Path -LiteralPath $pendingChoices -PathType Leaf) { Remove-Item -LiteralPath $pendingChoices -Force }
+    }
+}
 $legacyToggleRoots = @((Join-Path $FlowCellLocalRoot 'autohotkey-toggle'), $toggleDirectory)
 if (Test-Path -LiteralPath $toggleShortcutPath -PathType Leaf) {
     $previousToggle = $shell.CreateShortcut($toggleShortcutPath)

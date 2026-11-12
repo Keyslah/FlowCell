@@ -39,6 +39,11 @@ $registrationArguments = @{ ResourceRoot = $root; StartupDirectory = $startup; D
 $local = Join-Path $root 'Physical User Data'
 $launcher = Join-Path $helpers 'Start-FlowCellBackend.ps1'
 $register = Join-Path $helpers 'Configure-InstalledBackendStartup.ps1'
+$script:panelChecks = 0
+function Assert-PanelChoice([bool]$Condition, [string]$Message) {
+    if (-not $Condition) { throw $Message }
+    $script:panelChecks++
+}
 try {
     # Tauri saves its remembered destination in a child of the background
     # registration key. Recreating that parent with -Force erases the child.
@@ -87,6 +92,9 @@ try {
     $config = Join-Path $root 'flowcell.runtime.json'
     $firstConfig = [IO.File]::ReadAllText($config)
     if (($firstConfig | ConvertFrom-Json).localRoot -ne $local) { throw 'First registration did not persist the physical local root.' }
+    $defaultPanelChoice = Join-Path $local 'installation-defaults/windows-panels.json'
+    $defaultPanels = [IO.File]::ReadAllText($defaultPanelChoice) | ConvertFrom-Json
+    Assert-PanelChoice (($defaultPanels.selectedPanels -join '|') -ceq 'Startup|Files|Utility') 'Default registration did not select mandatory Startup and both optional Windows panels.'
     if (Test-Path -LiteralPath $legacyStartupPath) { throw 'Recognized legacy startup entry still launches a competing backend.' }
     $legacyBackup = @(Get-ChildItem -LiteralPath (Join-Path $local 'backups/startup-migration') -Filter 'FlowCell Hotkeys Startup.vbs' -File -Recurse)
     if ($legacyBackup.Count -ne 1 -or [Convert]::ToBase64String([IO.File]::ReadAllBytes($legacyBackup[0].FullName)) -ne [Convert]::ToBase64String($legacyBytes)) { throw 'Legacy startup bytes were not preserved in the installed data backup.' }
@@ -171,7 +179,46 @@ if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'simulate-start-failure')) {
     if ([IO.File]::ReadAllText($config) -ne $firstConfig) { throw 'Startup removal modified data configuration.' }
     $hooks = [IO.File]::ReadAllText((Join-Path $repo 'release-tools/installer-hooks.nsh'))
     if ($hooks -notmatch '\$\{NSD_Check\} \$FlowCellToggleCheckbox' -or $hooks -notmatch 'StrCpy \$1 "Install"' -or $hooks -notmatch '\-DesktopToggle \$1') { throw 'Installer desktop toggle option is not checked by default for UI and silent installation.' }
-    Write-Output 'PASS: role/root isolation, startup logon registration, default desktop toggle and opt-out, installed icons, no implicit program/panel creation or deleted Startup resurrection, existing panel and settings preservation, ordinary upgrade launch, reported startup failure, legacy migration and scoped uninstall removal.'
+    Assert-PanelChoice ($hooks -match '\$\{NSD_Check\} \$FlowCellStartupCheckbox' -and $hooks -match 'EnableWindow \$FlowCellStartupCheckbox 0') 'Installer Startup panel is not checked and mandatory.'
+    Assert-PanelChoice ($hooks -match '\$\{NSD_GetState\} \$FlowCellFilesCheckbox \$FlowCellFilesSelection' -and $hooks -match '\$\{NSD_GetState\} \$FlowCellUtilityCheckbox \$FlowCellUtilitySelection' -and $hooks -match '\-WindowsFiles \$2 \-WindowsUtility \$3') 'Installer panel checkbox choices are not passed to registration.'
+    try {
+        foreach ($files in @('Install','Skip')) {
+            foreach ($utility in @('Install','Skip')) {
+                $caseRoot = Join-Path $root ("Panel choices $files $utility")
+                [IO.Directory]::CreateDirectory($caseRoot) | Out-Null
+                @{localRoot=$caseRoot} | ConvertTo-Json | Set-Content -LiteralPath $config -Encoding UTF8
+                & $register @registrationArguments -WindowsFiles $files -WindowsUtility $utility -DesktopToggle Skip
+                $choicePath = Join-Path $caseRoot 'installation-defaults/windows-panels.json'
+                $bytes = [IO.File]::ReadAllBytes($choicePath)
+                $choice = [IO.File]::ReadAllText($choicePath) | ConvertFrom-Json
+                $expected = @('Startup')
+                if ($files -eq 'Install') { $expected += 'Files' }
+                if ($utility -eq 'Install') { $expected += 'Utility' }
+                Assert-PanelChoice ($choice.schemaVersion -eq 1) "Panel choice schema is invalid for $files/$utility."
+                Assert-PanelChoice (($choice.selectedPanels -join '|') -ceq ($expected -join '|')) "Checkbox selection was not preserved, including mandatory Startup, for $files/$utility."
+                Assert-PanelChoice (-not ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191)) "Installer panel JSON has a UTF-8 BOM for $files/$utility."
+                & $register @registrationArguments -WindowsFiles $(if ($files -eq 'Install') {'Skip'} else {'Install'}) -WindowsUtility $(if ($utility -eq 'Install') {'Skip'} else {'Install'}) -DesktopToggle Skip
+                Assert-PanelChoice ([Convert]::ToBase64String([IO.File]::ReadAllBytes($choicePath)) -ceq [Convert]::ToBase64String($bytes)) "Upgrade overwrote established panel choices for $files/$utility."
+            }
+        }
+        foreach ($completed in @('registration','receipt','marker')) {
+            $caseRoot = Join-Path $root ("Existing Windows $completed")
+            [IO.Directory]::CreateDirectory($caseRoot) | Out-Null
+            @{localRoot=$caseRoot} | ConvertTo-Json | Set-Content -LiteralPath $config -Encoding UTF8
+            if ($completed -eq 'registration') {
+                [IO.File]::WriteAllText((Join-Path $caseRoot 'bindings.ini'), "[ProgramTab_2]`r`nLabel=Windows`r`nNormalizedName=windows`r`n")
+            } elseif ($completed -eq 'receipt') {
+                [IO.Directory]::CreateDirectory((Join-Path $caseRoot 'program-setup-status')) | Out-Null
+                [IO.File]::WriteAllText((Join-Path $caseRoot 'program-setup-status/77696e646f7773.json'), '{"programName":"Windows","status":"ready"}')
+            } else {
+                [IO.Directory]::CreateDirectory((Join-Path $caseRoot 'installation-defaults')) | Out-Null
+                [IO.File]::WriteAllText((Join-Path $caseRoot 'installation-defaults/windows.json'), '{"schemaVersion":1,"programName":"Windows"}')
+            }
+            & $register @registrationArguments -WindowsFiles Skip -WindowsUtility Skip -DesktopToggle Skip
+            Assert-PanelChoice (-not (Test-Path -LiteralPath (Join-Path $caseRoot 'installation-defaults/windows-panels.json'))) "Upgrade created pending panel choices despite existing Windows $completed."
+        }
+    } finally { [IO.File]::WriteAllText($config, $firstConfig) }
+    Write-Output "PASS: $script:panelChecks Windows installer panel checks; role/root isolation, startup logon registration, default desktop toggle and opt-out, installed icons, no implicit program/panel creation or deleted Startup resurrection, existing panel and settings preservation, ordinary upgrade launch, reported startup failure, legacy migration and scoped uninstall removal."
 } finally {
     foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key,$saved[$key]) }
     if (Test-Path -LiteralPath $registry) { Remove-Item -LiteralPath $registry -Recurse }

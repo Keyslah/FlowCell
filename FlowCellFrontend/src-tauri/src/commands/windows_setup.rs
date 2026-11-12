@@ -1,5 +1,5 @@
-//! The Windows catalog is bundled with Core. Main offers its panel choices once;
-//! the ordinary managed-program transaction owns registration and Button creation.
+//! The Windows catalog is bundled with Core. Installer panel choices feed the
+//! ordinary managed-program transaction on the first launch.
 use crate::*;
 use super::program_packages::{plain_path, seed_installed_windows_catalog};
 
@@ -109,28 +109,69 @@ fn windows_setup_required(local: &Path, registered: bool) -> Result<bool, String
     Ok(true)
 }
 
+fn apply_installer_panel_choices(
+    local: &Path,
+    panels: &mut [super::programs::ProgramSetupPanel],
+) -> Result<(), String> {
+    let choices = read_setup_json(&local.join("installation-defaults").join("windows-panels.json"))?;
+    let selected = if let Some(choices) = choices {
+        if choices.get("schemaVersion").and_then(Value::as_u64) != Some(1) {
+            return Err("The installer Windows panel choices have an invalid schema.".into());
+        }
+        let selected = choices.get("selectedPanels").and_then(Value::as_array)
+            .ok_or("The installer Windows panel choices are missing selectedPanels.")?;
+        let mut names = Vec::new();
+        for value in selected {
+            let name = value.as_str().ok_or("An installer Windows panel choice is invalid.")?;
+            if !matches!(name, "Startup" | "Files" | "Utility") {
+                return Err(format!("Unknown installer Windows panel choice: {name}."));
+            }
+            names.push(name.to_string());
+        }
+        Some(names)
+    } else { None };
+    if !panels.iter().any(|panel| panel.label == "Startup") {
+        return Err("The bundled Windows package is missing required Startup tools.".into());
+    }
+    for panel in panels {
+        panel.default_selected = panel.label == "Startup" || selected.as_ref()
+            .map_or(panel.default_selected, |selected| selected.contains(&panel.label));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) async fn get_windows_setup_requirement()
     -> Result<Option<super::programs::AvailableProgramPackage>, String>
 {
     let Some(resource) = super::filesystem::installed_resource_root() else { return Ok(None); };
     tauri::async_runtime::spawn_blocking(move || {
+        let started = std::time::Instant::now();
+        let stage = |name: &str| crate::append_flowcell_local_log("windows-setup.log",
+            &format!("{name}; elapsedMs={}", started.elapsed().as_millis()));
+        stage("Waiting for Windows setup lock");
         let _guard = WINDOWS_SETUP_LOCK.lock().map_err(|_| "Windows setup lock is unavailable.")?;
         let local = resolve_flowcell_local_root()?;
         {
+            stage("Checking Windows registration and completion receipt");
             let _bindings_guard = super::bindings::bindings_state_guard()?;
             let (_, bindings, _) = read_bindings_file_state()?;
             if !windows_setup_required(&local, find_registered_program(&bindings, "Windows").is_some())? {
+                stage("Existing Windows setup retained");
                 return Ok(None);
             }
         }
         let programs = super::programs::resolve_programs_root()?;
+        stage("Preparing bundled Windows catalog");
         seed_installed_windows_catalog(&resource, &programs)?;
+        stage("Validating Windows tools");
         let mut package = super::programs::validate_available_program_package("Windows")?;
+        apply_installer_panel_choices(&local, &mut package.panels)?;
         let explorer = env::var_os("SystemRoot").map(PathBuf::from)
             .ok_or("Windows SystemRoot is unavailable.")?.join("explorer.exe");
         if !explorer.is_file() { return Err("Windows Explorer could not be located for Windows setup.".into()); }
         package.suggested_executable = explorer.to_string_lossy().into_owned();
+        stage("Windows installer choices ready");
         Ok(Some(package))
     }).await.map_err(|error| format!("Windows setup inspection did not finish: {error}"))?
 }
@@ -150,6 +191,77 @@ mod tests {
         let directory = root.join("program-setup-status");
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join(WINDOWS_RECEIPT), serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+
+    fn setup_panels() -> Vec<super::super::programs::ProgramSetupPanel> {
+        ["Files", "Utility", "Startup"].into_iter().map(|label| super::super::programs::ProgramSetupPanel {
+            id: label.to_ascii_lowercase(), label: label.to_string(), default_selected: true,
+        }).collect()
+    }
+
+    fn panel_choices(root: &Path, value: Value) {
+        let directory = root.join("installation-defaults");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("windows-panels.json"), serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn installer_choices_select_optional_panels_and_always_require_startup() {
+        let root = fixture();
+        for (selected, expected) in [
+            (vec![], vec!["Startup"]),
+            (vec!["Files"], vec!["Files", "Startup"]),
+            (vec!["Utility"], vec!["Utility", "Startup"]),
+            (vec!["Startup", "Files", "Utility"], vec!["Files", "Utility", "Startup"]),
+        ] {
+            panel_choices(&root, json!({"schemaVersion":1,"selectedPanels":selected}));
+            let mut panels = setup_panels();
+            apply_installer_panel_choices(&root, &mut panels).unwrap();
+            assert_eq!(panels.iter().filter(|panel| panel.default_selected).map(|panel| panel.label.as_str()).collect::<Vec<_>>(), expected);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn absent_installer_choices_keep_package_defaults_and_require_startup() {
+        let root = fixture();
+        let mut panels = setup_panels();
+        panels[1].default_selected = false;
+        panels[2].default_selected = false;
+        apply_installer_panel_choices(&root, &mut panels).unwrap();
+        assert!(panels[0].default_selected);
+        assert!(!panels[1].default_selected);
+        assert!(panels[2].default_selected);
+        assert!(apply_installer_panel_choices(&root, &mut panels[..2]).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn malformed_installer_choices_fail_without_silently_selecting_tools() {
+        let root = fixture();
+        for choices in [
+            json!({"schemaVersion":2,"selectedPanels":[]}),
+            json!({"schemaVersion":1,"selectedPanels":["Unknown"]}),
+            json!({"schemaVersion":1,"selectedPanels":[false]}),
+            json!({"schemaVersion":1}),
+        ] {
+            panel_choices(&root, choices);
+            assert!(apply_installer_panel_choices(&root, &mut setup_panels()).is_err());
+        }
+        fs::write(root.join("installation-defaults/windows-panels.json"), "not JSON").unwrap();
+        assert!(apply_installer_panel_choices(&root, &mut setup_panels()).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn completed_or_registered_windows_does_not_consult_stale_installer_choices() {
+        let root = fixture();
+        panel_choices(&root, json!({"schemaVersion":999,"selectedPanels":["Invalid"]}));
+        assert!(!windows_setup_required(&root, true).unwrap());
+        assert!(!windows_setup_required(&root, false).unwrap());
+        receipt(&root, json!({"result":{"programName":"Windows","status":"ready"}}));
+        assert!(!windows_setup_required(&root, false).unwrap());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -95,7 +95,7 @@ import { resolveProgramPopoutThemeOverride } from "../../theme/programPopoutThem
 import { resolveButtonPlacementPresentation } from "../../button/state/buttonPresentation.js";
 import { openButtonEditorWindow } from "../../button/windows/buttonWindows.js";
 import { getThemeToolDescriptors, preparePortableThemeImport } from "../../theme/portableThemeService.js";
-import ThemeContribution, { reviewThemeContribution, type ThemeContributionController } from "./ThemeContribution.js";
+import ThemeContribution, { isThemeHostNotStarted, isThemeHostOutcomeUnknown, reviewThemeContribution, type CapturedThemeContribution, type ThemeContributionController } from "./ThemeContribution.js";
 import PoppedButtonColorsPage, { type PoppedButtonColorsController } from "./PoppedButtonColorsPage.js";
 import ThemeLibraryDialog from "./ThemeLibraryDialog.js";
 import "./themeEditorPage.css";
@@ -175,7 +175,8 @@ function gradientRoleLabel(role: string): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return (error instanceof Error ? error.message : String(error))
+    .replace(/FLOWCELL_THEME_(?:OUTCOME_UNKNOWN|NOT_STARTED):\s*/g, "");
 }
 
 function stableJson(value: unknown): string {
@@ -928,11 +929,13 @@ export default function ThemeEditorPage({
       keepLocalSkinMetadata: localApply });
   };
 
-  const updateContributionSelection = async (theme: PortableTheme, path: string) => {
+  const updateContributionSelection = async (theme: PortableTheme, path: string, snapshot?: {
+    document: ButtonStateDocument; descriptors: readonly ThemeToolDescriptor[];
+  }) => {
     const controls = contribution.current ?? poppedColors.current;
     if (!controls || target.kind !== "program") return;
-    const document = await loadButtonStateDocument();
-    const plan = planPortableThemeImport(document, theme, target, await getThemeToolDescriptors(target));
+    const document = snapshot?.document ?? await loadButtonStateDocument();
+    const plan = planPortableThemeImport(document, theme, target, snapshot?.descriptors ?? await getThemeToolDescriptors(target));
     const appearance = theme.programAppearance;
     const placements = appearance ? Object.entries(plan.placementIds).map(([savedId, placementId]) => ({
       placementId, buttonId: document.placements[placementId].buttonId,
@@ -945,14 +948,17 @@ export default function ThemeEditorPage({
       ...(appearance ? { buttonAppearance: { version: 1, placements } as unknown as JsonValue } : {}) });
   };
 
-  const commitCompleteTheme = async (theme: PortableTheme) => {
+  const commitCompleteTheme = async (theme: PortableTheme, snapshot?: {
+    previousContribution: CapturedThemeContribution;
+    document: ButtonStateDocument; descriptors: readonly ThemeToolDescriptor[];
+  }) => {
     const extensions = Object.values(theme.contributions);
     const controller = contribution.current;
     const controls = controller ?? poppedColors.current;
     if (extensions.length > 1 || extensions.some((entry) => entry.sourceId !== controller?.sourceId)) {
       throw new Error("The selected program's required theme contribution is unavailable or incompatible.");
     }
-    const previous = extensions.length ? await controller!.capture() : null;
+    const previous = extensions.length ? snapshot?.previousContribution ?? await controller!.capture() : null;
     if (previous && extensions.some((entry) => entry.sourceVersion && previous.sourceVersion !== entry.sourceVersion)) {
       throw new Error(`The theme requires program contribution version ${extensions[0].sourceVersion}; installed version is ${previous.sourceVersion ?? "unknown"}.`);
     }
@@ -966,7 +972,8 @@ export default function ThemeEditorPage({
     });
     const appliedTheme = structuredClone(theme);
     if (controls && await controls.preservePoppedAppearance()) delete appliedTheme.programAppearance;
-    const prepared = await preparePortableThemeImport({ theme: appliedTheme, target, extraDescriptors: stagedSources.descriptors })
+    const prepared = await preparePortableThemeImport({ theme: appliedTheme, target, extraDescriptors: stagedSources.descriptors,
+      ...(snapshot ? { document: snapshot.document, descriptors: snapshot.descriptors } : {}) })
       .catch(async (error) => {
         if (stagedSources.token) await invoke("finish_theme_archive_sources", { token: stagedSources.token });
         throw error;
@@ -996,7 +1003,9 @@ export default function ThemeEditorPage({
       if (pageChanged && previousPage) {
         try { await writeAuthorizedThemePageAppearance(previousPage); } catch (failure) { recoveryErrors.push(errorMessage(failure)); }
       }
-      if (hostChanged && previous) {
+      if (hostChanged && isThemeHostOutcomeUnknown(error)) {
+        recoveryErrors.push("The program may already have changed. Refresh its Theme controls and verify its live state before retrying; automatic host restore was skipped because the result is unknown.");
+      } else if (hostChanged && previous && !isThemeHostNotStarted(error)) {
         try { await controller!.apply(previous.state); }
         catch (restoreError) { recoveryErrors.push(`Previous program settings could not be restored: ${errorMessage(restoreError)}`); }
       }
@@ -1150,25 +1159,27 @@ export default function ThemeEditorPage({
       const legacy = await contribution.current.loadLegacy(loaded.path, loaded.legacy);
       await contribution.current.validate(legacy.state);
       const previous = await contribution.current.capture();
-      const latest = await loadButtonStateDocument();
+      const [latest, descriptors] = await Promise.all([loadButtonStateDocument(), getThemeToolDescriptors(target)]);
       const { document: next, skippedMissingPlacementCount } = applyLegacyProgramAppearance(
-        latest, target, legacy.buttonSettings, legacy.buttonAppearance, await getThemeToolDescriptors(target)
+        latest, target, legacy.buttonSettings, legacy.buttonAppearance, descriptors
       );
       if (skippedMissingPlacementCount > 0) {
         warnings.push(`Skipped ${skippedMissingPlacementCount} legacy Button appearance ${skippedMissingPlacementCount === 1 ? "override" : "overrides"} for missing placements.`);
       }
-      const state = { ...previous.state, ...legacy.state,
-        fields: { ...(previous.state.fields as object), ...(legacy.state.fields as object) } };
+      // Omitted legacy settings must stay omitted: field presence drives host actions.
+      const state = { ...previous.state, ...legacy.state, fields: { ...(legacy.state.fields as object) } };
       const complete = capturePortableTheme({ document: next, target, name, id: await legacyThemeIdentity(loaded.legacy),
-        descriptors: await getThemeToolDescriptors(target),
+        descriptors,
         contributions: { [previous.sourceId]: { ...previous, state } } });
       if (importCopy) {
         const root = await invoke<string>("get_flowcell_theme_directory", { programName: target.kind === "program" ? target.programName : null });
         path = await savePortableTheme(complete, `${root}/${importedThemeFileName(complete)}`) ?? path;
         id = complete.id;
       }
-      warnings.push(...(await commitCompleteTheme(complete)).warnings);
-      await updateContributionSelection(complete, path).catch((error) => warnings.push(`Selected theme controls could not update: ${errorMessage(error)}`));
+      const committed = await commitCompleteTheme(complete, { previousContribution: previous, document: latest, descriptors });
+      warnings.push(...committed.warnings);
+      await updateContributionSelection(complete, path, { document: committed.saved, descriptors })
+        .catch((error) => warnings.push(`Selected theme controls could not update: ${errorMessage(error)}`));
     }
     rememberTheme({ id, path, name });
     setStatus(`Applied theme: ${path}${warningSuffix(warnings)}`);

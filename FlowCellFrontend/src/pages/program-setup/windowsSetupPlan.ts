@@ -8,7 +8,7 @@ export function buildWindowsSetupPlan(
     throw new Error("Windows setup received a different program package.");
   }
   const selectedPanels = program.panels
-    .filter((panel) => selectedPanelNames.has(panel.label))
+    .filter((panel) => panel.label === "Startup" || selectedPanelNames.has(panel.label))
     .map((panel) => panel.label);
   const selectedSources = program.sources
     .filter((source) => selectedPanels.includes(source.panelName) && (source.defaultSelected || source.required))

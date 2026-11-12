@@ -1,32 +1,46 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  getWindowsSetupRequirement,
-  type AvailableProgramPackage
-} from "../../lib/programRails";
-import AddProgramWindowPage from "./AddProgramWindowPage";
+import { listen } from "@tauri-apps/api/event";
+import { getWindowsSetupRequirement } from "../../lib/programRails";
+import { applyManagedProgramPlan } from "./applyManagedProgramPlan";
+import { buildWindowsSetupPlan } from "./windowsSetupPlan";
 import "./programSetup.css";
 
-export default function WindowsSetup({ onComplete }: { onComplete: () => void }) {
-  const [program, setProgram] = useState<AvailableProgramPackage | null>(null);
+export default function WindowsSetup({ onComplete, onStartupReady }: { onComplete: () => void; onStartupReady: () => void }) {
   const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState("Preparing Windows tools…");
   const [error, setError] = useState("");
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const runningRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
+  const onStartupReadyRef = useRef(onStartupReady);
+  onStartupReadyRef.current = onStartupReady;
 
   const checkRequirement = useCallback(async () => {
+    if (runningRef.current) return;
+    runningRef.current = true;
     setLoading(true);
+    setStatus("Preparing Windows tools…");
     setError("");
+    // Keep the same native request alive. Slow setup must not hold Main's
+    // startup/layout restoration or let Retry start a second native operation.
+    const waitingTimer = window.setTimeout(() => {
+      setStatus("Windows tools are taking longer than expected. You can keep using FlowCell.");
+      onStartupReadyRef.current();
+    }, 10_000);
     try {
-      const required = await getWindowsSetupRequirement();
-      if (!required) {
-        onCompleteRef.current();
-        return;
+      const program = await getWindowsSetupRequirement();
+      if (program) {
+        const selectedPanels = new Set(program.panels.filter((panel) => panel.defaultSelected).map((panel) => panel.label));
+        setStatus("Installing Windows tools selected in the installer…");
+        await applyManagedProgramPlan(buildWindowsSetupPlan(program, selectedPanels), undefined, setStatus);
       }
-      setProgram(required);
+      onCompleteRef.current();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
+      onStartupReadyRef.current();
     } finally {
+      window.clearTimeout(waitingTimer);
+      runningRef.current = false;
       setLoading(false);
     }
   }, []);
@@ -34,25 +48,16 @@ export default function WindowsSetup({ onComplete }: { onComplete: () => void })
   useEffect(() => { void checkRequirement(); }, [checkRequirement]);
 
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
-    return () => { dialog?.close(); };
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<{ programName: string; stage: string }>("flowcell:program-setup-progress", ({ payload }) => {
+      if (!disposed && runningRef.current && payload.programName === "Windows") setStatus(payload.stage);
+    }).then((stop) => { if (disposed) stop(); else unlisten = stop; }).catch(() => {});
+    return () => { disposed = true; unlisten?.(); };
   }, []);
 
-  return <dialog
-    ref={dialogRef}
-    className="program-setup--dialog windows-setup"
-    aria-labelledby="program-installation-title"
-    onCancel={(event) => event.preventDefault()}
-  >
-    {program ? <AddProgramWindowPage requiredWindowsProgram={program} onWindowsComplete={() => onCompleteRef.current()} />
-      : <main className="program-setup program-setup--install">
-        <header className="program-setup__header"><h1 id="program-installation-title">Installation</h1></header>
-        <div className="program-setup__content">
-          {loading ? <p role="status">Checking Windows setup…</p> : null}
-          {error ? <p className="windows-setup__error" role="alert">{error}</p> : null}
-        </div>
-        <footer className="program-setup__footer"><button type="button" disabled={loading} onClick={() => void checkRequirement()}>Retry</button></footer>
-      </main>}
-  </dialog>;
+  return <aside className="windows-setup-status" aria-label="Windows tools setup">
+    <p role={error ? "alert" : "status"}>{error ? `Windows tools setup failed: ${error}` : status}</p>
+    {error ? <button type="button" disabled={loading} onClick={() => void checkRequirement()}>Retry Windows setup</button> : null}
+  </aside>;
 }

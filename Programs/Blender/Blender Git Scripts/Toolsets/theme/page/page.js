@@ -3107,51 +3107,41 @@
       render();
       if (operation === "stage") return null;
       setBusy(true);
-      const desiredTheme = themePayload();
-      const desiredPicture = pickFields(Object.values(config.payloadMaps.picture));
-      const desiredEnvironmentValues = pickFields(config.environment.valueFields.map((item) => item.fieldId));
       try {
         const hasEnvironmentPath = Object.hasOwn(fields, config.environment.pathFieldId);
         const environmentPath = String(model.fields[config.environment.pathFieldId] || "").trim();
         const clearsEnvironment = hasEnvironmentPath && !environmentPath;
+        const bundle = {};
+        const environment = {};
+        if (hasEnvironmentPath) environment.hdri_path = environmentPath;
+        for (const item of config.environment.valueFields) {
+          // Empty HDRI settings remain staged without loading a default image.
+          if (!clearsEnvironment && Object.hasOwn(fields, item.fieldId)) {
+            environment[item.payloadKey] = model.fields[item.fieldId];
+          }
+        }
+        if (Object.keys(environment).length) bundle.environment = environment;
         // Clearing Blender's world also removes its picture overlay. Restore the
         // selected picture/grid afterwards, before Theme Apply records startup state.
-        if (hasEnvironmentPath) {
-          applyResponsePatch(await pageApi.request(environmentPath ? actions.environment.apply : actions.environment.clear,
-            environmentPath ? { hdri_path: environmentPath } : {}));
-        }
-        for (const item of config.environment.valueFields) {
-          // With an explicitly empty HDRI, these integration commands would load
-          // Blender's default image. Retain their staged values without doing that.
-          if (!clearsEnvironment && Object.hasOwn(fields, item.fieldId)) {
-            applyResponsePatch(await pageApi.request(item.actionId, { [item.payloadKey]: desiredEnvironmentValues[item.fieldId] }));
-          }
-          model.fields[item.fieldId] = desiredEnvironmentValues[item.fieldId];
-        }
         if (Object.hasOwn(fields, config.picture.pathFieldId) || clearsEnvironment) {
-          patchFields(desiredPicture, false);
-          if (model.fields[config.picture.pathFieldId]) {
-            applyResponsePatch(await pageApi.request(actions.picture.apply, picturePayload()));
-          } else {
-            applyResponsePatch(await pageApi.request(actions.picture.clear, {}));
-            patchFields(desiredPicture, false);
-            const gridEnabled = model.fields[config.picture.enabledFieldId];
-            applyResponsePatch(await pageApi.request(gridEnabled ? actions.picture.grid : actions.picture.removeGrid,
-              gridEnabled ? picturePayload() : {}));
-          }
+          bundle.picture = { mode: "replace", ...picturePayload() };
         } else if ([...config.picture.gridFieldIds, config.picture.enabledFieldId].some((id) => Object.hasOwn(fields, id))) {
-          applyResponsePatch(await pageApi.request(model.fields[config.picture.enabledFieldId] ? actions.picture.grid : actions.picture.removeGrid,
-            model.fields[config.picture.enabledFieldId] ? picturePayload() : {}));
+          bundle.picture = { mode: "grid", ...picturePayload() };
         }
         if (Object.values(config.payloadMaps.theme).some((id) => Object.hasOwn(fields, id))) {
-          applyResponsePatch(await pageApi.request(actions.theme.apply, desiredTheme));
+          bundle.theme = themePayload();
         }
+        if (Object.keys(bundle).length) await pageApi.request(actions.theme.applyBundle, bundle);
         schedulePersistence();
         return null;
       } catch (error) {
         window.clearTimeout(persistenceTimer);
-        model.fields = previousFields;
-        model.tone = previousTone;
+        if (String(error instanceof Error ? error.message : error).includes("FLOWCELL_THEME_OUTCOME_UNKNOWN:")) {
+          setStatus("The Blender Theme result could not be confirmed. Refresh Blender before retrying.", "error");
+        } else {
+          model.fields = previousFields;
+          model.tone = previousTone;
+        }
         render();
         throw error;
       } finally { setBusy(false); }

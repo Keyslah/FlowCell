@@ -120,7 +120,7 @@ test("explicit grid defaults retain neutral and custom placement sizes, height a
   ]);
   const surface = Object.values(document.surfaces).find((candidate) => candidate.kind === "panel");
   const [neutral, custom] = surface.placementIds.map((id) => document.placements[id]);
-  assert.equal(neutral.skinOverrideId, null);
+  neutral.skinOverrideId = null; // An existing occurrence can still explicitly inherit its neutral record.
   assert.equal(document.buttons[neutral.buttonId].defaultSkinId, DEFAULT_BUTTON_SKIN_ID);
   Object.assign(neutral, { x: 700, y: 320, width: 96, height: 37.294964,
     presentationOverride: { label: "orca" } });
