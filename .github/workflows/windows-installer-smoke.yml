@@ -11,7 +11,9 @@ on:
         required: true
         type: string
 permissions:
-  contents: read
+  # GitHub only exposes draft releases to tokens with repository push access.
+  # The workflow uses this permission solely to download the draft asset.
+  contents: write
 jobs:
   smoke:
     runs-on: windows-latest
