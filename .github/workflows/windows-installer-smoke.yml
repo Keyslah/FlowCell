@@ -1,0 +1,76 @@
+name: Validate prebuilt Windows installer
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag containing flowcellwindowsinstaller.zip
+        required: true
+        type: string
+      installer_sha256:
+        description: Expected SHA256 of flowcellwindowsinstaller.zip
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+      - name: Download and verify the exact release installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FLOWCELL_RELEASE_TAG: ${{ inputs.release_tag }}
+          FLOWCELL_INSTALLER_SHA256: ${{ inputs.installer_sha256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:FLOWCELL_INSTALLER_SHA256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Expected a 64-character installer ZIP SHA256.' }
+          $download = Join-Path $env:RUNNER_TEMP 'flowcell-installer-smoke'
+          New-Item -ItemType Directory -Path $download -Force | Out-Null
+          gh release download $env:FLOWCELL_RELEASE_TAG --repo $env:GH_REPO --pattern flowcellwindowsinstaller.zip --dir $download
+          if ($LASTEXITCODE -ne 0) { throw "Release asset download failed: $LASTEXITCODE" }
+          $zip = Join-Path $download 'flowcellwindowsinstaller.zip'
+          $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+          if ($actual -ine $env:FLOWCELL_INSTALLER_SHA256) { throw "Installer ZIP SHA256 mismatch: expected $env:FLOWCELL_INSTALLER_SHA256; received $actual" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            if ($archive.Entries.Count -ne 1 -or $archive.Entries[0].FullName -notmatch '^[^/\\]+-setup\.exe$' -or $archive.Entries[0].Length -lt 1000000) {
+              throw 'Installer ZIP must contain exactly one root-level setup executable of at least 1,000,000 bytes.'
+            }
+          } finally { $archive.Dispose() }
+          Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $download 'extracted')
+          Write-Output "Verified installer ZIP SHA256: $actual"
+          git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Could not identify the checked-out release source.' }
+      - name: Install, launch, upgrade, and uninstall the downloaded installer
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $diagnostics = Join-Path $env:RUNNER_TEMP 'flowcell-installer-smoke/diagnostics'
+          New-Item -ItemType Directory -Path $diagnostics -Force | Out-Null
+          Start-Transcript -Path (Join-Path $diagnostics 'installer-smoke.log') | Out-Null
+          try {
+            $installer = @(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'flowcell-installer-smoke/extracted') -File -Filter '*-setup.exe')
+            if ($installer.Count -ne 1) { throw "Expected one verified setup executable; found $($installer.Count)." }
+            & release-tools/tests/Test-WindowsInstaller.ps1 -Installer $installer[0].FullName
+          } finally {
+            Stop-Transcript | Out-Null
+            $installedLogs = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'FlowCell/local/logs'
+            if (Test-Path -LiteralPath $installedLogs -PathType Container) { Copy-Item -LiteralPath $installedLogs -Destination (Join-Path $diagnostics 'installed-logs') -Recurse }
+            $overrideLogs = Join-Path $env:RUNNER_TEMP 'Explicit Local Data With Spaces/logs'
+            if (Test-Path -LiteralPath $overrideLogs -PathType Container) { Copy-Item -LiteralPath $overrideLogs -Destination (Join-Path $diagnostics 'override-logs') -Recurse }
+          }
+      - name: Upload installer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-windows-installer-smoke
+          path: ${{ runner.temp }}/flowcell-installer-smoke/diagnostics/
+          if-no-files-found: ignore
+          retention-days: 14

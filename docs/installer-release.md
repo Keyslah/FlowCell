@@ -154,6 +154,18 @@ create a draft release for the exact tested tag, attach the complete ZIP set,
 verify downloaded bytes against `SHA256SUMS.txt`, then publish. Preserve older
 tags/releases and never move a release tag to fix a failed build.
 
+For an installer built locally with the saved theme library, attach the complete
+validated ZIP set and `SHA256SUMS.txt` to a draft release, then dispatch
+**Validate prebuilt Windows installer** with that release tag and the installer's
+ZIP SHA256. This workflow checks out the tag, downloads only
+`flowcellwindowsinstaller.zip`, verifies its exact hash and archive boundary, and
+runs the same install, Start Menu launch, backend, upgrade and uninstall smoke
+test on a disposable Windows runner. It does not rebuild packages or require the
+saved theme folder on that runner. Review the run and its
+`prebuilt-windows-installer-smoke` diagnostics before publishing. This process
+checks unattended installation and bootstrap; Windows panel choices and host-app
+interaction still require their separate regression and manual checks.
+
 Blender registration deploys its existing bridge/bootstrap and requires a Blender
 restart/reload. Fusion registration deploys its existing add-in; restart Fusion
 after add-in changes. Preserve package-specific Adobe setup notes. Restart
