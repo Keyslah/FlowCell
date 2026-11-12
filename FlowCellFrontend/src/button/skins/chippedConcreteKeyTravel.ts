@@ -129,6 +129,8 @@ export function mountChippedConcreteKeyTravel(
     }
   }
 
+  if (shadowRemoval) paint(0);
+
   function move(target: number) {
     if (motion) {
       const displayed = parseFloat(getComputedStyle(core).getPropertyValue(FRAME));
