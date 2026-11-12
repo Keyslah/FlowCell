@@ -3,6 +3,10 @@
 The Windows installer release contains `flowcellwindowsinstaller.zip` and one
 `FlowCell-<Program>.zip` for every tracked `Programs/*/flowcell.program.json`.
 Current packages are Blender, Fresco, Fusion 360, Illustrator, Krita and Windows.
+For a Windows Core and Blender-only release, run
+`release-tools/build-installer.ps1 -ProgramNames Blender -OutputDirectory <fresh-folder>`.
+This produces only `flowcellwindowsinstaller.zip`, `FlowCell-Blender.zip` and
+`SHA256SUMS.txt`. Omit `-ProgramNames` to retain the complete program set.
 No new portable ZIP is produced by this release route.
 Windows is also included in the Core installer, so initial Windows setup does
 not depend on downloading its separate catalog ZIP.
@@ -155,7 +159,8 @@ verify downloaded bytes against `SHA256SUMS.txt`, then publish. Preserve older
 tags/releases and never move a release tag to fix a failed build.
 
 For an installer built locally with the saved theme library, attach the complete
-validated ZIP set and `SHA256SUMS.txt` to a draft release, then dispatch
+validated ZIP set (the selected program set when `-ProgramNames` was used) and
+`SHA256SUMS.txt` to a draft release, then dispatch
 **Validate prebuilt Windows installer** with that release tag and the installer's
 ZIP SHA256. This workflow checks out the tag, downloads only
 `flowcellwindowsinstaller.zip`, verifies its exact hash and archive boundary, and

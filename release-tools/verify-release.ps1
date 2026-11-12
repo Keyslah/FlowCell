@@ -1,21 +1,20 @@
 <#
 Purpose: Validate the exact installer/program ZIP set and emit release SHA256 hashes.
 Context: Windows build output, tracked program manifests as the publishable inventory.
-Inputs: Directory containing release ZIPs. Writes: SHA256SUMS.txt only, atomically replaced.
+Inputs: Directory containing release ZIPs and optional program names. Writes: SHA256SUMS.txt only, atomically replaced.
 Constraints: Opens archives read-only; no extraction, installation, deletion, or publishing.
 #>
-param([Parameter(Mandatory=$true)][string]$Directory)
+param([Parameter(Mandatory=$true)][string]$Directory, [string[]]$ProgramNames)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $RepoRoot=Split-Path -Parent $PSScriptRoot
 function Stop-Package([string]$message){throw $message}
 . (Join-Path $PSScriptRoot 'program-package-safety.ps1')
-$manifests=@(& git -C $RepoRoot -c core.quotePath=false ls-files -- 'Programs/*/flowcell.program.json')
-if($LASTEXITCODE -ne 0){throw 'Tracked manifest inventory failed.'}
+$programDirs=@(Get-ReleaseProgramDirectories -ProgramNames $ProgramNames)
 $expected=@('flowcellwindowsinstaller.zip')
-foreach($manifestPath in $manifests){
-    $manifest=Get-Content -LiteralPath (Join-Path $RepoRoot $manifestPath) -Raw|ConvertFrom-Json
-    $name=Split-Path -Leaf (Split-Path -Parent $manifestPath)
+foreach($programDir in $programDirs){
+    $manifest=Get-Content -LiteralPath (Join-Path $programDir.FullName 'flowcell.program.json') -Raw|ConvertFrom-Json
+    $name=$programDir.Name
     $asset='FlowCell-'+($name -replace '[^A-Za-z0-9._-]+','-')+'.zip'
     $expected+=$asset
     $zipPath=Join-Path $Directory $asset

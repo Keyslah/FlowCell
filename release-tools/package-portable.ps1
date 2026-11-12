@@ -5,7 +5,8 @@ param(
   [string]$AutoHotkeyLicenseFile,
   [string]$OutputDirectory,
   [string]$BlenderThemeLibrary,
-  [switch]$ProgramsOnly
+  [switch]$ProgramsOnly,
+  [string[]]$ProgramNames
 )
 
 Set-StrictMode -Version Latest
@@ -307,8 +308,7 @@ if (-not (Test-Path -LiteralPath $ProgramsRoot -PathType Container)) {
   Stop-Package "Required folder missing: $ProgramsRoot"
 }
 
-$programDirs = @(& git -C $RepoRoot -c core.quotePath=false ls-files -- 'Programs/*/flowcell.program.json' | ForEach-Object { Get-Item -LiteralPath (Split-Path -Parent (Join-Path $RepoRoot $_)) } | Sort-Object Name)
-if ($LASTEXITCODE -ne 0) { Stop-Package 'Could not discover tracked program manifests.' }
+$programDirs = @(Get-ReleaseProgramDirectories -ProgramNames $ProgramNames)
 $resolvedBlenderThemeLibrary = $null
 foreach ($programDir in $programDirs) {
   $contract = Get-ProgramPackageContract $programDir

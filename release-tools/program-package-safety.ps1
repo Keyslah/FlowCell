@@ -3,6 +3,24 @@ Set-StrictMode -Version Latest
 # This helper is dot-sourced by package-portable.ps1. Stop-Package and
 # $RepoRoot are supplied by that release driver.
 
+function Get-ReleaseProgramDirectories([string[]]$ProgramNames) {
+  $manifestPaths = @(& git -C $RepoRoot -c core.quotePath=false ls-files -- 'Programs/*/flowcell.program.json')
+  if ($LASTEXITCODE -ne 0) { Stop-Package 'Could not discover tracked program manifests.' }
+  $programDirectories = @($manifestPaths | ForEach-Object {
+    Get-Item -LiteralPath (Split-Path -Parent (Join-Path $RepoRoot $_))
+  } | Sort-Object Name)
+  if ($null -ne $ProgramNames -and $ProgramNames.Count -gt 0) {
+    $trackedNames = @($programDirectories | ForEach-Object Name)
+    foreach ($name in $ProgramNames) {
+      if ([string]::IsNullOrWhiteSpace($name) -or $trackedNames -notcontains $name) {
+        Stop-Package "Unknown release program '$name'. Tracked programs: $($trackedNames -join ', ')."
+      }
+    }
+    $programDirectories = @($programDirectories | Where-Object { $ProgramNames -contains $_.Name })
+  }
+  return $programDirectories
+}
+
 function Convert-ToSafeRelativeFolder([string]$Value, [string]$FieldName, [string]$ProgramName) {
   if ([string]::IsNullOrWhiteSpace($Value)) {
     Stop-Package "Program '$ProgramName' has an empty $FieldName in flowcell.program.json."
