@@ -34,7 +34,8 @@
 
 .button-popout-window__resize-handle {
   position: absolute;
-  z-index: 2147483646;
+  /* Buttons render after the grips and must own any overlapping hit area. */
+  z-index: 0;
   width: 24px;
   height: 24px;
   background: transparent;
