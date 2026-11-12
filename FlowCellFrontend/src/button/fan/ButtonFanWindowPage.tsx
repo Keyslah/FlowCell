@@ -1324,11 +1324,26 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     void setButtonFanExpanded(renderedExpanded).catch((error) => setRuntimeError(String(error)));
   }, [geometryInitialized, renderedExpanded, expanded, pinned]);
 
+  const closeControlEnvelope = resolveButtonWindowEnvelope({
+    mode: "hitbox",
+    surfaceBounds: renderedExpanded ? expandedSurfaceBounds : {
+      x: 0, y: 0, width: collapsedPlacement?.width ?? 1, height: collapsedPlacement?.height ?? 1
+    },
+    placements: renderedExpanded ? expandedPlacements : collapsedPlacement ? [collapsedPlacement] : [],
+    idleMeasurements,
+    visualOverflowAllowance: 0
+  }).resting;
+  const closeControlFrame = contentFrameRect && renderedEnvelope ? {
+    left: contentFrameRect.left + closeControlEnvelope.x - renderedEnvelope.x,
+    top: contentFrameRect.top + closeControlEnvelope.y - renderedEnvelope.y,
+    width: closeControlEnvelope.width,
+    height: closeControlEnvelope.height
+  } : null;
   const closeControl = useButtonWindowCloseControl({
     enabled: geometryInitialized && !dragging,
     spaceDown: spaceDragActive,
     defaultOffset: setup?.closeControlOffset,
-    frame: contentFrameRect,
+    frame: closeControlFrame,
     onHoverChange: handleNativeHoverChange,
     onError: setRuntimeError
   });

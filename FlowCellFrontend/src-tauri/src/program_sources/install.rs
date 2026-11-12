@@ -233,6 +233,10 @@ struct ToolsetPlacementPresentationManifest {
     match_hitbox_to_skin: bool,
     allow_stretching: bool,
     highlight_on_hover: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    activation_cycle: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    visual_state_map: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -725,7 +729,7 @@ fn validate_toolset_layout(
             .any(|child| child.slot.eq_ignore_ascii_case(slot.trim()))
     };
     if let Some(presentations) = layout.placement_presentation.as_ref() {
-        for (slot, presentation) in presentations {
+        for (index, (slot, presentation)) in presentations.iter().enumerate() {
             if slot.trim().is_empty() || !child_exists(slot) {
                 return Err(format!("Tool-set placement presentation '{slot}' does not name a declared child slot."));
             }
@@ -745,6 +749,15 @@ fn validate_toolset_layout(
                 if size <= 0.0 {
                     return Err(format!("Tool-set placement presentation '{slot}' textSizeOverride must be positive."));
                 }
+            }
+            if let Some(cycle) = presentation.activation_cycle.as_ref() {
+                crate::button_state::validate_button_placement_activation_cycle(cycle, index)
+                    .map_err(|error| format!("Tool-set placement presentation '{slot}': {error}"))?;
+            }
+            if let Some(map) = presentation.visual_state_map.as_ref() {
+                crate::button_state::validate_button_placement_visual_state_map(
+                    map, presentation.activation_cycle.as_ref(), index,
+                ).map_err(|error| format!("Tool-set placement presentation '{slot}': {error}"))?;
             }
         }
     }
@@ -5453,6 +5466,61 @@ mod tests {
         .layout
         .expect("layout");
         assert!(validate_toolset_layout(&unknown_slot, &children).is_err());
+    }
+
+    #[test]
+    fn toolset_layout_preserves_and_validates_placement_activation_presentation() {
+        let children = layout_test_children();
+        let cycle = json!({"states":[
+            {"id":"off","label":"Off","advanceTrigger":"press","visualState":"base"},
+            {"id":"on","label":"On","advanceTrigger":"release","visualState":"held",
+             "resultMatches":[{"enabled":true}]}
+        ]});
+        let map = json!({"off":{"rest":"base","hover":"hover"},"on":{"rest":"held","pressed":"pressed"}});
+        let presentation = json!({
+            "textFitMode":"shrink","textAlignment":"skin","textOffsetX":0,"textOffsetY":0,
+            "minimumFontSize":8,"textSizeOverride":null,"allowLabelResize":false,
+            "matchHitboxToSkin":true,"allowStretching":false,"highlightOnHover":false,
+            "activationCycle":cycle,"visualStateMap":map
+        });
+        let layout_with = |value: Value| {
+            toolset_manifest_with_layout(json!({"placementPresentation":{"run":value}}))
+                .expect("typed placement presentation").layout.expect("layout")
+        };
+        let layout = layout_with(presentation.clone());
+        validate_toolset_layout(&layout, &children).expect("valid activation presentation");
+        let serialized = serde_json::to_value(layout).expect("serialize activation presentation");
+        assert_eq!(serialized["placementPresentation"]["run"]["activationCycle"], cycle);
+        assert_eq!(serialized["placementPresentation"]["run"]["visualStateMap"], map);
+
+        for explicit_null in [false, true] {
+            let mut legacy = presentation.clone();
+            for key in ["activationCycle", "visualStateMap"] {
+                if explicit_null { legacy[key] = Value::Null; }
+                else { legacy.as_object_mut().unwrap().remove(key); }
+            }
+            validate_toolset_layout(&layout_with(legacy), &children)
+                .expect("omitted and null activation presentation remain compatible");
+        }
+
+        for (key, invalid) in [
+            ("activationCycle", json!({"states":[cycle["states"][0].clone()]})),
+            ("activationCycle", json!({"states":[cycle["states"][0].clone(),cycle["states"][0].clone()]})),
+            ("visualStateMap", json!({"missing":{"rest":"held"}})),
+            ("visualStateMap", json!({"on":{"unknown":"held"}})),
+            ("visualStateMap", json!({"on":{"rest":"unknown"}})),
+            ("visualStateMap", json!({"on":"held"})),
+            ("visualStateMap", json!([])),
+        ] {
+            let mut invalid_presentation = presentation.clone();
+            invalid_presentation[key] = invalid;
+            assert!(validate_toolset_layout(&layout_with(invalid_presentation), &children).is_err(),
+                "invalid {key} must be rejected before installation");
+        }
+        let mut no_cycle = presentation;
+        no_cycle["activationCycle"] = Value::Null;
+        assert!(validate_toolset_layout(&layout_with(no_cycle), &children).is_err(),
+            "a non-null visual map requires its packaged activation cycle");
     }
 
     #[test]

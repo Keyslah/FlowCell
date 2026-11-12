@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import ts from "typescript";
-import { createButtonStateDocument, createStableButtonId } from "./.compiled-button-system/button/state/buttonDefaults.js";
+import { cloneButtonDocument, createButtonStateDocument, createStableButtonId } from "./.compiled-button-system/button/state/buttonDefaults.js";
 import { DEFAULT_BUTTON_SKIN_ID } from "./.compiled-button-system/button/skins/defaultButtonSkin.js";
 import { createButtonSourceIdentity } from "./.compiled-button-system/button/state/sourceIdentity.js";
 import { mergeLegacyInstallsIntoDocument } from "./.compiled-button-system/button/state/ButtonStateRepository.js";
@@ -13,6 +14,9 @@ import { resolveInstalledToolFields } from "./.compiled-button-system/button/sta
 import { assignInstalledToolSetSkins, parseInstalledToolSetSkin } from "./.compiled-button-system/button/state/installedToolSetSkins.js";
 import { BUTTON_SKIN_SECTION_ORDER, serializeButtonSkinSections } from "./.compiled-button-system/button/skins/buttonSkinFormat.js";
 import { getEmbeddedButtonSkinFamilySources, resolveEmbeddedButtonSkinFamilySource } from "./.compiled-button-system/button/skins/buttonSkinFamily.js";
+import { defaultPanelButtonSize, arrangeDefaultPanelButtons } from "./.compiled-button-system/button/state/buttonPanelDefaults.js";
+import { getChippedConcreteButtonSize } from "./.compiled-button-system/button/skins/chippedConcreteButtonSkin.js";
+import { panelButtonViewport } from "./.compiled-button-system/pages/main/mainLayout.js";
 import { buttonSpacingPixelsFromMillimeters, createStarterButtonLayout, findFirstAvailableButtonPosition, validateExactButtonLayoutGeometry } from "./.compiled-button-system/button/geometry/buttonGeometry.js";
 
 const editorPath = join(import.meta.dirname, "../src/button/editor/ButtonEditorPage.tsx");
@@ -20,8 +24,8 @@ const parsed = ts.createSourceFile(editorPath, readFileSync(editorPath, "utf8"),
 const names = ["createButtonRecord", "addPlacement", "createSurface", "addInstalledToolSet"];
 const selected = parsed.statements.filter((node) => ts.isFunctionDeclaration(node) && names.includes(node.name?.text)).map((node) => node.getText(parsed)).join("\n");
 const compiled = ts.transpileModule(selected, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-const dependencies = { DEFAULT_BUTTON_SKIN_ID, createStableButtonId, validateInstalledButtonLayout, resolveInstalledToolFields, assignInstalledToolSetSkins,
-  buttonSpacingPixelsFromMillimeters, createStarterButtonLayout, findFirstAvailableButtonPosition, validateExactButtonLayoutGeometry };
+const dependencies = { DEFAULT_BUTTON_SKIN_ID, cloneButtonDocument, createStableButtonId, validateInstalledButtonLayout, resolveInstalledToolFields, assignInstalledToolSetSkins,
+  buttonSpacingPixelsFromMillimeters, createStarterButtonLayout, findFirstAvailableButtonPosition, validateExactButtonLayoutGeometry, defaultPanelButtonSize };
 const addInstalledToolSet = new Function(...Object.keys(dependencies), `${compiled}\nreturn addInstalledToolSet;`)(...Object.values(dependencies));
 
 function fixture() {
@@ -38,6 +42,109 @@ function fixture() {
       x: 2, y: 35, width: 80, height: 15, zIndex: 0 }] }
   };
 }
+
+function regularInstall(id, label) {
+  return {
+    ownerButtonId: id,
+    sourceIdentity: createButtonSourceIdentity("Example", "Files", `${id}.js`),
+    executionTarget: { kind: "panel-script", programName: "Example", panelName: "Files", fileName: `${id}.js` },
+    label, tooltip: "", children: []
+  };
+}
+
+test("Smart Axis packages the exact working Final Skull Live skin release", () => {
+  const root = join(import.meta.dirname, "../../Programs/Blender");
+  const toolsetRoot = join(root, "Blender Git Scripts/Toolsets/smart-axis");
+  const manifest = JSON.parse(readFileSync(join(toolsetRoot, "flowcell.toolset.json"), "utf8"));
+  const program = JSON.parse(readFileSync(join(root, "flowcell.program.json"), "utf8"));
+  const liveSkinKey = manifest.appearance.children.toggle_live;
+  assert.equal(liveSkinKey, "skin-6-Final-Skull");
+  const source = readFileSync(join(toolsetRoot, manifest.appearance.skins[liveSkinKey].file), "utf8");
+  assert.equal(createHash("sha256").update(source).digest("hex"),
+    "e41d5b7375fadccd97b12b0d9575c0f827422911dd34a96b059620f7e0072554",
+    "all ten authored sections match the working installed Live skin");
+  const skin = parseInstalledToolSetSkin(source, "Live");
+  assert.match(skin.release, /--neon-horizontal-width:15px;/);
+  assert.match(skin.release, /--neon-vertical-height:15px;/);
+  assert.doesNotMatch(skin.release, /--anim-line-arm:|infinite/);
+  const livePresentation = manifest.layout.placementPresentation.toggle_live;
+  assert.deepEqual(livePresentation.activationCycle.states, [
+    { advanceTrigger: "press", id: "button-state-d24db60c-51ad-42a5-a5e4-e0b2e94dcc79", label: "Live",
+      resultMatches: [{ live_enabled: false }], visualState: "base" },
+    { advanceTrigger: "press", id: "button-state-57110439-70fd-4abd-9dab-58d8e274df28", label: "Live",
+      resultMatches: [{ live_enabled: true }], visualState: "held" }
+  ]);
+  assert.deepEqual(livePresentation.visualStateMap, {
+    "button-state-57110439-70fd-4abd-9dab-58d8e274df28": {
+      held: "release", hover: "held", pressed: "release", release: "release"
+    },
+    "button-state-d24db60c-51ad-42a5-a5e4-e0b2e94dcc79": {
+      held: "pressed", pressed: "pressed", release: "pressed"
+    }
+  });
+  assert.equal(manifest.version, "1.1.4");
+  assert.equal(program.bundledSources.find((entry) => entry.id === manifest.id).version, manifest.version);
+});
+
+test("fresh panel grids use visible family widths and the same 8 CSS px Main gap", () => {
+  const installs = ["cura", "orca", "Save Blender", "slicer", "Update Git Script", "Files", "Project", "Save As", "Open"]
+    .map((label, index) => regularInstall(`file-${index}`, label));
+  const document = mergeLegacyInstallsIntoDocument(createButtonStateDocument(), installs);
+  const surface = Object.values(document.surfaces).find((candidate) => candidate.kind === "panel");
+  const placements = surface.placementIds.map((id) => document.placements[id]);
+  const maximumWidth = panelButtonViewport().maxButtonWidth;
+  let previous = null;
+  for (const placement of placements) {
+    const button = document.buttons[placement.buttonId];
+    const natural = getChippedConcreteButtonSize(button.label);
+    assert.equal(placement.width, natural.width * 44 / natural.height);
+    assert.equal(placement.height, 44);
+    assert.ok(placement.x + placement.width <= 8 + maximumWidth);
+    if (previous) {
+      if (placement.y === previous.y) assert.equal(placement.x, previous.x + previous.width + 8);
+      else {
+        assert.equal(placement.x, 8);
+        assert.equal(placement.y, previous.y + 44 + 8);
+      }
+    }
+    previous = placement;
+  }
+  assert.equal(placements[0].x, 8);
+  assert.equal(placements[0].y, 8);
+  assert.ok(placements.at(-1).y > 8, "the test exercises wrapping");
+});
+
+test("explicit grid defaults retain current height, presentation and custom skin sizes", () => {
+  const document = mergeLegacyInstallsIntoDocument(createButtonStateDocument(), [
+    regularInstall("cura", "cura"), regularInstall("custom", "Custom")
+  ]);
+  const surface = Object.values(document.surfaces).find((candidate) => candidate.kind === "panel");
+  const [family, custom] = surface.placementIds.map((id) => document.placements[id]);
+  Object.assign(family, { x: 700, y: 320, width: 96, height: 37.294964,
+    presentationOverride: { label: "orca" } });
+  Object.assign(custom, { x: 320, y: 250, width: 123, height: 51, skinOverrideId: DEFAULT_BUTTON_SKIN_ID });
+  const skins = structuredClone(document.skins);
+  arrangeDefaultPanelButtons(document, surface.id);
+  assert.equal(family.width, 52 * 37.294964 / 37.295);
+  assert.equal(family.height, 37.294964);
+  assert.deepEqual(family.presentationOverride, { label: "orca" });
+  assert.equal(custom.width, 123);
+  assert.equal(custom.height, 51);
+  assert.equal(custom.x, family.x + family.width + 8);
+  assert.deepEqual(document.skins, skins, "grid defaults never rewrite the authored skin");
+  assert.deepEqual(defaultPanelButtonSize(document, document.buttons.custom, custom), { width: 123, height: 51 });
+});
+
+test("fresh imports leave an existing panel's custom arrangement unchanged", () => {
+  const first = regularInstall("existing", "Existing");
+  const document = mergeLegacyInstallsIntoDocument(createButtonStateDocument(), [first]);
+  const surface = Object.values(document.surfaces).find((candidate) => candidate.kind === "panel");
+  const placement = document.placements[surface.placementIds[0]];
+  Object.assign(placement, { x: 300, y: 250, width: 170, height: 60 });
+  const before = structuredClone(placement);
+  const next = mergeLegacyInstallsIntoDocument(document, [regularInstall("new", "New")]);
+  assert.deepEqual(next.placements[placement.id], before);
+});
 
 function appearanceFixture() {
   const install = fixture();
@@ -65,10 +172,12 @@ test("package appearance assigns native skins in manual and fresh Program paths 
     const first = document.placements[unit.childPlacementIds[0]];
     const second = document.placements[unit.childPlacementIds[1]];
     const third = document.placements[unit.childPlacementIds[2]];
+    assert.equal(owner.width, 160, "assigned package artwork retains the owner placement dimensions");
+    assert.equal(owner.height, manual ? 48 : 44);
     assert.equal(owner.skinOverrideId, first.skinOverrideId);
     assert.notEqual(first.skinOverrideId, second.skinOverrideId);
     assert.equal(third.skinOverrideId, null);
-    assert.equal(document.settings.defaultSkinId, DEFAULT_BUTTON_SKIN_ID);
+    assert.equal(document.settings.defaultSkinId, createButtonStateDocument().settings.defaultSkinId);
     const skin = document.skins[first.skinOverrideId];
     assert.deepEqual(getEmbeddedButtonSkinFamilySources(skin), install.layout.appearance.skins.shared.variants);
     assert.equal(resolveEmbeddedButtonSkinFamilySource(skin, first.id, "first"), null);

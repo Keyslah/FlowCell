@@ -1,0 +1,69 @@
+import type { ButtonPlacement, ButtonRecord, ButtonStateDocument } from "../types.js";
+import {
+  CHIPPED_CONCRETE_BUTTON_SKIN_ID,
+  getChippedConcreteButtonSize
+} from "../skins/chippedConcreteButtonSkin.js";
+import { PANEL_BUTTON_GAP, panelButtonViewport } from "../../pages/main/mainLayout.js";
+import { resolveButtonPlacementPresentation } from "./buttonPresentation.js";
+
+/** Match the bundled family's visible core, retaining the requested row height. */
+export function defaultPanelButtonSize(
+  document: ButtonStateDocument,
+  button: ButtonRecord,
+  placement?: ButtonPlacement
+): { width: number; height: number } {
+  const width = placement?.width ?? 160;
+  const height = placement?.height ?? 44;
+  const skinId = placement?.skinOverrideId ?? button.defaultSkinId;
+  if (skinId !== CHIPPED_CONCRETE_BUTTON_SKIN_ID) return { width, height };
+  const presentation = placement ? resolveButtonPlacementPresentation(button, placement) : button;
+  const natural = getChippedConcreteButtonSize(presentation.label);
+  return { width: natural.width * height / natural.height, height };
+}
+
+/** Explicit defaults use the same packed rows and gap as Main's Button Section. */
+export function arrangeDefaultPanelButtons(
+  document: ButtonStateDocument,
+  surfaceId: string,
+  options: { maximumColumns?: number; maximumWidth?: number } = {}
+): void {
+  const surface = document.surfaces[surfaceId];
+  if (!surface || (surface.kind !== "panel" && surface.kind !== "regular-popout")) {
+    throw new Error("Select a panel or regular Pop-out before loading its grid default.");
+  }
+  const padding = document.settings.defaultSurfacePadding;
+  const maximumWidth = options.maximumWidth ?? (surface.kind === "panel"
+    ? panelButtonViewport().maxButtonWidth
+    : Number.POSITIVE_INFINITY);
+  const maximumColumns = options.maximumColumns ?? (surface.kind === "regular-popout" ? 4 : Number.POSITIVE_INFINITY);
+  let x = padding;
+  let y = padding;
+  let rowHeight = 0;
+  let column = 0;
+  let requiredWidth = padding * 2;
+  surface.placementIds.forEach((placementId, index) => {
+    const placement = document.placements[placementId];
+    const button = placement && document.buttons[placement.buttonId];
+    if (!placement || !button) return;
+    const size = surface.uniformButtonSize ?? defaultPanelButtonSize(document, button, placement);
+    if (column > 0 && (column >= maximumColumns || x + size.width > padding + maximumWidth)) {
+      x = padding;
+      y += rowHeight + PANEL_BUTTON_GAP;
+      rowHeight = 0;
+      column = 0;
+    }
+    Object.assign(placement, size, { x, y, zIndex: index });
+    requiredWidth = Math.max(requiredWidth, x + size.width + padding);
+    rowHeight = Math.max(rowHeight, size.height);
+    x += size.width + PANEL_BUTTON_GAP;
+    column += 1;
+  });
+  const requiredHeight = y + rowHeight + padding;
+  if (surface.kind === "panel") {
+    surface.width = Math.max(requiredWidth, maximumWidth + padding * 2);
+    surface.height = Math.max(surface.height, requiredHeight);
+  } else {
+    surface.width = requiredWidth;
+    surface.height = requiredHeight;
+  }
+}

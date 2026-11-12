@@ -1,4 +1,3 @@
-import { ButtonCloseControlFields } from "./ButtonCloseControlEditor";
 import { editButtonPlacementPresentation, resolveButtonPlacementPresentation } from "../state/buttonPresentation.js";
 import {
   useCallback,
@@ -83,9 +82,10 @@ import { validateButtonStateDocument } from "../state/buttonStateValidation";
 import { validateInstalledButtonLayout } from "../state/installedButtonLayoutValidation";
 import { resolveInstalledToolFields } from "../state/installedToolFields";
 import {
-  ensureRegularPopout,
+  ensureDefaultPanelPopout,
   resolveDiscardedStagedOwnerButtonIds
 } from "../state/buttonDocumentOperations";
+import { arrangeDefaultPanelButtons, defaultPanelButtonSize } from "../state/buttonPanelDefaults";
 import { setButtonPopoutFanMode } from "../state/buttonPopoutInteractionOperations";
 import {
   FLOWCELL_MAIN_PAGE_SECTIONS,
@@ -366,8 +366,11 @@ function addPlacement(
 ): ButtonPlacement {
   const surface = document.surfaces[surfaceId];
   if (!surface) throw new Error("The selected Button surface no longer exists.");
-  const width = surface.uniformButtonSize?.width ?? desired?.width ?? 160;
-  const height = surface.uniformButtonSize?.height ?? desired?.height ?? 44;
+  const defaultSize = surface.kind === "panel"
+    ? defaultPanelButtonSize(document, document.buttons[buttonId])
+    : { width: 160, height: 44 };
+  const width = surface.uniformButtonSize?.width ?? desired?.width ?? defaultSize.width;
+  const height = surface.uniformButtonSize?.height ?? desired?.height ?? defaultSize.height;
   const buttonSpacing = buttonSpacingPixelsFromMillimeters(
     document.settings.buttonSpacingMm
   );
@@ -525,7 +528,7 @@ function addInstalledToolSet(
     });
     const exact = childRects[child.slot];
     const placement = addPlacement(document, childId, surface.id, exact);
-    Object.assign(placement, layout?.placementPresentation?.[child.slot]);
+    Object.assign(placement, cloneButtonDocument(layout?.placementPresentation?.[child.slot] ?? {}));
     skinAssignments.push({ placement, skinKey: layout?.appearance?.children?.[child.slot] });
   }
   assignInstalledToolSetSkins(document, layout?.appearance, skinAssignments);
@@ -719,6 +722,7 @@ function ButtonEditorContent({
   const selectedSurfaceUnit = Object.values(store.draft.popoutUnits).find(
     (candidate) => candidate.surfaceId === selectedSurfaceId
   );
+  const usesLogicalGridDefault = selectedSurface?.kind === "panel" || selectedSurfaceUnit?.kind === "regular";
   const selectedFanSetup = Object.values(store.draft.fanSetups).find(
     (candidate) => candidate.fanSurfaceId === selectedSurfaceId
   ) ?? null;
@@ -859,7 +863,7 @@ function ButtonEditorContent({
       return;
     }
     const next = cloneButtonDocument(current);
-    const unit = ensureRegularPopout(next, [button]);
+    const unit = ensureDefaultPanelPopout(next, button.id);
     const placementId = unit.memberPlacementIds.find(
       (candidateId) => next.placements[candidateId]?.buttonId === button.id
     ) ?? null;
@@ -873,7 +877,7 @@ function ButtonEditorContent({
     setSelectedSurfaceId(unit.surfaceId);
     setFocusedPlacementId(placementId);
     setSelectedPlacementIds(new Set([placementId]));
-    setMessage("Default Pop-out created as a working draft. Use Save Pop-out Settings to keep it.");
+    setMessage("Panel Pop-out opened as a working draft. Use Save Pop-out Settings to keep it.");
   }, [store]);
 
   const applyEditorContext = useCallback((context: ButtonEditorWindowContext) => {
@@ -968,7 +972,9 @@ function ButtonEditorContent({
       ? resolveButtonEditorSurfaceIdentity(store.committed, surface.id) ??
         (programName.trim() && panelName.trim() ? { programName, panelName } : null)
       : null;
-    if (!surface || !identity) return;
+    if (!surface || !identity || surface.kind === "panel" || Object.values(store.committed.popoutUnits).some(
+      (unit) => unit.kind === "regular" && unit.surfaceId === surface.id
+    )) return;
     const placementKind = buttonSettingsPlacementKind(surface);
     const initializationKey = `${placementKind}:${surface.id}`;
     if (initializedSettingsDefaultsRef.current.has(initializationKey)) return;
@@ -1407,6 +1413,27 @@ function ButtonEditorContent({
     try {
       if (stagedInstallsRef.current.size > 0) {
         throw new Error("Save or cancel the newly added Button before loading default settings.");
+      }
+      if (usesLogicalGridDefault) {
+        const next = cloneButtonDocument(store.current());
+        let surfaceId = selectedSurfaceId;
+        if (selectedSurfaceUnit?.kind === "regular") {
+          const memberId = selectedSurfaceUnit.memberPlacementIds[0];
+          const buttonId = next.placements[memberId]?.buttonId;
+          if (!buttonId) throw new Error("The panel Pop-out has no script Buttons.");
+          surfaceId = ensureDefaultPanelPopout(next, buttonId, { resetLayout: true, unitId: selectedSurfaceUnit.id }).surfaceId;
+        } else {
+          arrangeDefaultPanelButtons(next, surfaceId);
+        }
+        store.transact(() => next, { label: `Load ${settingsPlacementLabel} grid default` });
+        const firstPlacementId = next.surfaces[surfaceId].placementIds[0] ?? null;
+        setSelectedSurfaceId(surfaceId);
+        setFocusedPlacementId(firstPlacementId);
+        setSelectedPlacementIds(new Set(firstPlacementId ? [firstPlacementId] : []));
+        setActivePage("placement");
+        setReorderMode(false);
+        setMessage(`${settingsPlacementLabel} default grid loaded with the current Buttons and skins. Use Save ${settingsPlacementLabel} Settings to keep it.`);
+        return;
       }
       const surface = store.committed.surfaces[selectedSurfaceId];
       if (!surface || !settingsPlacementKind) {
@@ -2983,13 +3010,6 @@ function ButtonEditorContent({
                 <span>Fan</span>
               </label>
             ) : null}
-            {selectedSurfaceUnit || selectedFanSetup ? (
-              <ButtonCloseControlFields
-                offset={selectedSurfaceUnit?.closeControlOffset ?? selectedFanSetup?.closeControlOffset}
-                disabled={busy}
-                onChange={updateCloseControlOffset}
-              />
-            ) : null}
             {settingsPlacementKind === "fan" && selectedFanSetup ? (
               <fieldset className="button-editor-sidebar__fan-styles" disabled={busy}>
                 <legend>Fan styles</legend>
@@ -3027,14 +3047,14 @@ function ButtonEditorContent({
             >
               Load {settingsPlacementLabel} Default
             </button>
-            <button
+            {!usesLogicalGridDefault ? <button
               type="button"
               className="button-editor-sidebar__placement-file"
               disabled={busy || !settingsPlacementKind}
               onClick={() => void updateDefaultSettings()}
             >
               Update {settingsPlacementLabel} Default
-            </button>
+            </button> : null}
             {exportableToolSet?.kind === "tool-set" ? (
               <button
                 type="button"

@@ -321,7 +321,7 @@ test("Tool Set owners expose one Pop-out Placement and use its Fan checkbox", ()
   assert.match(selection, /view: "placement" \| "tool-set-popout" \| "default-popout"/);
   assert.match(
     editor,
-    /const selectDefaultPopoutPlacement = useCallback\([\s\S]{0,900}ensureRegularPopout\(next, \[button\]\)[\s\S]{0,900}store\.transact\(\(\) => next/
+    /const selectDefaultPopoutPlacement = useCallback\([\s\S]{0,900}ensureDefaultPanelPopout\(next, button.id\)[\s\S]{0,900}store\.transact\(\(\) => next/
   );
   assert.match(
     editor,

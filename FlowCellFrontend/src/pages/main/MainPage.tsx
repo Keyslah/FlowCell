@@ -98,6 +98,7 @@ import {
   subscribeButtonCommits
 } from "../../button/state/ButtonDraftBus";
 import { cloneButtonDocument } from "../../button/state/buttonDefaults";
+import { defaultPanelButtonSize } from "../../button/state/buttonPanelDefaults";
 import {
   ensureFanSetup,
   ensureRegularPopout,
@@ -3030,6 +3031,7 @@ export default function MainPage() {
         // Copy presentation, keeping this Pop's own placement identity and execution owner.
         const { id, surfaceId, buttonId, ...presentation } = source;
         Object.assign(placement, cloneButtonDocument(presentation));
+        Object.assign(placement, defaultPanelButtonSize(draft, button, source));
         const skin = draft.skins[placement.skinOverrideId ?? button.defaultSkinId];
         const baseline = skin?.metadata.buttonSkinFamilyBaseline;
         if (baseline && typeof baseline === "object" && !Array.isArray(baseline) && typeof baseline[source.id] === "number") {
@@ -3043,7 +3045,7 @@ export default function MainPage() {
       const ordered = orderButtonRectsByVisualRows(members);
       const layout = createStarterButtonLayout(ordered.map(({ id }) => draft.placements[id]), {
         padding: draft.settings.defaultSurfacePadding,
-        gap: buttonSpacingPixelsFromMillimeters(draft.settings.buttonSpacingMm),
+        gap: PANEL_BUTTON_GAP,
         maximumColumns: 4
       });
       ordered.forEach(({ id }, index) => Object.assign(draft.placements[id], layout.rects[id], { zIndex: index }));

@@ -20,7 +20,7 @@ export type InstalledToolSetPlacementPresentation = Pick<ButtonPlacement,
   "textFitMode" | "textAlignment" | "textOffsetX" | "textOffsetY" |
   "minimumFontSize" | "textSizeOverride" | "allowLabelResize" |
   "matchHitboxToSkin" | "allowStretching" | "highlightOnHover"
->;
+> & Partial<Pick<ButtonPlacement, "activationCycle" | "visualStateMap">>;
 
 const PACKAGE_SKIN_ID_PREFIX = "skin-toolset-package";
 

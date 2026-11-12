@@ -1,5 +1,10 @@
 import { ButtonCloseControlPreview } from "./ButtonCloseControlEditor";
 import {
+  BUTTON_WINDOW_CLOSE_GAP,
+  closeControlPositionFromOffset,
+  constrainButtonWindowClosePosition
+} from "../windows/buttonWindowCloseControl";
+import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -974,7 +979,14 @@ export function ButtonWorkspace({
       placement.y + placement.height - surface.height
     );
   }, 0);
-  const closeFrame = windowFrame?.resting ?? { x: 0, y: 0, width: surface.width, height: surface.height };
+  const closeFrame = resolveButtonWindowEnvelope({
+    mode: "hitbox",
+    surfaceBounds: { x: 0, y: 0, width: surface.width, height: surface.height },
+    placements: visiblePlacementIds.map((placementId) => renderedDocument.placements[placementId]).filter(Boolean),
+    idleMeasurements,
+    visualOverflowAllowance: 0,
+    fixedRects: unit?.kind === "tool-set" ? unit.fields.filter((field) => !field.hidden) : []
+  }).resting;
   // Keep the editor control outside both the canvas and any escaping Fan content.
   const reorderControlAnchor = visiblePlacementIds.reduce((anchor, placementId) => {
     const placement = renderedDocument.placements[placementId];
@@ -985,8 +997,12 @@ export function ButtonWorkspace({
   }, { x: Math.min(0, closeFrame.x), y: Math.min(0, closeFrame.y) });
   const showReorderControl = mode === "edit" && Boolean(reorderControl);
   const closeOffset = unit?.closeControlOffset ?? fanSetup?.closeControlOffset;
-  const closeX = closeFrame.x + (closeOffset ? closeOffset.x / (window.devicePixelRatio || 1) : closeFrame.width + 10);
-  const closeY = closeFrame.y + (closeOffset ? closeOffset.y / (window.devicePixelRatio || 1) : 0);
+  const closeFrameRect = { left: closeFrame.x, top: closeFrame.y, width: closeFrame.width, height: closeFrame.height };
+  const closePosition = constrainButtonWindowClosePosition(closeFrameRect, closeOffset
+    ? closeControlPositionFromOffset(closeFrameRect, closeOffset, window.devicePixelRatio || 1)
+    : { left: closeFrame.x + closeFrame.width + BUTTON_WINDOW_CLOSE_GAP, top: closeFrame.y });
+  const closeX = closePosition.left;
+  const closeY = closePosition.top;
   const workspacePadding = Math.max(
     16,
     windowFitPreviewMode ? Math.max(40, surface.visualOverflowAllowance + 16) : 0,
@@ -1025,7 +1041,7 @@ export function ButtonWorkspace({
             <ButtonCloseControlPreview
               key={surfaceId}
               offset={unit?.closeControlOffset ?? fanSetup?.closeControlOffset}
-              frame={windowFrame?.resting ?? { x: 0, y: 0, width: surface.width, height: surface.height }}
+              frame={closeFrame}
               onChange={onCloseControlOffsetChange}
             />
           ) : null}

@@ -292,7 +292,7 @@ function validateButtonActivationBehavior(
   return true;
 }
 
-function validateButtonVisualStateMap(
+export function validateButtonVisualStateMap(
   value: unknown,
   button: unknown,
   activationCycle: unknown,
@@ -350,7 +350,7 @@ function validateButtonVisualStateMap(
   }
 }
 
-function validateButtonPlacementActivationCycle(
+export function validateButtonPlacementActivationCycle(
   value: unknown,
   path: string,
   issues: ButtonStateValidationIssue[]

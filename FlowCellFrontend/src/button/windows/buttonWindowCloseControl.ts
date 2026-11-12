@@ -1,6 +1,7 @@
 export const BUTTON_WINDOW_CLOSE_DELAY_MS = 3_000;
 export const BUTTON_WINDOW_CLOSE_LEAVE_MS = 1_000;
 export const BUTTON_WINDOW_CLOSE_SIZE = 56;
+export const BUTTON_WINDOW_CLOSE_GAP = 10;
 
 // Physical pixels relative to the containing window's semantic content frame.
 export interface ButtonWindowCloseOffset { x: number; y: number }
@@ -23,6 +24,41 @@ export function closeControlOffsetFromPosition(
   frame: { left: number; top: number }, position: { left: number; top: number }, pixelRatio: number
 ): ButtonWindowCloseOffset {
   return { x: (position.left - frame.left) * pixelRatio, y: (position.top - frame.top) * pixelRatio };
+}
+
+// Project X onto the perimeter of the resting Button bounds. Saved offsets and
+// drag distance choose a point around the group, never a detached screen point.
+export function constrainButtonWindowClosePosition(
+  frame: { left: number; top: number; width: number; height: number },
+  preferred: { left: number; top: number },
+  viewport?: { width: number; height: number }
+) {
+  const left = frame.left - BUTTON_WINDOW_CLOSE_SIZE - BUTTON_WINDOW_CLOSE_GAP;
+  const right = frame.left + frame.width + BUTTON_WINDOW_CLOSE_GAP;
+  const top = frame.top - BUTTON_WINDOW_CLOSE_SIZE - BUTTON_WINDOW_CLOSE_GAP;
+  const bottom = frame.top + frame.height + BUTTON_WINDOW_CLOSE_GAP;
+  const minX = viewport ? 0 : -Infinity;
+  const minY = viewport ? 0 : -Infinity;
+  const maxX = viewport ? Math.max(0, viewport.width - BUTTON_WINDOW_CLOSE_SIZE) : Infinity;
+  const maxY = viewport ? Math.max(0, viewport.height - BUTTON_WINDOW_CLOSE_SIZE) : Infinity;
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
+  const candidates: Array<{ left: number; top: number }> = [];
+  for (const x of [left, right]) {
+    if (x >= minX && x <= maxX && Math.max(top, minY) <= Math.min(bottom, maxY)) {
+      candidates.push({ left: x, top: clamp(preferred.top, Math.max(top, minY), Math.min(bottom, maxY)) });
+    }
+  }
+  for (const y of [top, bottom]) {
+    if (y >= minY && y <= maxY && Math.max(left, minX) <= Math.min(right, maxX)) {
+      candidates.push({ left: clamp(preferred.left, Math.max(left, minX), Math.min(right, maxX)), top: y });
+    }
+  }
+  // A group filling the entire viewport leaves no room outside its bounds.
+  // Keep X reachable in that case rather than placing it beyond the monitor.
+  return candidates.reduce((closest, candidate) =>
+    Math.hypot(candidate.left - preferred.left, candidate.top - preferred.top) <
+      Math.hypot(closest.left - preferred.left, closest.top - preferred.top) ? candidate : closest,
+  candidates[0] ?? { left: clamp(preferred.left, minX, maxX), top: clamp(preferred.top, minY, maxY) });
 }
 
 // Preserve hover-open windows during the short trip across transparent space to X.
@@ -90,7 +126,7 @@ export function buttonWindowClosePosition(
   viewport: { width: number; height: number }
 ) {
   const size = BUTTON_WINDOW_CLOSE_SIZE;
-  const gap = 10;
+  const gap = BUTTON_WINDOW_CLOSE_GAP;
   let left = frame.left + frame.width + gap;
   let top = frame.top;
   if (left + size > viewport.width - gap) {

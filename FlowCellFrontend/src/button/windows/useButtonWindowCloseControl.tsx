@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readRegisteredLayoutWindow, writeRegisteredLayoutWindowCloseOffset } from "../../lib/layoutSnapshots";
 import {
-  BUTTON_WINDOW_CLOSE_SIZE,
   buttonWindowClosePosition,
+  constrainButtonWindowClosePosition,
   closeControlOffsetFromPosition,
   closeControlPositionFromOffset,
   createButtonWindowCloseHover,
@@ -70,11 +70,10 @@ export function useButtonWindowCloseControl(args: {
     ? offset ? closeControlPositionFromOffset(args.frame, offset, ratio)
       : buttonWindowClosePosition(args.frame, { width: window.innerWidth, height: window.innerHeight })
     : null;
-  const clamp = (position: { left: number; top: number }) => ({
-    left: Math.max(0, Math.min(position.left, window.innerWidth - BUTTON_WINDOW_CLOSE_SIZE)),
-    top: Math.max(0, Math.min(position.top, window.innerHeight - BUTTON_WINDOW_CLOSE_SIZE))
-  });
-  const position = preferred ? clamp(preferred) : null;
+  const constrain = (position: { left: number; top: number }) => args.frame
+    ? constrainButtonWindowClosePosition(args.frame, position, { width: window.innerWidth, height: window.innerHeight })
+    : position;
+  const position = preferred ? constrain(preferred) : null;
   const move = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const session = drag.current;
     if (!session || session.pointerId !== event.pointerId || !args.frame) return;
@@ -83,7 +82,7 @@ export function useButtonWindowCloseControl(args: {
     // A Space-held press still clicks X unless it moves far enough to drag.
     if (!suppressClick.current && Math.hypot(event.clientX - session.x, event.clientY - session.y) < 4) return;
     suppressClick.current = true;
-    const next = clamp({ left: session.left + event.clientX - session.x, top: session.top + event.clientY - session.y });
+    const next = constrain({ left: session.left + event.clientX - session.x, top: session.top + event.clientY - session.y });
     setOffset(closeControlOffsetFromPosition(args.frame, next, ratio));
   };
   const finish = (event: ReactPointerEvent<HTMLButtonElement>, commit: boolean) => {

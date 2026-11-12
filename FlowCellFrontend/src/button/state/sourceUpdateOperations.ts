@@ -110,7 +110,7 @@ function appendMissingToolSetChildren(
       visualStateMap: null,
       resizeAnchor: "top-left"
     };
-    Object.assign(placement, installed.layout?.placementPresentation?.[child.slot]);
+    Object.assign(placement, cloneButtonDocument(installed.layout?.placementPresentation?.[child.slot] ?? {}));
     document.placements[placementId] = placement;
     appearanceTargets.push({ placement, skinKey: installed.layout?.appearance?.children?.[child.slot] });
     surface.placementIds.push(placementId);

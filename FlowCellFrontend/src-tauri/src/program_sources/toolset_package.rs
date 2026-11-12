@@ -484,6 +484,34 @@ mod tests {
 
     const SKIN_SOURCE: &str = "=== structure ===\n<span data-core>{{label}}</span>\n=== keyframes ===\n=== base ===\n=== hover ===\n=== play ===\n=== pressed ===\n=== held ===\n=== release ===\n=== disabled ===\n=== error ===\n";
 
+    #[test]
+    fn toolset_export_layout_preserves_placement_activation_presentation() {
+        let cycle = json!({"states":[
+            {"id":"off","label":"Off","advanceTrigger":"press","visualState":"base"},
+            {"id":"on","label":"On","advanceTrigger":"press","visualState":"held"}
+        ]});
+        let map = json!({"off":{"rest":"base"},"on":{"rest":"held","hover":"hover"}});
+        let snapshot: ExportLayout = serde_json::from_value(json!({
+            "placementPresentation":{"run":{
+                "textFitMode":"shrink","textAlignment":"skin","textOffsetX":0,"textOffsetY":0,
+                "minimumFontSize":8,"textSizeOverride":null,"allowLabelResize":false,
+                "matchHitboxToSkin":true,"allowStretching":false,"highlightOnHover":false,
+                "activationCycle":cycle,"visualStateMap":map
+            }}
+        })).expect("export activation snapshot");
+        let mut toolset = json!({"layout":{}});
+        apply_export_layout(&mut toolset, snapshot).expect("apply exported layout");
+        let layout: super::super::ToolsetLayoutManifest = serde_json::from_value(toolset["layout"].clone())
+            .expect("reimport exported native layout");
+        let children = [ActiveSourceChild {
+            slot: "run".into(), label: "Run".into(), tooltip: String::new(),
+            payload: None, execution_target: None,
+        }];
+        super::super::validate_toolset_layout(&layout, &children).expect("valid exported activation presentation");
+        assert_eq!(toolset["layout"]["placementPresentation"]["run"]["activationCycle"], cycle);
+        assert_eq!(toolset["layout"]["placementPresentation"]["run"]["visualStateMap"], map);
+    }
+
     struct FixtureEnvironment {
         previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
         root: PathBuf,

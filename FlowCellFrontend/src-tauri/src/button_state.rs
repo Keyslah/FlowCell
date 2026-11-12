@@ -640,7 +640,7 @@ impl ButtonPlacementFileEntryLike for ButtonPlacementFileEntryV2 {
     }
 }
 
-fn validate_button_placement_activation_cycle(
+pub(crate) fn validate_button_placement_activation_cycle(
     value: &Value,
     placement_index: usize,
 ) -> Result<(), String> {
@@ -684,6 +684,38 @@ fn validate_button_placement_activation_cycle(
             }
         }
         let _ = (&state.label, &state.advance_trigger, &state.visual_state);
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_button_placement_visual_state_map(
+    value: &Value,
+    activation_cycle: Option<&Value>,
+    placement_index: usize,
+) -> Result<(), String> {
+    if value.is_null() {
+        return Ok(());
+    }
+    let subject = format!("Button placement entry {placement_index} visualStateMap");
+    let cycle: ButtonPlacementActivationCycle = activation_cycle
+        .filter(|cycle| !cycle.is_null())
+        .ok_or_else(|| format!("{subject} requires an activationCycle."))
+        .and_then(|cycle| {
+            validate_button_placement_activation_cycle(cycle, placement_index)?;
+            serde_json::from_value(cycle.clone()).map_err(|error| error.to_string())
+        })?;
+    let map: std::collections::BTreeMap<String, std::collections::BTreeMap<String, ButtonSkinVisualState>> =
+        serde_json::from_value(value.clone())
+            .map_err(|error| format!("{subject} is invalid: {error}"))?;
+    for (state_id, assignments) in map {
+        if !cycle.states.iter().any(|state| state.id == state_id) {
+            return Err(format!("{subject} references unknown activation-cycle state '{state_id}'."));
+        }
+        for trigger in assignments.keys() {
+            if !matches!(trigger.as_str(), "rest" | "hover" | "play" | "pressed" | "held" | "release" | "selected" | "disabled" | "error") {
+                return Err(format!("{subject} has unsupported appearance trigger '{trigger}'."));
+            }
+        }
     }
     Ok(())
 }

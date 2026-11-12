@@ -20,7 +20,13 @@ test("Chipped Concrete keys use equal travel speed and preserve the flush releas
   assert.equal(readChippedConcreteKeyTravel("--cc-travel-profile: 2 4 0,0 5,1 2,2 8,4 9,4.5 10,5;"), null);
   const moves = [];
   const style = new Map();
+  const authoredFilter = "drop-shadow(0 2px 3px #000)";
+  const sprite = { style: { filter: authoredFilter } };
   const core = {
+    querySelector: () => sprite,
+    ownerDocument: {
+      createElementNS() { throw new Error("Travel must preserve authored sprite pixels without injecting a paint filter."); }
+    },
     style: {
       setProperty: (property, value) => style.set(property, value),
       removeProperty: (property) => style.delete(property)
@@ -78,6 +84,7 @@ test("Chipped Concrete keys use equal travel speed and preserve the flush releas
   update({});
   assertMove(240, "0%", "40%");
   travel.dispose();
+  assert.equal(sprite.style.filter, authoredFilter, "travel preserves the authored sprite filter through every state");
 });
 
 test("saved DefaultGray color variants gain an exact face without changing their effects or identity", () => {
@@ -268,6 +275,7 @@ import {
 } from "./.compiled-button-system/button/text/textFit.js";
 import {
   ensureFanSetup,
+  ensureDefaultPanelPopout,
   ensureRegularPopout,
   hideThemeContributionOwner,
   removeOwnedButtonGraph,
@@ -3727,6 +3735,47 @@ test("Button Editor offers and materializes one default Pop-out for a source-bac
   );
   assert.equal(materializedOption?.view, "placement");
   assert.ok(materializedOption?.placementId);
+});
+
+test("default panel Pop-out includes every current script and preserves custom subsets", () => {
+  const document = createButtonStateDocument();
+  const records = ["cura", "orca", "save", "slicer", "png"].map((id) =>
+    button(id, "single-script", source("Blender", "Files", `${id}.js`))
+  );
+  records.push(button("other", "single-script", source("Blender", "Other", "other.js")));
+  records.forEach((record) => { document.buttons[record.id] = record; });
+  addScopePanelSurface(document, "files", "Blender / Files", records.slice(0, 5).map(({ id }) => id));
+  document.surfaces.files.width = 900;
+  addScopePanelSurface(document, "other-panel", "Blender / Other", ["other"]);
+  const sourcePlacement = document.placements["placement-files-cura"];
+  sourcePlacement.width = 123;
+  sourcePlacement.height = 51;
+  sourcePlacement.textOffsetX = 7;
+  const subset = ensureRegularPopout(document, [records[0]]);
+  const subsetBefore = structuredClone(document.surfaces[subset.surfaceId]);
+  const fromMain = buildButtonEditorPlacementOptions(document, "cura", "files");
+  assert.equal(fromMain.find((option) => option.label === "Pop-out")?.view, "default-popout");
+
+  const unit = ensureDefaultPanelPopout(document, "cura");
+  const members = unit.memberPlacementIds.map((id) => document.placements[id]);
+  assert.deepEqual(members.map(({ buttonId }) => buttonId), ["cura", "orca", "save", "slicer", "png"]);
+  assert.equal(members[0].width, 123);
+  assert.equal(members[0].height, 51);
+  assert.equal(members[0].textOffsetX, 7);
+  assert.equal(members[1].x - (members[0].x + members[0].width), 8);
+  assert.equal(members[4].x, document.settings.defaultSurfacePadding);
+  assert.equal(members[4].y - (members[0].y + members[0].height), 8);
+  assert.deepEqual(document.surfaces[subset.surfaceId], subsetBefore);
+  assert.equal(ensureDefaultPanelPopout(document, "orca").id, unit.id);
+  assert.equal(buildButtonEditorPlacementOptions(document, "cura", "files").find((option) => option.label === "Pop-out")?.surfaceId, unit.surfaceId);
+  assert.equal(buildButtonEditorPlacementOptions(document, "cura", subset.surfaceId).find((option) => option.label === "Pop-out")?.surfaceId, subset.surfaceId);
+
+  members[0].x = 900;
+  members[0].skinOverrideId = "skin-default-neutral";
+  ensureDefaultPanelPopout(document, "cura", { resetLayout: true });
+  assert.equal(members[0].x, document.settings.defaultSurfacePadding);
+  assert.equal(members[0].skinOverrideId, "skin-default-neutral", "grid reset keeps the current skin");
+  assert.deepEqual(validateButtonStateDocument(document).issues, []);
 });
 
 test("surface skin assignment targets every member of only the focused surface", () => {

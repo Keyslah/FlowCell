@@ -4,6 +4,7 @@ import type {
   ButtonSurface
 } from "../types.js";
 import { resolvePanelOwnerMainPlacement } from "../state/panelOwnerButtonOperations.js";
+import { regularPanelButtons } from "../state/buttonDocumentOperations.js";
 import {
   buttonSettingsPlacementKind,
   buttonSettingsPlacementLabel
@@ -387,9 +388,20 @@ export function buildButtonEditorPlacementOptions(
   const preferredPopoutOption = preferredSurfaceId
     ? popoutOptions.find((option) => option.surfaceId === preferredSurfaceId)
     : undefined;
+  const panelButtonIds = button?.role === "single-script"
+    ? regularPanelButtons(document, buttonId).map((member) => member.id)
+    : [];
+  const panelPopoutOption = panelButtonIds.length > 0
+    ? popoutOptions.find((option) => {
+        const unit = Object.values(document.popoutUnits).find((candidate) => candidate.surfaceId === option.surfaceId);
+        if (unit?.kind !== "regular") return false;
+        const memberIds = unit.memberPlacementIds.map((id) => document.placements[id]?.buttonId);
+        return memberIds.length === panelButtonIds.length && panelButtonIds.every((id) => memberIds.includes(id));
+      })
+    : undefined;
   const canonicalPopoutOption = preferredPopoutOption ??
     popoutOptions.find((option) => option.view === "tool-set-popout") ??
-    popoutOptions[0];
+    (button?.role === "single-script" ? panelPopoutOption : popoutOptions[0]);
   const collapsedOptions = options.filter((option) =>
     buttonSettingsPlacementKind(document.surfaces[option.surfaceId]) !== "pop-out" ||
     option.id === canonicalPopoutOption?.id

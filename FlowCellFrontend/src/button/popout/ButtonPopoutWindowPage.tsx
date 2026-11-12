@@ -1932,11 +1932,26 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       }
     : null;
 
+  const closeControlEnvelope = resolveButtonWindowEnvelope({
+    mode: "hitbox",
+    surfaceBounds: geometrySurfaceBounds,
+    placements: geometryPlacements,
+    idleMeasurements,
+    visualOverflowAllowance: 0,
+    fixedRects: renderedDisplayMode === "expanded" && unit?.kind === "tool-set"
+      ? unit.fields.filter((field) => !field.hidden) : []
+  }).resting;
+  const closeControlFrame = contentFrameRect && renderedEnvelope ? {
+    left: contentFrameRect.left + (closeControlEnvelope.x - renderedEnvelope.x) * surfaceScale,
+    top: contentFrameRect.top + (closeControlEnvelope.y - renderedEnvelope.y) * surfaceScale,
+    width: closeControlEnvelope.width * surfaceScale,
+    height: closeControlEnvelope.height * surfaceScale
+  } : null;
   const closeControl = useButtonWindowCloseControl({
     enabled: geometryInitialized && !dragging && !resizing,
     spaceDown: spaceDragActive,
     defaultOffset: unit?.closeControlOffset,
-    frame: contentFrameRect,
+    frame: closeControlFrame,
     onHoverChange: handleNativeHoverChange,
     onError: setRuntimeError
   });

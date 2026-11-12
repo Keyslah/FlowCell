@@ -1,28 +1,12 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import type { ButtonWindowCloseOffset } from "../windows/buttonWindowCloseControl";
+import {
+  BUTTON_WINDOW_CLOSE_GAP,
+  closeControlOffsetFromPosition,
+  closeControlPositionFromOffset,
+  constrainButtonWindowClosePosition,
+  type ButtonWindowCloseOffset
+} from "../windows/buttonWindowCloseControl";
 import "../windows/buttonWindowCloseControl.css";
-
-export function ButtonCloseControlFields({ offset, disabled, onChange }: {
-  offset?: ButtonWindowCloseOffset;
-  disabled: boolean;
-  onChange: (offset: ButtonWindowCloseOffset | undefined) => void;
-}) {
-  return <fieldset disabled={disabled}>
-    <legend>Close X position</legend>
-    <span>Drag the red X in Edit mode. In an open window, hold Space and drag X. Save Layout keeps that window's position.</span>
-    {(["x", "y"] as const).map((axis) => <label key={axis}>
-      <span>{axis === "x" ? "Horizontal" : "Vertical"} offset (screen px)</span>
-      <input key={`${axis}:${offset?.[axis]}`} aria-label={`Close X ${axis} offset`} type="number" step="1"
-        defaultValue={offset?.[axis] ?? ""} placeholder="Automatic"
-        onBlur={(event) => {
-          if (!event.currentTarget.value.trim()) return;
-          const value = Number(event.currentTarget.value);
-          if (Number.isFinite(value)) onChange({ x: offset?.x ?? 0, y: offset?.y ?? 0, [axis]: value });
-        }} />
-    </label>)}
-    <button type="button" onClick={() => onChange(undefined)}>Reset X position</button>
-  </fieldset>;
-}
 
 export function ButtonCloseControlPreview({ offset, frame, onChange }: {
   offset?: ButtonWindowCloseOffset;
@@ -30,13 +14,19 @@ export function ButtonCloseControlPreview({ offset, frame, onChange }: {
   onChange: (offset: ButtonWindowCloseOffset) => void;
 }) {
   const ratio = window.devicePixelRatio || 1;
-  const base = offset ?? { x: (frame.width + 10) * ratio, y: 0 };
+  const base = offset ?? { x: (frame.width + BUTTON_WINDOW_CLOSE_GAP) * ratio, y: 0 };
   const [preview, setPreview] = useState<ButtonWindowCloseOffset | null>(null);
   const drag = useRef<{ pointer: number; x: number; y: number; start: ButtonWindowCloseOffset } | null>(null);
-  const shown = preview ?? base;
+  const frameRect = { left: frame.x, top: frame.y, width: frame.width, height: frame.height };
+  const constrain = (value: ButtonWindowCloseOffset) => closeControlOffsetFromPosition(
+    frameRect,
+    constrainButtonWindowClosePosition(frameRect, closeControlPositionFromOffset(frameRect, value, ratio)),
+    ratio
+  );
+  const shown = constrain(preview ?? base);
   const nextPosition = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const session = drag.current;
-    return session ? { x: session.start.x + (event.clientX - session.x) * ratio, y: session.start.y + (event.clientY - session.y) * ratio } : null;
+    return session ? constrain({ x: session.start.x + (event.clientX - session.x) * ratio, y: session.start.y + (event.clientY - session.y) * ratio }) : null;
   };
   const finish = (event: ReactPointerEvent<HTMLButtonElement>, commit: boolean) => {
     if (!drag.current || drag.current.pointer !== event.pointerId) return;

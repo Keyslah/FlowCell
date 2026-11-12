@@ -158,7 +158,9 @@ export async function captureToolsetPackage(
       allowLabelResize: placement.allowLabelResize,
       matchHitboxToSkin: placement.matchHitboxToSkin,
       allowStretching: placement.allowStretching,
-      highlightOnHover: placement.highlightOnHover
+      highlightOnHover: placement.highlightOnHover,
+      activationCycle: cloneButtonDocument(placement.activationCycle),
+      visualStateMap: cloneButtonDocument(placement.visualStateMap)
     };
   }
 

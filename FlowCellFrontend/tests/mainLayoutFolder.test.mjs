@@ -22,6 +22,7 @@ import {
 } from "./.compiled-button-system/button/geometry/buttonGeometry.js";
 import { cloneButtonDocument, createButtonStateDocument } from "./.compiled-button-system/button/state/buttonDefaults.js";
 import { ensureRegularPopout } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
+import { defaultPanelButtonSize } from "./.compiled-button-system/button/state/buttonPanelDefaults.js";
 import { createButtonSourceIdentity } from "./.compiled-button-system/button/state/sourceIdentity.js";
 import { validateButtonStateDocument } from "./.compiled-button-system/button/state/buttonStateValidation.js";
 
@@ -94,6 +95,7 @@ function mainPopHarness(fixture, selectedIds = []) {
       return current;
     },
     ensureRegularPopout, cloneButtonDocument, createStarterButtonLayout, buttonSpacingPixelsFromMillimeters, orderButtonRectsByVisualRows,
+    defaultPanelButtonSize, PANEL_BUTTON_GAP,
     areFolderNamesEqual: (left, right) => left?.trim().toLowerCase() === right?.trim().toLowerCase(),
     openButtonPopoutWindow: async (args) => opened.push(structuredClone(args)),
     activateToolSetOwner: async (id, document, behavior) => toolSets.push({ id, behavior, document }),
@@ -178,18 +180,18 @@ for (const count of [2, 8, 9]) {
     const unit = harness.document.popoutUnits[harness.opened[0].popoutUnitId];
     const placements = Array.from(unit.memberPlacementIds, (id) => harness.document.placements[id]);
     assert.deepEqual(placements.map((placement) => placement.buttonId), selected, "grid follows Main's visible row order");
-    assert.deepEqual(placements.map((placement) => placement.y), selected.map((_, index) => 8 + Math.floor(index / 4) * 40));
+    assert.deepEqual(placements.map((placement) => placement.y), selected.map((_, index) => 8 + Math.floor(index / 4) * 48));
     assert.equal(new Set(placements.map((placement) => placement.y)).size, Math.ceil(count / 4));
     for (let index = 0; index < placements.length; index += 1) {
       const placement = placements[index];
       const source = fixture.document.placements[`main-${placement.buttonId}`];
       assert.deepEqual([placement.width, placement.height], [source.width, source.height]);
-      const expectedX = index % 4 === 0 ? 8 : placements[index - 1].x + placements[index - 1].width;
-      assert.equal(placement.x, expectedX, "adjacent grid Buttons have the configured 0 px gap");
+      const expectedX = index % 4 === 0 ? 8 : placements[index - 1].x + placements[index - 1].width + 8;
+      assert.equal(placement.x, expectedX, "adjacent grid Buttons have the same 8 CSS px gap as Main");
     }
     const surface = harness.document.surfaces[unit.surfaceId];
-    assert.equal(surface.width, count === 2 ? 240 : 496);
-    assert.equal(surface.height, 16 + Math.ceil(count / 4) * 40);
+    assert.equal(surface.width, count === 2 ? 248 : 520);
+    assert.equal(surface.height, 16 + Math.ceil(count / 4) * 40 + (Math.ceil(count / 4) - 1) * 8);
     assert.deepEqual(JSON.parse(JSON.stringify(unit.canonicalBounds)), { x: 0, y: 0, width: surface.width, height: surface.height });
   });
 }

@@ -1,4 +1,9 @@
 import { isButtonSkinVariantCount } from "../skins/buttonSkinFamily.js";
+import {
+  validateButtonPlacementActivationCycle,
+  validateButtonVisualStateMap,
+  type ButtonStateValidationIssue
+} from "./buttonStateValidation.js";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -432,7 +437,7 @@ export function validateInstalledButtonLayout<T>(layout: T, childSlots?: readonl
       if (!isRecord(presentation)) invalid(path, "must be an object.");
       rejectUnknownKeys(presentation, ["textFitMode", "textAlignment", "textOffsetX", "textOffsetY",
         "minimumFontSize", "textSizeOverride", "allowLabelResize", "matchHitboxToSkin",
-        "allowStretching", "highlightOnHover"], path);
+        "allowStretching", "highlightOnHover", "activationCycle", "visualStateMap"], path);
       if (!["shrink", "stack-whole-words", "shrink-and-stack"].includes(String(presentation.textFitMode))) {
         invalid(`${path}.textFitMode`, "is not supported.");
       }
@@ -449,6 +454,17 @@ export function validateInstalledButtonLayout<T>(layout: T, childSlots?: readonl
       for (const key of ["allowLabelResize", "matchHitboxToSkin", "allowStretching", "highlightOnHover"] as const) {
         if (typeof presentation[key] !== "boolean") invalid(`${path}.${key}`, "must be boolean.");
       }
+      const issues: ButtonStateValidationIssue[] = [];
+      if (presentation.activationCycle !== undefined && presentation.activationCycle !== null) {
+        validateJsonValue(presentation.activationCycle, `${path}.activationCycle`);
+        validateButtonPlacementActivationCycle(presentation.activationCycle, `${path}.activationCycle`, issues);
+      }
+      if (presentation.visualStateMap !== undefined && presentation.visualStateMap !== null) {
+        validateJsonValue(presentation.visualStateMap, `${path}.visualStateMap`);
+        validateButtonVisualStateMap(presentation.visualStateMap, undefined, presentation.activationCycle,
+          `${path}.visualStateMap`, issues);
+      }
+      if (issues.length) invalid(issues[0].path, issues[0].message);
     }
   }
 

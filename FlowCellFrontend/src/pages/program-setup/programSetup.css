@@ -6,7 +6,7 @@
   scrollbar-gutter: stable;
   padding: 24px;
   color: #27231d;
-  background: #887f73 url("../../assets/backgrounds/chipped-concrete-base.webp") center / cover fixed;
+  background: #887f73;
   font: 14px/1.45 Inter, "Segoe UI", sans-serif;
 }
 
@@ -160,8 +160,7 @@
   min-width: 0;
 }
 
-.program-setup__inline button,
-.program-setup__inline .chipped-concrete-action-button {
+.program-setup__inline button {
   margin-top: 6px;
 }
 

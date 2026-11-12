@@ -6,6 +6,7 @@ import ts from "typescript";
 import * as closeControlHelpers from "./.compiled-button-system/button/windows/buttonWindowCloseControl.js";
 import {
   buttonWindowClosePosition,
+  constrainButtonWindowClosePosition,
   closeControlPositionFromOffset,
   closeControlOffsetFromPosition,
   isButtonWindowCloseOffset,
@@ -109,6 +110,38 @@ test("Close X physical offsets round-trip across WebView scales and follow group
   for (const invalid of [null, { x: NaN, y: 0 }, { x: 0, y: Infinity }, { x: 0 }, { x: 0, y: 0, extra: 1 }]) assert.equal(isButtonWindowCloseOffset(invalid), false);
 });
 
+test("X stays 10 CSS pixels outside every side and corner of the Button bounds", () => {
+  const frame = { left: 200, top: 200, width: 200, height: 100 };
+  const positions = [
+    [{ left: 900, top: 225 }, { left: 410, top: 225 }],
+    [{ left: -900, top: 225 }, { left: 134, top: 225 }],
+    [{ left: 250, top: -900 }, { left: 250, top: 134 }],
+    [{ left: 250, top: 900 }, { left: 250, top: 310 }],
+    [{ left: -900, top: -900 }, { left: 134, top: 134 }],
+    [{ left: 900, top: -900 }, { left: 410, top: 134 }],
+    [{ left: -900, top: 900 }, { left: 134, top: 310 }],
+    [{ left: 900, top: 900 }, { left: 410, top: 310 }]
+  ];
+  for (const [preferred, expected] of positions) {
+    assert.deepEqual(constrainButtonWindowClosePosition(frame, preferred), expected);
+    for (const ratio of [1, 1.05, 1.575]) {
+      const saved = closeControlOffsetFromPosition(frame, expected, ratio);
+      assert.deepEqual(constrainButtonWindowClosePosition(frame, closeControlPositionFromOffset(frame, saved, ratio)), expected);
+    }
+  }
+});
+
+test("X selects a reachable perimeter edge near the screen boundary", () => {
+  const viewport = { width: 1000, height: 700 };
+  assert.deepEqual(constrainButtonWindowClosePosition(
+    { left: 800, top: 100, width: 200, height: 100 }, { left: 1010, top: 100 }, viewport
+  ), { left: 944, top: 34 });
+  const fullscreen = constrainButtonWindowClosePosition(
+    { left: 0, top: 0, ...viewport }, { left: 1200, top: -500 }, viewport
+  );
+  assert.deepEqual(fullscreen, { left: 944, top: 0 });
+});
+
 // Run the real hook and event handlers with only React/native boundaries mocked.
 const hookSource = readFileSync(new URL("../src/button/windows/useButtonWindowCloseControl.tsx", import.meta.url), "utf8");
 const compiledHook = ts.transpileModule(hookSource, {
@@ -179,6 +212,7 @@ function closeControlHarness(t, savedOffset) {
     offsets, errors, captures,
     get closes() { return closes; },
     get position() { return { left: result.control.props.style.left, top: result.control.props.style.top }; },
+    setFrame(frame) { args.frame = frame; render(); },
     event(handler, options = {}) {
       const event = {
         button: 0, pointerId: 1, clientX: 330, clientY: 120, currentTarget: target,
@@ -219,13 +253,13 @@ for (const jitter of [0, 2]) {
   });
 }
 
-test("Space drag moves only X, suppresses close after returning to its start, and permits a fresh click", (t) => {
+test("Space drag moves X along the group edge, suppresses close after returning to its start, and permits a fresh click", (t) => {
   const h = closeControlHarness(t, { x: 315, y: 0 });
   const position = h.position;
   h.event("onPointerDown");
-  h.event("onPointerMove", { clientX: 334 });
-  assert.equal(h.position.left, position.left + 4);
-  assert.deepEqual(h.offsets.at(-1), { x: 321, y: 0 }, "drag offsets retain physical-pixel scaling");
+  h.event("onPointerMove", { clientY: 124 });
+  assert.deepEqual(h.position, { left: position.left, top: position.top + 4 });
+  assert.deepEqual(h.offsets.at(-1), { x: 315, y: 6 }, "drag offsets retain physical-pixel scaling");
   h.event("onPointerMove");
   h.event("onPointerUp");
   h.event("onLostPointerCapture");
@@ -236,6 +270,30 @@ test("Space drag moves only X, suppresses close after returning to its start, an
   h.event("onClick");
   assert.equal(h.closes, 1);
 });
+
+test("restored detached offsets follow the Button perimeter after layout changes", (t) => {
+  const h = closeControlHarness(t, { x: 1200, y: 750 });
+  assert.deepEqual(h.position, { left: 310, top: 210 });
+  h.setFrame({ left: 150, top: 200, width: 100, height: 50 });
+  assert.deepEqual(h.position, { left: 260, top: 260 });
+});
+
+for (const [side, position, pointer] of [
+  ["top", { left: 150, top: 34 }, { clientX: 170, clientY: 54 }],
+  ["left", { left: 34, top: 120 }, { clientX: 54, clientY: 140 }],
+  ["bottom", { left: 150, top: 210 }, { clientX: 170, clientY: 230 }],
+  ["right", { left: 310, top: 120 }, { clientX: 330, clientY: 140 }]
+]) {
+  test(`Space drag can place X along the ${side} side without detaching`, (t) => {
+    const h = closeControlHarness(t);
+    h.event("onPointerDown");
+    h.event("onPointerMove", pointer);
+    h.event("onPointerUp", pointer);
+    assert.deepEqual(h.position, position);
+    h.event("onClick");
+    assert.equal(h.closes, 0);
+  });
+}
 
 for (const cancellation of ["onPointerCancel", "onLostPointerCapture"]) {
   test(`${cancellation} restores X placement and cannot close the window`, (t) => {

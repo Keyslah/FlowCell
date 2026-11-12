@@ -183,9 +183,8 @@
 --neon-fill-right:50%;
 --neon-fill-top:50%;
 --neon-fill-bottom:50%;
---neon-horizontal-width:100%;
---neon-vertical-height:100%;
---anim-line-arm:fc-final-skull-outline-arm 1s linear 0.06s infinite;
+--neon-horizontal-width:15px;
+--neon-vertical-height:15px;
 --anim-state-snap:fc-final-skull-snap-inactive calc((100cqw - 64cqh) / 400cqh * 1s) steps(1,end) 0s 1 forwards;
 --anim-skull-shift:fc-final-skull-drag-left calc((100cqw - 99.33cqh) / 400cqh * 1s) linear 0.088325s 1 both;
 --anim-arm-sweep:fc-final-skull-reach-off 0.088325s linear 0s 1 forwards,fc-final-skull-withdraw-off calc((100cqw - 64cqh) / 400cqh * 1s) linear calc((100cqw - 64cqh) / 400cqh * 1s) 1 forwards;

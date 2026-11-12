@@ -1,4 +1,3 @@
-import ChippedConcreteActionButton from "../../button/ChippedConcreteActionButton";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -1244,13 +1243,13 @@ export default function ThemeEditorPage({
           <p>Interface colors, Button appearance, and authored arrangements.</p>
         </div>
         <div className="theme-editor__header-actions">
-          <ChippedConcreteActionButton type="button" disabled={pending} onClick={() => void handleLoadTheme()}>Open Theme</ChippedConcreteActionButton>
-          <ChippedConcreteActionButton type="button" disabled={pending || !draftDocument} onClick={() => void handleSaveTheme()}>Save Theme</ChippedConcreteActionButton>
-          <ChippedConcreteActionButton type="button" disabled={pending} onClick={() => setLibraryMode("import")}>Import Theme</ChippedConcreteActionButton>
-          <ChippedConcreteActionButton type="button" disabled={pending} onClick={() => void handleExportTheme()}>Export Theme</ChippedConcreteActionButton>
-          <ChippedConcreteActionButton type="button" disabled={pending || !draftDocument} onClick={() => void handleApply()}>Apply</ChippedConcreteActionButton>
-          <ChippedConcreteActionButton type="button" disabled={pending} onClick={resetDraftFromCanonical}>Discard</ChippedConcreteActionButton>
-          <ChippedConcreteActionButton type="button" disabled={pending} onClick={() => void getCurrentWindow().close()}>Close</ChippedConcreteActionButton>
+          <button type="button" disabled={pending} onClick={() => void handleLoadTheme()}>Open Theme</button>
+          <button type="button" disabled={pending || !draftDocument} onClick={() => void handleSaveTheme()}>Save Theme</button>
+          <button type="button" disabled={pending} onClick={() => setLibraryMode("import")}>Import Theme</button>
+          <button type="button" disabled={pending} onClick={() => void handleExportTheme()}>Export Theme</button>
+          <button type="button" disabled={pending || !draftDocument} onClick={() => void handleApply()}>Apply</button>
+          <button type="button" disabled={pending} onClick={resetDraftFromCanonical}>Discard</button>
+          <button type="button" disabled={pending} onClick={() => void getCurrentWindow().close()}>Close</button>
         </div>
       </header>}
 
@@ -1278,8 +1277,8 @@ export default function ThemeEditorPage({
           </label>
         ) : null}
         {showingProgramPage && contributionAvailable === true &&
-          <ChippedConcreteActionButton className="theme-editor__program-import" type="button" disabled={pending}
-            onClick={() => setLibraryMode("import")}>Import Theme</ChippedConcreteActionButton>}
+          <button className="theme-editor__program-import" type="button" disabled={pending}
+            onClick={() => setLibraryMode("import")}>Import Theme</button>}
         {!showingProgramPage && <p className="theme-editor__scope-summary">
           {scopedPlacements.length} Button occurrence{scopedPlacements.length === 1 ? "" : "s"} in scope
           {surfaceSummary ? ` · ${surfaceSummary}` : ""}
@@ -1349,7 +1348,7 @@ export default function ThemeEditorPage({
                           </select>
                         </label>
                         <output>{current.path ?? "No custom image selected"}</output>
-                        <ChippedConcreteActionButton type="button" onClick={() => void handleBrowsePageAsset(asset)}>Browse</ChippedConcreteActionButton>
+                        <button type="button" onClick={() => void handleBrowsePageAsset(asset)}>Browse</button>
                       </div>
                     );
                   })}
@@ -1385,7 +1384,7 @@ export default function ThemeEditorPage({
                     updateDraft((document) => { document.placements[selectedPlacement.id][field] = field === "zIndex" ? Math.round(value) : value; }, [selectedPlacement.id]);
                   }} />
               </label>)}
-              <ChippedConcreteActionButton onClick={() => void openButtonEditorWindow({ buttonId: selectedButton.id, surfaceId: selectedPlacement.surfaceId })}>Open Button Editor</ChippedConcreteActionButton>
+              <button type="button" onClick={() => void openButtonEditorWindow({ buttonId: selectedButton.id, surfaceId: selectedPlacement.surfaceId })}>Open Button Editor</button>
             </div>}
           </section>
           <section className="theme-editor__card">
@@ -1395,10 +1394,10 @@ export default function ThemeEditorPage({
                 <p>One gradient/scatter rule is applied to every Button in the selected scope.</p>
               </div>
               <div className="theme-editor__section-actions">
-                <ChippedConcreteActionButton type="button" disabled={!draftDocument || scopedPlacements.length === 0} onClick={() => applyGradient()}>
+                <button type="button" disabled={!draftDocument || scopedPlacements.length === 0} onClick={() => applyGradient()}>
                   Apply Gradient
-                </ChippedConcreteActionButton>
-                <ChippedConcreteActionButton
+                </button>
+                <button
                   type="button"
                   disabled={!draftDocument || scopedPlacements.length === 0}
                   onClick={() => applyGradient({
@@ -1409,7 +1408,7 @@ export default function ThemeEditorPage({
                   })}
                 >
                   Apply One Color
-                </ChippedConcreteActionButton>
+                </button>
               </div>
             </div>
             <div className="theme-editor__gradient-grid">
@@ -1454,13 +1453,13 @@ export default function ThemeEditorPage({
                   updateGradient((current) => ({ ...current, scatter }));
                 }} />
               </label>
-              <ChippedConcreteActionButton
+              <button
                 type="button"
                 onClick={() => applyGradient({ ...gradient, seed: gradient.seed + 1 })}
                 disabled={!draftDocument || scopedPlacements.length === 0}
               >
                 Reshuffle
-              </ChippedConcreteActionButton>
+              </button>
             </div>
           </section>
 
@@ -1580,13 +1579,13 @@ export default function ThemeEditorPage({
                 <strong>{selectedSkinIdentity?.label ?? selectedSkin?.name ?? "No assigned skin"}</strong>
                 <small>{selectedButton?.label ?? "Select a Button occurrence"}</small>
               </div>
-              <ChippedConcreteActionButton
+              <button
                 type="button"
                 disabled={!selectedPlacement || !selectedSavedSkinPath}
                 onClick={handleAssignSkin}
               >
                 Assign Skin
-              </ChippedConcreteActionButton>
+              </button>
             </div>
             <label className="theme-editor__toggle theme-editor__assignment-scope">
               <input

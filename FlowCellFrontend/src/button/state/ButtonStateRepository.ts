@@ -26,6 +26,7 @@ import {
   validateButtonStateDocument
 } from "./buttonStateValidation.js";
 import { createButtonSourceIdentity } from "./sourceIdentity.js";
+import { arrangeDefaultPanelButtons, defaultPanelButtonSize } from "./buttonPanelDefaults.js";
 import { applyInstalledSourceUpdate } from "./sourceUpdateOperations.js";
 import { prepareLastLayoutPanelUpdates } from "./lastLayoutPanelUpdates.js";
 import { readLastLayoutPath } from "../../lib/startupSettings.js";
@@ -822,7 +823,7 @@ function addMigratedSingle(
     metadata: install.themeContributionOnly ? { themeContributionOnly: true } : undefined
   });
   if (install.themeContributionOnly) return;
-  const rect = nextMigrationPanelRect(document, panelSurface);
+  const rect = nextMigrationPanelRect(document, panelSurface, install.ownerButtonId);
   addMigratedPlacement(
     document,
     panelSurface,
@@ -834,10 +835,14 @@ function addMigratedSingle(
 
 function nextMigrationPanelRect(
   document: ButtonStateDocument,
-  panelSurface: ButtonSurface
+  panelSurface: ButtonSurface,
+  buttonId?: string
 ): ButtonRect {
-  const width = panelSurface.uniformButtonSize?.width ?? 160;
-  const height = panelSurface.uniformButtonSize?.height ?? 44;
+  const size = buttonId && document.buttons[buttonId]
+    ? defaultPanelButtonSize(document, document.buttons[buttonId])
+    : { width: 160, height: 44 };
+  const width = panelSurface.uniformButtonSize?.width ?? size.width;
+  const height = panelSurface.uniformButtonSize?.height ?? size.height;
   const occupied = panelSurface.placementIds.flatMap((placementId) => {
     const placement = document.placements[placementId];
     return placement ? [placement] : [];
@@ -937,7 +942,7 @@ function addMigratedToolSet(
       childRects[index],
       false
     );
-    Object.assign(placement, layout?.placementPresentation?.[child.slot]);
+    Object.assign(placement, cloneButtonDocument(layout?.placementPresentation?.[child.slot] ?? {}));
     appearanceTargets.push({ placement, skinKey: layout?.appearance?.children?.[child.slot] });
   });
   assignInstalledToolSetSkins(document, layout?.appearance, appearanceTargets);
@@ -970,18 +975,21 @@ export function mergeLegacyInstallsIntoDocument(
   installs: readonly InstallButtonSourceResult[]
 ): ButtonStateDocument {
   const document = cloneButtonDocument(base);
+  const newPanelSurfaceIds = new Set<string>();
   for (const install of installs) {
     if (migrationInstallIsRepresented(document, install)) continue;
     if (document.buttons[install.ownerButtonId]) {
       throw new Error(`Migration owner '${install.ownerButtonId}' conflicts with an existing Button.`);
     }
     const panelSurface = ensureMigrationPanelSurface(document, install.sourceIdentity);
+    if (!base.surfaces[panelSurface.id]) newPanelSurfaceIds.add(panelSurface.id);
     if (install.children.length > 0) {
       addMigratedToolSet(document, install, panelSurface);
     } else {
       addMigratedSingle(document, install, panelSurface);
     }
   }
+  for (const surfaceId of newPanelSurfaceIds) arrangeDefaultPanelButtons(document, surfaceId);
   if (!document.surfaces[DEFAULT_BUTTON_SURFACE_ID]) {
     throw new Error("Canonical Button state is missing its main surface.");
   }

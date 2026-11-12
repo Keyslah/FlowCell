@@ -10,6 +10,9 @@ import { serializeButtonSkinSections } from "./.compiled-button-system/button/sk
 import { resolveEmbeddedButtonSkinFamilySource } from "./.compiled-button-system/button/skins/buttonSkinFamily.js";
 import { capturePortableTheme, planPortableThemeImport, applyPortableTheme } from "./.compiled-button-system/theme/portableTheme.js";
 import { listThemePlacements } from "./.compiled-button-system/theme/themeModel.js";
+import { validateInstalledButtonLayout } from "./.compiled-button-system/button/state/installedButtonLayoutValidation.js";
+import { applyInstalledSourceUpdate } from "./.compiled-button-system/button/state/sourceUpdateOperations.js";
+import { resolveButtonAppearance, resolveButtonPlacementActivationStateIndexFromResponse } from "./.compiled-button-system/button/runtime/buttonActivationState.js";
 
 function install(document, layout = {}, ownerButtonId = "owner") {
   const surface = Object.values(document.surfaces)[0];
@@ -23,6 +26,94 @@ function install(document, layout = {}, ownerButtonId = "owner") {
     } }], layout
   }]);
 }
+
+function livePresentation(document) {
+  const unit = Object.values(document.popoutUnits)[0];
+  const placement = document.placements[unit.childPlacementIds[0]];
+  return {
+    ...Object.fromEntries(["textFitMode", "textAlignment", "textOffsetX", "textOffsetY", "minimumFontSize",
+      "textSizeOverride", "allowLabelResize", "matchHitboxToSkin", "allowStretching", "highlightOnHover"]
+      .map((key) => [key, placement[key]])),
+    activationCycle: { states: [
+      { id: "off", label: "Live off", advanceTrigger: "press", visualState: "release", resultMatches: [{ Live: false }] },
+      { id: "on", label: "Live on", advanceTrigger: "press", visualState: "held", resultMatches: [{ Live: true }] }
+    ] },
+    visualStateMap: { off: { hover: "hover", pressed: "pressed" }, on: { hover: "held", pressed: "held" } }
+  };
+}
+
+test("tool-set export and fresh import preserve independent Live cycle and visual mapping", async () => {
+  const donor = install(createButtonStateDocument());
+  const unit = Object.values(donor.popoutUnits)[0];
+  const original = donor.placements[unit.childPlacementIds[0]];
+  Object.assign(original, livePresentation(donor));
+  const capture = await captureToolsetPackage(donor, unit, async () => { throw Error("Unexpected library access"); });
+  const archived = capture.layout.placementPresentation.run;
+  assert.deepEqual(archived.activationCycle, original.activationCycle);
+  assert.deepEqual(archived.visualStateMap, original.visualStateMap);
+  assert.notEqual(archived.activationCycle, original.activationCycle);
+  assert.notEqual(archived.visualStateMap, original.visualStateMap);
+  const layout = JSON.parse(JSON.stringify({ ...capture.layout, fields: [], appearance: capture.appearance }));
+  validateInstalledButtonLayout(layout, ["run"]);
+  const recipient = install(createButtonStateDocument(), layout, "recipient");
+  const importedUnit = Object.values(recipient.popoutUnits)[0];
+  const imported = recipient.placements[importedUnit.childPlacementIds[0]];
+  assert.deepEqual(imported.activationCycle, archived.activationCycle);
+  assert.deepEqual(imported.visualStateMap, archived.visualStateMap);
+  assert.notEqual(imported.activationCycle, layout.placementPresentation.run.activationCycle);
+  assert.notEqual(imported.visualStateMap, layout.placementPresentation.run.visualStateMap);
+  const appearance = { hovered: true, pressed: false, held: false, play: false, release: false,
+    selected: false, disabled: false, error: false };
+  for (const [Live, visualState] of [[false, "hover"], [true, "held"]]) {
+    const activeStateIndex = resolveButtonPlacementActivationStateIndexFromResponse(imported.activationCycle, { Live });
+    assert.equal(activeStateIndex, Live ? 1 : 0);
+    assert.equal(resolveButtonAppearance({ activationBehavior: null, buttonLabel: "Live", activeStateIndex,
+      activationCycle: imported.activationCycle, visualStateMap: imported.visualStateMap, appearance }).visualState, visualState);
+  }
+});
+
+test("packaged placement states accept old or null fields and reject malformed cycles and maps", () => {
+  const presentation = livePresentation(install(createButtonStateDocument()));
+  const check = (value) => validateInstalledButtonLayout({ placementPresentation: { run: value } }, ["run"]);
+  const { activationCycle, visualStateMap, ...legacy } = presentation;
+  assert.doesNotThrow(() => check(legacy));
+  assert.doesNotThrow(() => check({ ...legacy, activationCycle: null, visualStateMap: null }));
+  for (const value of [
+    { ...presentation, activationCycle: { states: [activationCycle.states[0]] } },
+    { ...presentation, activationCycle: { states: [activationCycle.states[0], activationCycle.states[0]] } },
+    { ...presentation, activationCycle: { states: [{ ...activationCycle.states[0], advanceTrigger: "click" }, activationCycle.states[1]] } },
+    { ...presentation, activationCycle: { states: [{ ...activationCycle.states[0], visualState: "missing" }, activationCycle.states[1]] } },
+    { ...presentation, visualStateMap: { absent: { hover: "hover" } } },
+    { ...presentation, visualStateMap: { off: { hover: "missing" } } },
+    { ...presentation, visualStateMap: { off: { click: "pressed" } } },
+    { ...presentation, activationCycle: null }
+  ]) assert.throws(() => check(value), /placementPresentation\.run\.(activationCycle|visualStateMap)/);
+});
+
+test("source updates preserve custom existing states and clone packaged states for appended children", () => {
+  const document = install(createButtonStateDocument());
+  const unit = Object.values(document.popoutUnits)[0];
+  const existing = document.placements[unit.childPlacementIds[0]];
+  Object.assign(existing, livePresentation(document));
+  existing.activationCycle.states[0].label = "Custom off";
+  const saved = structuredClone(existing);
+  const packaged = livePresentation(document);
+  const children = ["run", "live"].map((slot) => ({ slot, label: slot, executionTarget: {
+    kind: "tool-set-action", programName: "Example", panelName: "Tools", ownerFileName: "owner.flowcell-source.json", command: slot
+  } }));
+  applyInstalledSourceUpdate(document, {
+    ownerButtonId: "owner", sourceIdentity: createButtonSourceIdentity("Example", "Tools", "owner.flowcell-source.json"),
+    label: "Shared", tooltip: "", executionTarget: null, children,
+    layout: { updatePolicy: { appendMissingChildSlots: true }, placementPresentation: { run: packaged, live: packaged } }
+  });
+  assert.deepEqual(existing, saved);
+  const child = Object.values(document.buttons).find((button) => button.metadata.toolSetSlot === "live");
+  const appended = Object.values(document.placements).find((placement) => placement.buttonId === child.id);
+  assert.deepEqual(appended.activationCycle, packaged.activationCycle);
+  assert.deepEqual(appended.visualStateMap, packaged.visualStateMap);
+  assert.notEqual(appended.activationCycle, packaged.activationCycle);
+  assert.notEqual(appended.visualStateMap, packaged.visualStateMap);
+});
 
 test("Theme Save embeds the donor's disk family and restores future variants in a fresh recipient", async () => {
   const donor = install(createButtonStateDocument());

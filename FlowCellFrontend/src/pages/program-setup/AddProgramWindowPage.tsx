@@ -14,7 +14,6 @@ import {
 } from "../../lib/programRails";
 import { showOpenFileDialog } from "../../lib/tauri";
 import { applyManagedProgramPlan } from "./applyManagedProgramPlan";
-import ProgramSetupButton from "../../button/ChippedConcreteActionButton";
 import "./programSetup.css";
 
 type SetupMode = "register" | "everything" | "custom";
@@ -418,12 +417,12 @@ export default function AddProgramWindowPage() {
 
   if (completedSetup) {
     return <main className="program-setup">
-      <header className="program-setup__header"><h1>{completedSetup.programName} setup</h1><ProgramSetupButton type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</ProgramSetupButton></header>
+      <header className="program-setup__header"><h1>{completedSetup.programName} setup</h1><button type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</button></header>
       <section className="program-setup__card" aria-live="polite">
         <h2>{completedSetup.status === "needsHostInitialization" ? "Finish application setup" : "Setup ready"}</h2>
         <p>{completedSetup.message}</p>
         {completedSetup.restartNotes ? <p>{completedSetup.restartNotes}</p> : null}
-        {completedSetup.status === "needsHostInitialization" ? <ProgramSetupButton type="button" onClick={() => void recheckSetup(completedSetup.programName)} disabled={busy}>Recheck setup</ProgramSetupButton> : null}
+        {completedSetup.status === "needsHostInitialization" ? <button type="button" onClick={() => void recheckSetup(completedSetup.programName)} disabled={busy}>Recheck setup</button> : null}
         <p className="program-setup__status">{status}</p>
       </section>
     </main>;
@@ -437,7 +436,7 @@ export default function AddProgramWindowPage() {
     <main className="program-setup">
       <header className="program-setup__header">
         <div><h1>Add Program</h1></div>
-        <ProgramSetupButton type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</ProgramSetupButton>
+        <button type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</button>
       </header>
 
       {setupStatusError ? <p className="program-setup__status" role="alert">{setupStatusError}</p> : null}
@@ -447,18 +446,18 @@ export default function AddProgramWindowPage() {
           <h2>{entry.programName}: setup incomplete</h2>
           <p>{entry.message}</p>
           {entry.restartNotes ? <p>{entry.restartNotes}</p> : null}
-          <ProgramSetupButton type="button" onClick={() => void recheckSetup(entry.programName)} disabled={busy}>Recheck setup</ProgramSetupButton>
+          <button type="button" onClick={() => void recheckSetup(entry.programName)} disabled={busy}>Recheck setup</button>
         </section>
       ))}
 
       <section className="program-setup__card program-setup__import">
         <div><strong>Have a FlowCell program ZIP?</strong><p>Import it here, then choose what to add.</p></div>
-        <ProgramSetupButton type="button" onClick={() => void importPackage()} disabled={busy}>Import program ZIP</ProgramSetupButton>
+        <button type="button" onClick={() => void importPackage()} disabled={busy}>Import program ZIP</button>
       </section>
 
       <section className="program-setup__modes" aria-label="Program source">
-        <ProgramSetupButton className={setupSource === "plain" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("plain")} disabled={busy}>Any program</ProgramSetupButton>
-        <ProgramSetupButton className={setupSource === "package" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("package")} disabled={busy || inventory.packages.length === 0}>Managed package</ProgramSetupButton>
+        <button className={setupSource === "plain" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("plain")} disabled={busy}>Any program</button>
+        <button className={setupSource === "package" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("package")} disabled={busy || inventory.packages.length === 0}>Managed package</button>
       </section>
 
       {setupSource === "plain" ? (
@@ -470,17 +469,17 @@ export default function AddProgramWindowPage() {
             <label>Application executable
               <div className="program-setup__inline">
                 <input value={plainExecutablePath} onChange={(event) => { setPlainExecutablePath(event.target.value); setStatus("Add the Program when the name and EXE path are ready."); }} disabled={busy} />
-                <ProgramSetupButton type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: "Choose the application executable", filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
+                <button type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: "Choose the application executable", filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
                   const selectedPath = paths[0];
                   if (!selectedPath) return;
                   setPlainExecutablePath(selectedPath);
                   setPlainProgramName((current) => current.trim() || inferProgramNameFromExecutable(selectedPath));
                   setStatus("Add the Program when the name and EXE path are ready.");
-                })}>Browse</ProgramSetupButton>
+                })}>Browse</button>
               </div>
             </label>
           </section>
-          <footer className="program-setup__footer"><p className="program-setup__status">{status}</p><div><ProgramSetupButton className="program-setup__primary" type="button" onClick={() => void addPlainProgram()} disabled={busy || !plainProgramName.trim() || !plainExecutablePath.trim()}>{busy ? "Installing…" : "Install"}</ProgramSetupButton></div></footer>
+          <footer className="program-setup__footer"><p className="program-setup__status">{status}</p><div><button className="program-setup__primary" type="button" onClick={() => void addPlainProgram()} disabled={busy || !plainProgramName.trim() || !plainExecutablePath.trim()}>{busy ? "Installing…" : "Install"}</button></div></footer>
         </>
       ) : selectedProgram ? (
         <>
@@ -497,19 +496,19 @@ export default function AddProgramWindowPage() {
               </select> : null}
               <div className="program-setup__inline">
                 <input value={executablePath} onChange={(event) => { setExecutablePath(event.target.value); markSelectionChanged(); }} disabled={busy} />
-                <ProgramSetupButton type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: `Choose ${selectedProgram.programName} host executable`, filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
+                <button type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: `Choose ${selectedProgram.programName} host executable`, filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
                   if (!paths[0]) return;
                   setExecutablePath(paths[0]); markSelectionChanged();
-                })}>Browse</ProgramSetupButton>
-                <ProgramSetupButton type="button" disabled={busy} onClick={() => void refreshDetection()}>Find installed</ProgramSetupButton>
+                })}>Browse</button>
+                <button type="button" disabled={busy} onClick={() => void refreshDetection()}>Find installed</button>
               </div>
             </label>
           </section>
 
           <section className="program-setup__modes" aria-label="Setup mode">
-            <ProgramSetupButton className={mode === "register" ? "is-active" : ""} type="button" onClick={() => applyMode("register")} disabled={busy}>Register program only</ProgramSetupButton>
-            <ProgramSetupButton className={mode === "everything" ? "is-active" : ""} type="button" onClick={() => applyMode("everything")} disabled={busy}>Add everything</ProgramSetupButton>
-            <ProgramSetupButton className={mode === "custom" ? "is-active" : ""} type="button" onClick={() => applyMode("custom")} disabled={busy}>Custom</ProgramSetupButton>
+            <button className={mode === "register" ? "is-active" : ""} type="button" onClick={() => applyMode("register")} disabled={busy}>Register program only</button>
+            <button className={mode === "everything" ? "is-active" : ""} type="button" onClick={() => applyMode("everything")} disabled={busy}>Add everything</button>
+            <button className={mode === "custom" ? "is-active" : ""} type="button" onClick={() => applyMode("custom")} disabled={busy}>Custom</button>
           </section>
 
           <section className="program-setup__card program-setup__panels" aria-label="Panels and their contents">
@@ -545,7 +544,7 @@ export default function AddProgramWindowPage() {
             })}
           </section>
 
-          <footer className="program-setup__footer"><p className="program-setup__status" role="status">{status}</p><div><ProgramSetupButton className="program-setup__primary" type="button" onClick={() => void installProgram()} disabled={busy || !executablePath.trim()}>{busy ? "Installing…" : "Install"}</ProgramSetupButton></div></footer>
+          <footer className="program-setup__footer"><p className="program-setup__status" role="status">{status}</p><div><button className="program-setup__primary" type="button" onClick={() => void installProgram()} disabled={busy || !executablePath.trim()}>{busy ? "Installing…" : "Install"}</button></div></footer>
         </>
       ) : (
         <section className="program-setup__card"><p>No validated, unregistered managed Program packages are available. Import a FlowCell program ZIP above. Choose Any program to add an executable directly.</p></section>

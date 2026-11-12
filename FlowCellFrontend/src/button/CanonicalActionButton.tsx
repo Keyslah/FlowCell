@@ -1,8 +1,3 @@
-import { useMemo } from "react";
-import { ButtonHost } from "./ButtonHost";
-import { getChippedConcreteButtonSkin } from "./skins/chippedConcreteButtonSkin";
-import type { ButtonPlacement, ButtonRecord } from "./types";
-
 export interface CanonicalActionButtonProps {
   id: string;
   label: string;
@@ -24,59 +19,18 @@ export function CanonicalActionButton({
   className,
   onActivate
 }: CanonicalActionButtonProps) {
-  const skin = getChippedConcreteButtonSkin(label);
-  const button = useMemo<ButtonRecord>(() => ({
-    id,
-    role: "panel-owner",
-    sourceIdentity: null,
-    label,
-    tooltip,
-    executionTarget: null,
-    defaultSkinId: skin.id,
-    defaultTextFitMode: "shrink-and-stack",
-    disabled,
-    activationAnimation: null,
-    activationBehavior: null,
-    toolSetParentId: null,
-    toolSetBehavior: null,
-    metadata: {}
-  }), [disabled, id, label, tooltip, skin.id]);
-  const placement = useMemo<ButtonPlacement>(() => ({
-    id: `action-placement:${id}`,
-    buttonId: id,
-    surfaceId: "action-control-surface",
-    x: 0,
-    y: 0,
-    width,
-    height,
-    zIndex: 0,
-    skinOverrideId: null,
-    textFitMode: "shrink-and-stack",
-    textAlignment: "skin",
-    textOffsetX: 0,
-    textOffsetY: 0,
-    minimumFontSize: 8,
-    textSizeOverride: null,
-    allowLabelResize: false,
-    matchHitboxToSkin: true,
-    allowStretching: false,
-    highlightOnHover: false,
-    activationCycle: null,
-    visualStateMap: null,
-    resizeAnchor: "top-left"
-  }), [height, id, width]);
   return (
-    <span
+    <button
+      type="button"
+      id={id}
       className={className}
-      style={{ display: "block", width, height, pointerEvents: "none" }}
+      title={tooltip}
+      disabled={disabled}
+      style={{ display: "block", width, height }}
+      onClick={() => void onActivate()}
     >
-      <ButtonHost
-        button={button}
-        placement={placement}
-        skin={skin}
-        onActivate={() => onActivate()}
-      />
-    </span>
+      {label}
+    </button>
   );
 }
 

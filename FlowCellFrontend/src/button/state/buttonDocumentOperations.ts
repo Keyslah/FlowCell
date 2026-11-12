@@ -11,7 +11,8 @@ import {
   createStarterButtonLayout
 } from "../geometry/buttonGeometry.js";
 import { cloneButtonDocument, createStableButtonId } from "./buttonDefaults.js";
-import { deriveRegularPopoutSelectionKey } from "./sourceIdentity.js";
+import { canonicalSourceIdentity, deriveRegularPopoutSelectionKey } from "./sourceIdentity.js";
+import { arrangeDefaultPanelButtons } from "./buttonPanelDefaults.js";
 
 export interface RemoveOwnedButtonResult {
   removedButtonIds: string[];
@@ -132,6 +133,84 @@ export function ensureRegularPopout(
     selectionKey
   };
   document.popoutUnits[id] = unit;
+  return unit;
+}
+
+/** The editor's default Pop-out represents the panel, not just its focused Button. */
+export function regularPanelButtons(
+  document: ButtonStateDocument,
+  buttonId: string
+): ButtonRecord[] {
+  const identity = document.buttons[buttonId]?.sourceIdentity;
+  if (!identity) return [];
+  const [program, panel] = canonicalSourceIdentity(identity);
+  const candidates = Object.values(document.buttons).filter((button) => {
+    if (button.role !== "single-script" || !button.sourceIdentity || button.metadata.themeContributionOnly === true) return false;
+    const [candidateProgram, candidatePanel] = canonicalSourceIdentity(button.sourceIdentity);
+    return candidateProgram === program && candidatePanel === panel;
+  });
+  const mainPlacement = (id: string) => Object.values(document.placements).find((placement) =>
+    placement.buttonId === id && document.surfaces[placement.surfaceId]?.kind === "panel"
+  );
+  return candidates.sort((left, right) => {
+    const a = mainPlacement(left.id);
+    const b = mainPlacement(right.id);
+    return (a?.y ?? 0) - (b?.y ?? 0) || (a?.x ?? 0) - (b?.x ?? 0) ||
+      (a?.zIndex ?? 0) - (b?.zIndex ?? 0) || left.id.localeCompare(right.id);
+  });
+}
+
+export function ensureDefaultPanelPopout(
+  document: ButtonStateDocument,
+  buttonId: string,
+  options: { resetLayout?: boolean; unitId?: string } = {}
+): RegularButtonPopoutUnit {
+  const buttons = regularPanelButtons(document, buttonId);
+  const existingIds = new Set(Object.keys(document.popoutUnits));
+  const selected = options.unitId ? document.popoutUnits[options.unitId] : null;
+  const selectionKey = deriveRegularPopoutSelectionKey(buttons.map((button) => button.sourceIdentity!));
+  const unit = selected?.kind === "regular" && selected.selectionKey === selectionKey
+    ? selected
+    : ensureRegularPopout(document, buttons, { ownerless: true });
+  const created = !existingIds.has(unit.id);
+  if (!created && !options.resetLayout) return unit;
+  const surface = document.surfaces[unit.surfaceId];
+  const members = unit.memberPlacementIds.map((id) => document.placements[id]);
+  for (const placement of created ? members : []) {
+    const source = Object.values(document.placements).find((candidate) =>
+      candidate.buttonId === placement.buttonId && document.surfaces[candidate.surfaceId]?.kind === "panel"
+    );
+    if (!source) continue;
+    const { id, surfaceId, buttonId: sourceButtonId, ...presentation } = source;
+    Object.assign(placement, cloneButtonDocument(presentation));
+    if (document.themeOverrides?.[id]) {
+      document.themeOverrides[placement.id] = cloneButtonDocument(document.themeOverrides[id]);
+    }
+    const button = document.buttons[placement.buttonId];
+    const skin = document.skins[placement.skinOverrideId ?? button.defaultSkinId];
+    const baseline = skin?.metadata.buttonSkinFamilyBaseline;
+    if (baseline && typeof baseline === "object" && !Array.isArray(baseline) && typeof baseline[id] === "number") {
+      skin.metadata.buttonSkinFamilyBaseline = { ...baseline, [placement.id]: baseline[id] };
+    }
+  }
+  const owner = unit.ownerPlacementId ? document.placements[unit.ownerPlacementId] : null;
+  surface.placementIds = [...unit.memberPlacementIds];
+  arrangeDefaultPanelButtons(document, surface.id);
+  if (owner) {
+    owner.x = surface.width;
+    owner.y = document.settings.defaultSurfacePadding;
+    owner.zIndex = members.length;
+    surface.placementIds.push(owner.id);
+    surface.width += owner.width + document.settings.defaultSurfacePadding;
+    surface.height = Math.max(surface.height, owner.y + owner.height + document.settings.defaultSurfacePadding);
+  }
+  surface.name = buttons[0]?.sourceIdentity?.displayPanelName ?? surface.name;
+  unit.name = surface.name;
+  unit.canonicalBounds = { x: 0, y: 0, width: surface.width, height: surface.height };
+  unit.desktopBoundsEnvelope = { ...unit.canonicalBounds };
+  unit.desktopBounds = null;
+  unit.windowFitMode = "hitbox";
+  unit.desktopBoundsFitMode = "hitbox";
   return unit;
 }
 
