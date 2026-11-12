@@ -98,14 +98,19 @@ import {
   subscribeButtonCommits
 } from "../../button/state/ButtonDraftBus";
 import { cloneButtonDocument } from "../../button/state/buttonDefaults";
-import { defaultPanelButtonSize } from "../../button/state/buttonPanelDefaults";
+import {
+  applyPanelPopoutPreset, availablePanelPopoutPresetsForPanel,
+  panelPopoutPresetFromPath, panelPopoutPresetPath
+} from "../../button/state/buttonPanelPopoutPresets";
 import {
   ensureFanSetup,
+  ensureDefaultPanelPopout,
   ensureRegularPopout,
   removeOwnedButtonGraph
 } from "../../button/state/buttonDocumentOperations";
 import {
-  buildTransientButtonPopoutSettingsDocument
+  buildTransientButtonPopoutSettingsDocument,
+  buildButtonSettingsFile
 } from "../../button/state/buttonSettingsFile";
 import { resolvePanelOwnerMainPlacement } from "../../button/state/panelOwnerButtonOperations";
 import { loadMainPageButtonBootstrap } from "../../button/state/mainPageButtonBootstrap";
@@ -146,7 +151,6 @@ import mainBackground from "../../assets/backgrounds/chipped-concrete-base.webp"
 import type { FlowCellBounds, LayoutSnapshot, LayoutSnapshotWindow } from "../../types";
 import {
   buttonSpacingPixelsFromMillimeters,
-  createStarterButtonLayout,
   orderButtonRectsByVisualRows
 } from "../../button/geometry/buttonGeometry";
 import {
@@ -230,6 +234,21 @@ function stableMainPopChoiceId(value: string): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return (hash >>> 0).toString(36);
+}
+
+async function loadMainPopSettingsFile(document: ButtonStateDocument, path: string, programName: string, panelName: string) {
+  const preset = panelPopoutPresetFromPath(path);
+  if (!preset) return loadButtonSettingsFile(path);
+  if (!availablePanelPopoutPresetsForPanel(document, programName, panelName).some((entry) => entry.id === preset)) {
+    throw new Error("The selected panel no longer has the complete Collections preset's scripts.");
+  }
+  const next = cloneButtonDocument(document);
+  const button = Object.values(next.buttons).find((candidate) => candidate.role === "single-script" &&
+    sourceIdentityMatchesFolderScope(candidate.sourceIdentity, programName, panelName));
+  if (!button) throw new Error("The Collections preset's scripts are not installed.");
+  const unit = ensureDefaultPanelPopout(next, button.id, { resetLayout: true });
+  if (!applyPanelPopoutPreset(next, unit, preset)) throw new Error("The Collections preset's scripts no longer match.");
+  return buildButtonSettingsFile(next, unit.surfaceId, { programName, panelName });
 }
 
 function readMainLastPopChoices(): Record<string, MainLastPopChoice> {
@@ -772,6 +791,7 @@ export default function MainPage() {
   const panelScriptLoadRequestRef = useRef(0);
   const [contextMenu, setContextMenu] = useState<ButtonContextMenuState | null>(null);
   const [fanSetupMenu, setFanSetupMenu] = useState<FanSetupMenuState | null>(null);
+  const [panelPopMenu, setPanelPopMenu] = useState<FanSetupMenuState | null>(null);
   const [programNames, setProgramNames] = useState<string[]>([]);
   const [selectedProgramName, setSelectedProgramName] = useState<string | null>(null);
   const [panelNames, setPanelNames] = useState<string[]>([]);
@@ -1442,6 +1462,9 @@ export default function MainPage() {
     [resolvedPanelScripts, selectedPanelScriptFileNameSet]
   );
   const popControlsDisabled = !selectedProgramName || !selectedPanelName;
+  const panelPopoutPresets = useMemo(() => buttonDocument && selectedProgramName && selectedPanelName
+    ? availablePanelPopoutPresetsForPanel(buttonDocument, selectedProgramName, selectedPanelName) : [],
+    [buttonDocument, selectedProgramName, selectedPanelName]);
   const fanMenuDisabled = !selectedProgramName || !selectedPanelName;
   const fanOptionsDisabled = !selectedProgramName || !selectedPanelName;
   const orderButtonDisabled =
@@ -1460,6 +1483,7 @@ export default function MainPage() {
 
   useEffect(() => {
     setFanSetupMenu(null);
+    setPanelPopMenu(null);
   }, [selectedPanelName, selectedProgramName]);
 
   useEffect(() => {
@@ -1811,7 +1835,8 @@ export default function MainPage() {
           windowEntry.ProgramName,
           windowEntry.PanelName
         );
-        const settingsFile = await loadButtonSettingsFile(settingsPath);
+        const settingsFile = await loadMainPopSettingsFile(settingsBackedCanonicalDocument, settingsPath,
+          windowEntry.ProgramName, windowEntry.PanelName);
         const transient = buildTransientButtonPopoutSettingsDocument(
           settingsBackedCanonicalDocument,
           settingsFile,
@@ -2887,7 +2912,7 @@ export default function MainPage() {
         panelName
       )
     };
-    const settingsFile = await loadButtonSettingsFile(choice.path);
+    const settingsFile = await loadMainPopSettingsFile(canonical, choice.path, programName, panelName);
     const transient = buildTransientButtonPopoutSettingsDocument(
       canonical,
       settingsFile,
@@ -3017,51 +3042,14 @@ export default function MainPage() {
       if (memberButtons.length === 0) {
         throw new Error("This panel has no script Buttons for a default Pop-out.");
       }
-      const unit = ensureRegularPopout(draft, memberButtons, { ownerless: true });
+      const previousIds = new Set(Object.keys(draft.popoutUnits));
+      const unit = selectedIds.size === 0
+        ? ensureDefaultPanelPopout(draft, memberButtons[0].id)
+        : ensureRegularPopout(draft, memberButtons, { ownerless: true });
       popoutUnitId = unit.id;
-      const surface = draft.surfaces[unit.surfaceId];
-      const members = memberButtons.map((button) => {
-        const placement = draft.placements[unit.memberPlacementIds.find(
-          (id) => draft.placements[id]?.buttonId === button.id
-        )!];
-        const source = Object.values(draft.placements).find((candidate) =>
-          candidate.buttonId === button.id && draft.surfaces[candidate.surfaceId]?.kind === "panel"
-        );
-        if (!placement || !source) throw new Error(`The panel placement for '${button.label}' is missing.`);
-        // Copy presentation, keeping this Pop's own placement identity and execution owner.
-        const { id, surfaceId, buttonId, ...presentation } = source;
-        Object.assign(placement, cloneButtonDocument(presentation));
-        Object.assign(placement, defaultPanelButtonSize(draft, button, source));
-        const skin = draft.skins[placement.skinOverrideId ?? button.defaultSkinId];
-        const baseline = skin?.metadata.buttonSkinFamilyBaseline;
-        if (baseline && typeof baseline === "object" && !Array.isArray(baseline) && typeof baseline[source.id] === "number") {
-          skin.metadata.buttonSkinFamilyBaseline = { ...baseline, [placement.id]: baseline[source.id] };
-        }
-        if (draft.themeOverrides?.[source.id]) {
-          draft.themeOverrides[placement.id] = cloneButtonDocument(draft.themeOverrides[source.id]);
-        }
-        return placement;
-      });
-      const ordered = orderButtonRectsByVisualRows(members);
-      const layout = createStarterButtonLayout(ordered.map(({ id }) => draft.placements[id]), {
-        padding: draft.settings.defaultSurfacePadding,
-        gap: PANEL_BUTTON_GAP,
-        maximumColumns: 4
-      });
-      ordered.forEach(({ id }, index) => Object.assign(draft.placements[id], layout.rects[id], { zIndex: index }));
-      surface.placementIds = ordered.map(({ id }) => id);
-      surface.width = layout.requiredWidth;
-      surface.height = layout.requiredHeight;
-      surface.uniformButtonSize = null;
-      unit.memberPlacementIds = [...surface.placementIds];
-      unit.canonicalBounds = { x: 0, y: 0, width: surface.width, height: surface.height };
-      unit.desktopBounds = null;
-      unit.desktopBoundsEnvelope = { ...unit.canonicalBounds };
-      unit.desktopBoundsFitMode = "surface";
-      unit.windowFitMode = "surface";
-      unit.interactionMode = "pop";
-      unit.ownerButtonId = null;
-      unit.ownerPlacementId = null;
+      // Existing popup presentation belongs to that popup. A new complete
+      // Collections popup receives its authored neutral design once.
+      if (!previousIds.has(unit.id)) applyPanelPopoutPreset(draft, unit);
       return true;
     });
     if (!popoutUnitId) {
@@ -3486,6 +3474,15 @@ export default function MainPage() {
     }
 
     if (button.actionId === "open-panel-pop-file") {
+      if (panelPopoutPresets.length > 0) {
+        const target = event.currentTarget;
+        const rect = target instanceof Element ? target.getBoundingClientRect() : null;
+        setPanelPopMenu((current) => current ? null : {
+          left: rect?.left ?? button.x,
+          top: (rect?.bottom ?? button.y + button.height) + 6
+        });
+        return;
+      }
       await handleChoosePanelPop();
       return;
     }
@@ -3750,6 +3747,25 @@ export default function MainPage() {
             </section>
           ) : null}
           </div>
+          {panelPopMenu ? (
+            <>
+              <div className="fan-setup-menu__backdrop" aria-hidden="true" onMouseDown={() => setPanelPopMenu(null)} />
+              <div className="fan-setup-menu" role="menu" aria-label="Load Collections Pop-out"
+                style={{ left: panelPopMenu.left, top: panelPopMenu.top }} onMouseDown={(event) => event.stopPropagation()}>
+                <div className="fan-setup-menu__title">Collections Pop-outs</div>
+                {panelPopoutPresets.map((preset) => <CanonicalActionButton key={preset.id}
+                  id={`panel-pop-preset:${preset.id}`} label={preset.label} className="fan-setup-menu__item"
+                  onActivate={async () => {
+                    setPanelPopMenu(null);
+                    const path = panelPopoutPresetPath(preset.id);
+                    try { await openMainPopChoice({ path, choiceId: stableMainPopChoiceId(path) }); }
+                    catch (error) { window.alert(`Pop window could not be opened.\n\n${formatErrorMessage(error)}`); }
+                  }} />)}
+                <CanonicalActionButton id="panel-pop-preset:browse" label="Browse saved Pop-out…"
+                  className="fan-setup-menu__item" onActivate={async () => { setPanelPopMenu(null); await handleChoosePanelPop(); }} />
+              </div>
+            </>
+          ) : null}
           {fanSetupMenu ? (
             <>
               <div

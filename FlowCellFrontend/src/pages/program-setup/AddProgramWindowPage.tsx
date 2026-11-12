@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 
 import {
   importProgramPackage,
+  getWindowsSetupRequirement,
   listAvailableProgramPackages,
   listProgramSetupStatuses,
-  preflightAddProgramPlan,
   recheckProgramSetup,
   type AddProgramPlanRequest,
   type AvailableProgramPackage,
@@ -14,6 +15,7 @@ import {
 } from "../../lib/programRails";
 import { showOpenFileDialog } from "../../lib/tauri";
 import { applyManagedProgramPlan } from "./applyManagedProgramPlan";
+import { buildWindowsSetupPlan } from "./windowsSetupPlan";
 import "./programSetup.css";
 
 type SetupMode = "register" | "everything" | "custom";
@@ -62,9 +64,27 @@ function defaultSetup(program: AvailableProgramPackage): {
   return { panels, sources };
 }
 
-export default function AddProgramWindowPage() {
-  const [inventory, setInventory] = useState<AvailableProgramPackagesResponse | null>(null);
-  const [setupSource, setSetupSource] = useState<SetupSource>("plain");
+interface AddProgramWindowPageProps {
+  requiredWindowsProgram?: AvailableProgramPackage;
+  onWindowsComplete?: () => void;
+}
+
+interface SetupProgress {
+  operation: "import" | "install";
+  programName: string;
+  stage: string;
+  completedSources?: number;
+  totalSources?: number;
+  elapsedMs: number;
+}
+
+export default function AddProgramWindowPage({ requiredWindowsProgram, onWindowsComplete }: AddProgramWindowPageProps = {}) {
+  const [inventory, setInventory] = useState<AvailableProgramPackagesResponse>({ packages: [], rejectedPackages: [] });
+  const [setupSource, setSetupSource] = useState<SetupSource>("package");
+  const [windowsProgram, setWindowsProgram] = useState<AvailableProgramPackage | null>(requiredWindowsProgram ?? null);
+  const [selectedWindowsPanels, setSelectedWindowsPanels] = useState<Set<string>>(
+    () => new Set(requiredWindowsProgram?.panels.map((panel) => panel.label) ?? [])
+  );
   const [selectedProgramName, setSelectedProgramName] = useState("");
   const [executablePath, setExecutablePath] = useState("");
   const [plainProgramName, setPlainProgramName] = useState("");
@@ -82,7 +102,21 @@ export default function AddProgramWindowPage() {
   const [setupStatuses, setSetupStatuses] = useState<ProgramSetupResult[]>([]);
   const [setupStatusError, setSetupStatusError] = useState("");
   const [completedSetup, setCompletedSetup] = useState<ProgramSetupResult | null>(null);
+  const [installationComplete, setInstallationComplete] = useState(false);
+  const [progress, setProgress] = useState<SetupProgress | null>(null);
   const packageActionPending = useRef(false);
+  const inventoryRequestRef = useRef(0);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<SetupProgress>("flowcell:program-setup-progress", ({ payload }) => {
+      if (disposed || !busyRef.current) return;
+      setProgress(payload);
+      setStatus(payload.stage);
+    }).then((stop) => { if (disposed) stop(); else unlisten = stop; }).catch(() => {});
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -118,6 +152,16 @@ export default function AddProgramWindowPage() {
 
   useEffect(() => {
     let cancelled = false;
+    const inventoryRequest = ++inventoryRequestRef.current;
+    if (!requiredWindowsProgram) {
+      void getWindowsSetupRequirement().then((program) => {
+        if (cancelled || !program) return;
+        setWindowsProgram(program);
+        setSelectedWindowsPanels(new Set(program.panels.map((panel) => panel.label)));
+      }).catch((error) => {
+        if (!cancelled) setSetupStatusError(`Windows setup could not be checked: ${errorMessage(error)}`);
+      });
+    }
     void listProgramSetupStatuses().then((next) => {
       if (!cancelled) setSetupStatuses(next);
     }).catch((error) => {
@@ -125,25 +169,19 @@ export default function AddProgramWindowPage() {
     });
     void listAvailableProgramPackages()
       .then((next) => {
-        if (cancelled) return;
+        if (cancelled || inventoryRequest !== inventoryRequestRef.current) return;
         setInventory(next);
-        const first = next.packages[0];
-        if (!first) {
-          setSetupSource("plain");
-          setStatus("Import a program ZIP, or choose an application executable to add your own Program.");
-          return;
-        }
-        setSetupSource("package");
-        setSelectedProgramName(first.programName);
-        resetForProgram(first);
+        if (!busyRef.current) setStatus(requiredWindowsProgram
+          ? "Choose your Windows panels. You can also import a program ZIP below."
+          : "Import a program ZIP, or add an application without a ZIP.");
       })
       .catch((error) => {
-        if (!cancelled) setStatus(`Program package inventory failed: ${errorMessage(error)}`);
+        if (!cancelled && inventoryRequest === inventoryRequestRef.current) setStatus(`Program package inventory failed: ${errorMessage(error)}`);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [requiredWindowsProgram]);
 
   const importPackage = async () => {
     if (busy || packageActionPending.current) return;
@@ -156,19 +194,22 @@ export default function AddProgramWindowPage() {
         multiselect: false
       });
       if (!paths[0]) return;
+      inventoryRequestRef.current += 1;
+      setProgress(null);
       setStatus("Checking and importing the program package…");
       const imported = await importProgramPackage(paths[0]);
-      const next = await listAvailableProgramPackages();
-      setInventory(next);
-      const program = next.packages.find((entry) => entry.programName === imported.programName);
+      const program = imported.availablePackage;
       if (!program) {
-        const rejected = next.rejectedPackages.find((entry) => entry.folderName === imported.programName);
-        throw new Error(`The package was imported to ${imported.packagePath}, but is not available for registration.${rejected ? ` ${rejected.error}` : ""}`);
+        throw new Error(`The package was imported to ${imported.packagePath}, but its setup could not be loaded.${imported.inventoryWarning ? ` ${imported.inventoryWarning}` : ""}`);
       }
+      setInventory((current) => ({
+        packages: [...(current?.packages ?? []).filter((entry) => entry.programId !== program.programId), program],
+        rejectedPackages: (current?.rejectedPackages ?? []).filter((entry) => entry.folderName !== program.programName)
+      }));
       setSetupSource("package");
       setSelectedProgramName(program.programName);
       resetForProgram(program);
-      setStatus(`${program.programName} was imported. Choose its application, panels and buttons, then select Install.${imported.cleanupWarning ? ` ${imported.cleanupWarning}` : ""}`);
+      setStatus(`${program.programName} was imported. Select its .exe path below, then choose what to install.${imported.cleanupWarning ? ` ${imported.cleanupWarning}` : ""}`);
     } catch (error) {
       setStatus(`Package import failed: ${errorMessage(error)}`);
     } finally {
@@ -182,6 +223,7 @@ export default function AddProgramWindowPage() {
     packageActionPending.current = true;
     setBusy(true);
     setStatus("Looking for installed applications…");
+    inventoryRequestRef.current += 1;
     try {
       const next = await listAvailableProgramPackages();
       setInventory(next);
@@ -199,12 +241,7 @@ export default function AddProgramWindowPage() {
   const presentSetupResult = async (result: ProgramSetupResult) => {
     setSetupStatuses((current) => [...current.filter((entry) => entry.programName !== result.programName), result]);
     setStatus(result.message);
-    if (result.status === "needsHostInitialization" || result.restartNotes.trim()) {
-      setCompletedSetup(result);
-    } else {
-      setBusy(false);
-      await getCurrentWindow().close();
-    }
+    setCompletedSetup(result);
   };
 
   const recheckSetup = async (programName: string) => {
@@ -363,9 +400,10 @@ export default function AddProgramWindowPage() {
     setStatus("Installing the selected panels and buttons…");
     let finalizedResult: ProgramSetupResult | null = null;
     try {
-      const result = await applyManagedProgramPlan(planRequest);
+      const result = await applyManagedProgramPlan(planRequest, undefined, setStatus);
       finalizedResult = result;
       await presentSetupResult(result);
+      return result;
     } catch (error) {
       if (finalizedResult) {
         setCompletedSetup(finalizedResult);
@@ -373,41 +411,39 @@ export default function AddProgramWindowPage() {
       } else {
         setStatus(`Program setup failed: ${errorMessage(error)}`);
       }
+      throw error;
     }
   };
 
   const addPlainProgram = async () => {
-    if (!request || setupSource !== "plain" || busyRef.current) return;
-    setBusy(true);
-    setStatus("Adding the Program…");
-    try {
-      const validated = await preflightAddProgramPlan(request);
-      const validatedRequest: AddProgramPlanRequest = {
-        ...request,
-        programName: validated.programName,
-        executablePath: validated.executablePath
-      };
-      setPlainExecutablePath(validated.executablePath);
-      await installValidatedPlan(validatedRequest);
-    } catch (error) {
-      setStatus(`Program setup failed: ${errorMessage(error)}`);
-    } finally {
-      setBusy(false);
-    }
+    if (!request || setupSource !== "plain") return;
+    return installValidatedPlan(request);
   };
 
   const installProgram = async () => {
-    if (!request || setupSource !== "package" || busyRef.current) return;
+    if (!request || setupSource !== "package") return;
+    return installValidatedPlan(request);
+  };
+
+  const installWindows = async () => {
+    if (!windowsProgram) return;
+    const request = buildWindowsSetupPlan(windowsProgram, selectedWindowsPanels);
+    await applyManagedProgramPlan(request, undefined, setStatus);
+    setWindowsProgram(null);
+  };
+
+  const install = async () => {
+    if (busyRef.current) return;
     setBusy(true);
-    setStatus("Installing the selected panels and buttons…");
+    setProgress(null);
+    setStatus("Checking your installation choices…");
     try {
-      const validated = await preflightAddProgramPlan(request);
-      setExecutablePath(validated.executablePath);
-      await installValidatedPlan({
-        ...request,
-        programName: validated.programName,
-        executablePath: validated.executablePath
-      });
+      await installWindows();
+      const result = setupSource === "plain" ? await addPlainProgram()
+        : selectedProgram ? await installProgram() : undefined;
+      setInstallationComplete(true);
+      setStatus("Installation complete.");
+      if (!result || (result.status === "ready" && !result.restartNotes.trim())) onWindowsComplete?.();
     } catch (error) {
       setStatus(`Program setup failed: ${errorMessage(error)}`);
     } finally {
@@ -415,32 +451,54 @@ export default function AddProgramWindowPage() {
     }
   };
 
-  if (completedSetup) {
-    return <main className="program-setup">
-      <header className="program-setup__header"><h1>{completedSetup.programName} setup</h1><button type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</button></header>
-      <section className="program-setup__card" aria-live="polite">
-        <h2>{completedSetup.status === "needsHostInitialization" ? "Finish application setup" : "Setup ready"}</h2>
+  const hasProgramChoice = setupSource === "plain" || Boolean(selectedProgram);
+  const programReady = setupSource === "plain"
+    ? Boolean(plainProgramName.trim() && plainExecutablePath.trim())
+    : Boolean(selectedProgram && executablePath.trim());
+  const canInstall = !busy && (hasProgramChoice ? programReady : Boolean(windowsProgram));
+
+  return (
+    <main className="program-setup program-setup--install">
+      <header className="program-setup__header">
+        <div><h1 id="program-installation-title">Installation</h1><p>Add Windows tools or import a FlowCell program ZIP.</p></div>
+        {!onWindowsComplete ? <button type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</button> : null}
+      </header>
+
+      <div className="program-setup__content">
+      {setupStatusError ? <p className="program-setup__status" role="alert">{setupStatusError}</p> : null}
+
+      {completedSetup ? <section className="program-setup__card" aria-live="polite">
+        <h2>{completedSetup.programName}: {completedSetup.status === "needsHostInitialization" ? "finish application setup" : "installed"}</h2>
         <p>{completedSetup.message}</p>
         {completedSetup.restartNotes ? <p>{completedSetup.restartNotes}</p> : null}
         {completedSetup.status === "needsHostInitialization" ? <button type="button" onClick={() => void recheckSetup(completedSetup.programName)} disabled={busy}>Recheck setup</button> : null}
-        <p className="program-setup__status">{status}</p>
-      </section>
-    </main>;
-  }
+      </section> : null}
 
-  if (!inventory) {
-    return <main className="program-setup"><p className="program-setup__status">{status}</p></main>;
-  }
+      {!installationComplete && windowsProgram ? <section className="program-setup__card">
+        <h2>Windows</h2>
+        <p className="program-setup__hint">Included with FlowCell. Choose the panels you want to install.</p>
+        <fieldset className="windows-setup__panels" disabled={busy}>
+          <legend>Windows panels</legend>
+          {windowsProgram.panels.map((panel) => {
+            const tools = windowsProgram.sources.filter((source) => source.panelName === panel.label && (source.defaultSelected || source.required));
+            return <label key={panel.id} className="program-setup__check windows-setup__panel">
+              <input type="checkbox" checked={selectedWindowsPanels.has(panel.label)} onChange={(event) => {
+                const checked = event.target.checked;
+                setSelectedWindowsPanels((current) => {
+                  const next = new Set(current);
+                  if (checked) next.add(panel.label); else next.delete(panel.label);
+                  return next;
+                });
+              }} />
+              <span><strong>{panel.label}</strong><span className="windows-setup__description">
+                {tools.length ? tools.map((tool) => tool.label).join(", ") : "A panel for your own Windows tools."}
+              </span></span>
+            </label>;
+          })}
+        </fieldset>
+      </section> : null}
 
-  return (
-    <main className="program-setup">
-      <header className="program-setup__header">
-        <div><h1>Add Program</h1></div>
-        <button type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</button>
-      </header>
-
-      {setupStatusError ? <p className="program-setup__status" role="alert">{setupStatusError}</p> : null}
-
+      {!installationComplete ? <>
       {setupStatuses.filter((entry) => entry.status === "needsHostInitialization").map((entry) => (
         <section className="program-setup__card" key={entry.programName}>
           <h2>{entry.programName}: setup incomplete</h2>
@@ -451,24 +509,31 @@ export default function AddProgramWindowPage() {
       ))}
 
       <section className="program-setup__card program-setup__import">
-        <div><strong>Have a FlowCell program ZIP?</strong><p>Import it here, then choose what to add.</p></div>
+        <div><strong>Import a program</strong><p>Choose its ZIP, then select the application's .exe below.</p></div>
         <button type="button" onClick={() => void importPackage()} disabled={busy}>Import program ZIP</button>
       </section>
 
-      <section className="program-setup__modes" aria-label="Program source">
-        <button className={setupSource === "plain" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("plain")} disabled={busy}>Any program</button>
-        <button className={setupSource === "package" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("package")} disabled={busy || inventory.packages.length === 0}>Managed package</button>
-      </section>
+      <div className="program-setup__switch">
+        <button type="button" onClick={() => chooseSetupSource(setupSource === "plain" ? "package" : "plain")} disabled={busy}>
+          {setupSource === "plain" ? "Use a program ZIP" : "Add an application without a ZIP"}
+        </button>
+        {inventory.packages.length ? <details>
+          <summary>{selectedProgram ? "Choose another program" : "Available programs"}</summary>
+          <div className="program-setup__modes">{inventory.packages.map((program) =>
+            <button key={program.programId} type="button" disabled={busy} onClick={() => { setSetupSource("package"); chooseProgram(program.programName); }}>{program.programName}</button>
+          )}</div>
+        </details> : null}
+      </div>
 
       {setupSource === "plain" ? (
         <>
-          <section className="program-setup__card program-setup__grid">
+          <section className="program-setup__card program-setup__stack">
             <label>Program name
               <input value={plainProgramName} onChange={(event) => { setPlainProgramName(event.target.value); setStatus("Choose the application executable, then add the Program."); }} disabled={busy} />
             </label>
-            <label>Application executable
+            <label>Application .exe path <span className="program-setup__required">(required)</span>
               <div className="program-setup__inline">
-                <input value={plainExecutablePath} onChange={(event) => { setPlainExecutablePath(event.target.value); setStatus("Add the Program when the name and EXE path are ready."); }} disabled={busy} />
+                <input required placeholder="Choose the application's .exe file" value={plainExecutablePath} onChange={(event) => { setPlainExecutablePath(event.target.value); setStatus("Add the Program when the name and EXE path are ready."); }} disabled={busy} />
                 <button type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: "Choose the application executable", filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
                   const selectedPath = paths[0];
                   if (!selectedPath) return;
@@ -479,30 +544,22 @@ export default function AddProgramWindowPage() {
               </div>
             </label>
           </section>
-          <footer className="program-setup__footer"><p className="program-setup__status">{status}</p><div><button className="program-setup__primary" type="button" onClick={() => void addPlainProgram()} disabled={busy || !plainProgramName.trim() || !plainExecutablePath.trim()}>{busy ? "Installing…" : "Install"}</button></div></footer>
         </>
       ) : selectedProgram ? (
         <>
-          <section className="program-setup__card program-setup__grid">
-            <label>Program package
-              <select value={selectedProgram.programName} onChange={(event) => chooseProgram(event.target.value)} disabled={busy}>
-                {inventory.packages.map((program) => <option key={program.programId}>{program.programName}</option>)}
-              </select>
-            </label>
-            <label>Host executable
-              {selectedProgram.executableCandidates.length > 0 ? <select aria-label="Detected applications" value={selectedProgram.executableCandidates.some((candidate) => candidate.path === executablePath) ? executablePath : ""} onChange={(event) => { setExecutablePath(event.target.value); markSelectionChanged(); }} disabled={busy}>
-                <option value="">Choose an installed application</option>
-                {selectedProgram.executableCandidates.map((candidate) => <option key={candidate.path} value={candidate.path}>{candidate.path}</option>)}
-              </select> : null}
+          <section className="program-setup__card program-setup__stack">
+            <div className="program-setup__header"><h2 className="program-setup__program-heading">{selectedProgram.programName}</h2><button type="button" disabled={busy} onClick={() => { setSelectedProgramName(""); setStatus("Program removed from this installation."); }}>Remove from installation</button></div>
+            <label>{selectedProgram.programName} .exe path <span className="program-setup__required">(required)</span>
               <div className="program-setup__inline">
-                <input value={executablePath} onChange={(event) => { setExecutablePath(event.target.value); markSelectionChanged(); }} disabled={busy} />
+                <input required list="program-executable-candidates" placeholder={`Choose ${selectedProgram.programName}'s .exe file`} value={executablePath} onChange={(event) => { setExecutablePath(event.target.value); markSelectionChanged(); }} disabled={busy} />
+                <datalist id="program-executable-candidates">{selectedProgram.executableCandidates.map((candidate) => <option key={candidate.path} value={candidate.path} />)}</datalist>
                 <button type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: `Choose ${selectedProgram.programName} host executable`, filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
                   if (!paths[0]) return;
                   setExecutablePath(paths[0]); markSelectionChanged();
                 })}>Browse</button>
-                <button type="button" disabled={busy} onClick={() => void refreshDetection()}>Find installed</button>
               </div>
             </label>
+            <div className="program-setup__switch"><span className="program-setup__hint">Select the installed application you want FlowCell to use.</span><button type="button" disabled={busy} onClick={() => void refreshDetection()}>Find installed</button></div>
           </section>
 
           <section className="program-setup__modes" aria-label="Setup mode">
@@ -544,13 +601,27 @@ export default function AddProgramWindowPage() {
             })}
           </section>
 
-          <footer className="program-setup__footer"><p className="program-setup__status" role="status">{status}</p><div><button className="program-setup__primary" type="button" onClick={() => void installProgram()} disabled={busy || !executablePath.trim()}>{busy ? "Installing…" : "Install"}</button></div></footer>
         </>
       ) : (
-        <section className="program-setup__card"><p>No validated, unregistered managed Program packages are available. Import a FlowCell program ZIP above. Choose Any program to add an executable directly.</p></section>
+        <p className="program-setup__hint">Import a program ZIP above to choose its panels and buttons.</p>
       )}
 
       {inventory.rejectedPackages.length > 0 ? <details className="program-setup__rejected"><summary>Rejected packages ({inventory.rejectedPackages.length})</summary>{inventory.rejectedPackages.map((entry) => <p key={entry.folderName}><strong>{entry.folderName}:</strong> {entry.error}</p>)}</details> : null}
+      </> : null}
+      </div>
+      <footer className="program-setup__footer">
+        <div className="program-setup__progress">
+          <p className="program-setup__status" role="status">{status}</p>
+          {busy && progress?.totalSources ? <>
+            <progress value={progress.completedSources ?? 0} max={progress.totalSources} />
+            <small>{progress.completedSources ?? 0} / {progress.totalSources} buttons</small>
+          </> : null}
+        </div>
+        {installationComplete
+          ? <button type="button" disabled={busy} onClick={() => onWindowsComplete ? onWindowsComplete() : void getCurrentWindow().close()}>{onWindowsComplete ? "Continue to FlowCell" : "Close"}</button>
+          : <button className="program-setup__primary" type="button" onClick={() => void install()} disabled={!canInstall}>{busy ? "Installing…" : "Install"}</button>}
+        {onWindowsComplete && !windowsProgram && !installationComplete ? <button type="button" disabled={busy} onClick={onWindowsComplete}>Continue to FlowCell</button> : null}
+      </footer>
     </main>
   );
 }

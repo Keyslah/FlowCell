@@ -54,6 +54,52 @@ function New-TestTheme([string]$Library, [string]$Name) {
     return $manifestPath
 }
 
+function New-TestAppearanceLibrary([string]$LocalRoot, [string]$OwnerId, [string]$ChildId) {
+    $library = Join-Path $LocalRoot 'themes/Blender'
+    $themePath = New-TestTheme $library 'Locked theme'
+    $placementId = 'placement-' + $ChildId
+    $surfaceId = 'surface-' + $OwnerId
+    $file = $OwnerId + '.flowcell-source.json'
+    $identity = @{ normalizedProgramName = 'blender'; displayProgramName = 'Blender'; displayPanelName = 'Tools'; displayFileName = $file }
+    $buttons = @{}
+    $buttons[$OwnerId] = @{ id = $OwnerId; role = 'tool-set-owner'; sourceIdentity = $identity }
+    $buttons[$ChildId] = @{
+        id = $ChildId; role = 'tool-set-child'; toolSetParentId = $OwnerId
+        executionTarget = @{ kind = 'tool-set-action'; command = 'toggle_live'; ownerFileName = $file; panelName = 'Tools'; programName = 'Blender' }
+    }
+    $placements = @{}
+    $placements[$placementId] = @{ id = $placementId; buttonId = $ChildId; surfaceId = $surfaceId }
+    $surfaces = @{}
+    $surfaces[$surfaceId] = @{ id = $surfaceId; kind = 'tool-set-popout'; placementIds = @($placementId) }
+    $statePath = Join-Path $LocalRoot 'button-system/button-state.json'
+    Put-Json $statePath @{ buttons = $buttons; placements = $placements; surfaces = $surfaces }
+    $programRoot = Join-Path $LocalRoot 'Programs/Blender'
+    Put-Json (Join-Path $programRoot 'flowcell.program.json') @{ programId = 'blender'; panelsFolder = 'Active Panels'; localScriptsFolder = 'Owned scripts' }
+    $recordPath = Join-Path $programRoot "Active Panels/Tools/$file"
+    Put-Json $recordPath @{
+        programId = 'blender'; ownerButtonId = $OwnerId; installId = $OwnerId; panelName = 'Tools'
+        localPackagePath = 'Z:\stale-computer\source'; sourcePath = 'Z:\stale-computer\source\axis.py'
+        children = @(@{ slot = 'toggle_live' })
+    }
+    $toolsetPath = Join-Path $programRoot "Owned scripts/$OwnerId/source/flowcell.toolset.json"
+    Put-Json $toolsetPath @{ id = 'blender.smart-axis'; source = 'axis.py'; children = @(@{ slot = 'toggle_live' }) }
+    $theme = Get-Content -LiteralPath $themePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $theme.values | Add-Member -MemberType NoteProperty -Name popped_button_appearance -Value @{
+        version = 1
+        placements = @(@{
+            placementId = $placementId; buttonId = $ChildId
+            lockedAppearance = @{
+                colors = @{ surface = '#000000'; text = '#000000' }
+                idleColor = '#FFFFFFCC'; idleEnabled = $true; idleGlowAmount = 31.19206774574299; idleHighlightAmount = 38
+                hoverColor = '#FFFFFFCC'; hoverEnabled = $true; hoverGlowAmount = 56.71285044680543; hoverHighlightAmount = 161
+                activeColor = '#FFFFFFCC'; activeEnabled = $true; activeGlowAmount = 41.589423660990654; activeHighlightAmount = 252
+            }
+        })
+    }
+    Put-Json $themePath $theme
+    return [pscustomobject]@{ Library = $library; ThemePath = $themePath; StatePath = $statePath; RecordPath = $recordPath; ToolsetPath = $toolsetPath }
+}
+
 . (Join-Path $helperRoot 'program-package-safety.ps1')
 . (Join-Path $helperRoot 'blender-theme-packages.ps1')
 
@@ -121,6 +167,99 @@ try {
     }
     Assert ((Get-FileHash -LiteralPath $activeManifest -Algorithm SHA256).Hash -eq $manifestBefore) 'source manifest remains unchanged'
     Assert (Test-Path -LiteralPath (Join-Path $active 'Current theme/private-note.txt')) 'unreferenced source file remains untouched'
+
+    $oldOwner = 'button-migrated-5f436401f59609f1'
+    $oldChild = 'button-child-button-migrated-5f436401f59609f1-74-6f-67-67-6c-65-5f-6c-69-76-65-4'
+    $appearanceFixture = New-TestAppearanceLibrary (Join-Path $fixtureRoot 'old-local') $oldOwner $oldChild
+    $protectedPaths = @($appearanceFixture.ThemePath, $appearanceFixture.StatePath, $appearanceFixture.RecordPath, $appearanceFixture.ToolsetPath)
+    $protectedHashes = @($protectedPaths | ForEach-Object { (Get-FileHash -LiteralPath $_).Hash })
+    $appearanceStage = Join-Path $fixtureRoot 'appearance-stage'
+    Copy-BlenderThemePackages $appearanceFixture.Library $appearanceStage | Out-Null
+    $stagedTheme = Get-Content -LiteralPath (Join-Path $appearanceStage 'Locked theme/Locked theme.flowcell-theme-pack.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $stagedEntry = $stagedTheme.values.popped_button_appearance.placements[0]
+    Assert ($stagedEntry.sourceReference.programId -ceq 'blender' -and $stagedEntry.sourceReference.sourceId -ceq 'blender.smart-axis' -and
+        $stagedEntry.sourceReference.slot -ceq 'toggle_live' -and $stagedEntry.sourceReference.surfaceKind -ceq 'tool-set-popout') 'old migrated Live Button receives exact owned source/slot/surface provenance'
+    $sourceTheme = Get-Content -LiteralPath $appearanceFixture.ThemePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert (($stagedEntry.lockedAppearance | ConvertTo-Json -Depth 20 -Compress) -ceq ($sourceTheme.values.popped_button_appearance.placements[0].lockedAppearance | ConvertTo-Json -Depth 20 -Compress)) 'all locked black colors, enabled flags, highlight amounts and exact glow values survive staging'
+    Assert ($stagedEntry.buttonId -ceq $oldChild -and $stagedEntry.placementId -ceq ('placement-' + $oldChild)) 'staging adds provenance without replacing saved placement identities'
+    for ($i = 0; $i -lt $protectedPaths.Count; $i++) {
+        Assert ((Get-FileHash -LiteralPath $protectedPaths[$i]).Hash -ceq $protectedHashes[$i]) 'source theme, state and owned source provenance files remain byte-for-byte unchanged'
+    }
+    $freshFixture = New-TestAppearanceLibrary (Join-Path $fixtureRoot 'fresh-local') 'bundled-new-smart-axis' 'fresh-toggle-live'
+    $freshStage = Join-Path $fixtureRoot 'fresh-appearance-stage'
+    Copy-BlenderThemePackages $freshFixture.Library $freshStage | Out-Null
+    $freshTheme = Get-Content -LiteralPath (Join-Path $freshStage 'Locked theme/Locked theme.flowcell-theme-pack.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert (($freshTheme.values.popped_button_appearance.placements[0].sourceReference | ConvertTo-Json -Compress) -ceq ($stagedEntry.sourceReference | ConvertTo-Json -Compress)) 'fresh owner/child/placement IDs produce the same portable source reference as the migrated IDs'
+
+    $freshState = Get-Content -LiteralPath $freshFixture.StatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $freshState.surfaces.'surface-bundled-new-smart-axis'.kind = 'fan'
+    Put-Json $freshFixture.StatePath $freshState
+    $fanStage = Join-Path $fixtureRoot 'fan-appearance-stage'
+    Copy-BlenderThemePackages $freshFixture.Library $fanStage | Out-Null
+    $fanTheme = Get-Content -LiteralPath (Join-Path $fanStage 'Locked theme/Locked theme.flowcell-theme-pack.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert ($fanTheme.values.popped_button_appearance.placements[0].sourceReference.surfaceKind -ceq 'fan') 'Fan appearance keeps its distinct surface kind'
+
+    $scriptFixture = New-TestAppearanceLibrary (Join-Path $fixtureRoot 'script-local') 'unused-owner' 'script-button'
+    $scriptState = Get-Content -LiteralPath $scriptFixture.StatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $scriptFile = 'script-button.flowcell-source.json'
+    $scriptState.buttons.'script-button' = [pscustomobject]@{
+        id = 'script-button'; role = 'single-script'
+        sourceIdentity = @{ normalizedProgramName = 'blender'; displayPanelName = 'Tools'; displayFileName = $scriptFile }
+    }
+    $scriptState.surfaces.'surface-unused-owner'.kind = 'regular-popout'
+    Put-Json $scriptFixture.StatePath $scriptState
+    Put-Json (Join-Path (Split-Path -Parent $scriptFixture.RecordPath) $scriptFile) @{
+        programId = 'blender'; ownerButtonId = 'script-button'; installId = 'script-button'; panelName = 'Tools'
+        bundledSourceId = 'blender.cycle-versions-forward'; children = @()
+    }
+    $scriptStage = Join-Path $fixtureRoot 'script-appearance-stage'
+    Copy-BlenderThemePackages $scriptFixture.Library $scriptStage | Out-Null
+    $scriptTheme = Get-Content -LiteralPath (Join-Path $scriptStage 'Locked theme/Locked theme.flowcell-theme-pack.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $scriptReference = $scriptTheme.values.popped_button_appearance.placements[0].sourceReference
+    Assert ($scriptReference.sourceId -ceq 'blender.cycle-versions-forward' -and $null -eq $scriptReference.slot -and
+        $scriptReference.surfaceKind -ceq 'regular-popout') 'bundled single-script appearance uses its declared source ID and a null slot'
+
+    $independentLibrary = Join-Path $fixtureRoot 'independent-portable-appearance-library'
+    $independentManifest = New-TestTheme $independentLibrary 'Independent'
+    $independentTheme = Get-Content -LiteralPath $independentManifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    $independentTheme.values | Add-Member -MemberType NoteProperty -Name popped_button_appearance -Value $stagedTheme.values.popped_button_appearance
+    Put-Json $independentManifest $independentTheme
+    $independentStage = Join-Path $fixtureRoot 'independent-appearance-stage'
+    Copy-BlenderThemePackages $independentLibrary $independentStage | Out-Null
+    Assert (Test-Path -LiteralPath (Join-Path $independentStage 'Independent/Independent.flowcell-theme-pack.json')) 'existing portable source references require no canonical state or installed program files'
+
+    $missingProvenanceLibrary = Join-Path $fixtureRoot 'unresolved-appearance-library'
+    $missingProvenanceManifest = New-TestTheme $missingProvenanceLibrary 'Unresolved'
+    $missingProvenanceTheme = Get-Content -LiteralPath $missingProvenanceManifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    $missingProvenanceTheme.values | Add-Member -MemberType NoteProperty -Name popped_button_appearance -Value $sourceTheme.values.popped_button_appearance
+    Put-Json $missingProvenanceManifest $missingProvenanceTheme
+    $missingProvenanceStage = Join-Path $fixtureRoot 'unresolved-appearance-stage'
+    Assert-Rejected { Copy-BlenderThemePackages $missingProvenanceLibrary $missingProvenanceStage } 'legacy appearance without its provenance fails' 'resave'
+    Assert (-not (Test-Path -LiteralPath $missingProvenanceStage)) 'unresolved appearance fails before any staging write'
+
+    $stateBefore = Get-Content -LiteralPath $appearanceFixture.StatePath -Raw -Encoding UTF8
+    $ambiguousState = $stateBefore | ConvertFrom-Json
+    $extraPlacement = @{ id = 'duplicate-live'; buttonId = $oldChild; surfaceId = ('surface-' + $oldOwner) }
+    $ambiguousState.placements | Add-Member -MemberType NoteProperty -Name 'duplicate-live' -Value $extraPlacement
+    $ambiguousState.surfaces.('surface-' + $oldOwner).placementIds += 'duplicate-live'
+    Put-Json $appearanceFixture.StatePath $ambiguousState
+    $ambiguousAppearanceStage = Join-Path $fixtureRoot 'ambiguous-appearance-stage'
+    Assert-Rejected { Copy-BlenderThemePackages $appearanceFixture.Library $ambiguousAppearanceStage } 'multiple canonical occurrences cannot be exported as one portable target' 'Ambiguous'
+    Assert (-not (Test-Path -LiteralPath $ambiguousAppearanceStage)) 'ambiguous appearance fails before destination writes'
+    Put $appearanceFixture.StatePath $stateBefore
+
+    $toolsetBefore = Get-Content -LiteralPath $appearanceFixture.ToolsetPath -Raw -Encoding UTF8
+    $ambiguousToolset = $toolsetBefore | ConvertFrom-Json
+    $ambiguousToolset.children += $ambiguousToolset.children[0]
+    Put-Json $appearanceFixture.ToolsetPath $ambiguousToolset
+    Assert-Rejected { Copy-BlenderThemePackages $appearanceFixture.Library (Join-Path $fixtureRoot 'ambiguous-slot-stage') } 'duplicate declared slots fail provenance validation' 'ambiguous'
+    Put $appearanceFixture.ToolsetPath $toolsetBefore
+
+    $wrongOwnerTheme = $sourceTheme | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    $wrongOwnerTheme.values.popped_button_appearance.placements[0].buttonId = 'different-button'
+    Put-Json $appearanceFixture.ThemePath $wrongOwnerTheme
+    Assert-Rejected { Copy-BlenderThemePackages $appearanceFixture.Library (Join-Path $fixtureRoot 'wrong-owner-stage') } 'placement/button mismatch cannot be guessed from labels' 'Cannot prove'
+    Put-Json $appearanceFixture.ThemePath $sourceTheme
 
     $newManifest = New-TestTheme $active 'Newly saved'
     Put (Join-Path $active 'Current theme/palette image.png') 'new saved image bytes'

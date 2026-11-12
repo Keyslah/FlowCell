@@ -87,7 +87,7 @@ test("managed Add Program and Add Panel windows receive the default Tauri capabi
   assert.ok(capability.windows.includes("flowcell-add-panel"));
 });
 
-test("Add Program always offers a registration-only executable path beside managed packages", () => {
+test("Installation offers registration-only executable setup without importing a program ZIP", async () => {
   const addProgram = read(
     frontendRoot,
     "src",
@@ -95,25 +95,31 @@ test("Add Program always offers a registration-only executable path beside manag
     "program-setup",
     "AddProgramWindowPage.tsx"
   );
-  assert.match(addProgram, />Any program<\/button>/);
-  assert.match(addProgram, />Managed package<\/button>/);
+  assert.match(addProgram, /Add an application without a ZIP/);
   assert.match(addProgram, /<label>Program name/);
-  assert.match(addProgram, /<label>Application executable/);
-  assert.match(addProgram, /createPlainProgram:\s*true/);
-  assert.match(addProgram, /createPlainProgram:\s*false/);
-  assert.match(addProgram, /selectedPanels:\s*\[\]/);
-  assert.match(addProgram, /selectedSources:\s*\[\]/);
-  assert.match(addProgram, /inventory\.packages\.length === 0/);
-  assert.match(addProgram, /Choose Any program to add an executable directly/);
-  assert.match(addProgram, /const addPlainProgram = async/);
-  assert.match(
-    addProgram,
-    /const addPlainProgram = async[\s\S]*preflightAddProgramPlan\(request\)[\s\S]*installValidatedPlan\(validatedRequest\)/
-  );
-  assert.match(addProgram, /onClick=\{\(\) => void addPlainProgram\(\)\}/);
+  assert.match(addProgram, /<label>Application \.exe path/);
+  const parsed = ts.createSourceFile("AddProgramWindowPage.tsx", addProgram, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const component = parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "AddProgramWindowPage");
+  const declarations = component.body.statements.filter(ts.isVariableStatement).flatMap(node => [...node.declarationList.declarations]);
+  const initializer = name => declarations.find(node => node.name.getText(parsed) === name).initializer;
+  const evaluate = (node, context) => new Function(...Object.keys(context), ts.transpileModule(`return (${node.getText(parsed)});`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText)(...Object.values(context));
+  const request = evaluate(initializer("request").arguments[0], {
+    setupSource: "plain", plainProgramName: " Fixture ", plainExecutablePath: "C:\\Apps\\Fixture.exe"
+  })();
+  assert.deepEqual(request, {
+    programName: "Fixture", executablePath: "C:\\Apps\\Fixture.exe", createPlainProgram: true,
+    selectedPanels: [], selectedSources: []
+  });
+  const installed = [];
+  await evaluate(initializer("addPlainProgram"), {
+    request, setupSource: "plain", installValidatedPlan: async plan => installed.push(plan)
+  })();
+  assert.deepEqual(installed, [request]);
   assert.doesNotMatch(addProgram, /I confirm this EXE filename identifies/);
   assert.doesNotMatch(addProgram, />Review program<\/button>/);
-  assert.match(addProgram, />Review plan<\/button>/);
+  assert.equal((addProgram.match(/<footer className="program-setup__footer"/g) ?? []).length, 1);
 });
 
 function addProgramCloseHarness(componentName = "AddProgramWindowPage") {
@@ -142,6 +148,8 @@ function addProgramCloseHarness(componentName = "AddProgramWindowPage") {
     busyRef,
     setBusyState: next => stateUpdates.push(next),
     setStatus: next => statuses.push(next),
+    setProgress() {},
+    setInstallationComplete() {},
     setReviewed: () => {},
     setCompletedSetup: () => {},
     setSetupStatuses: () => {},
@@ -149,6 +157,10 @@ function addProgramCloseHarness(componentName = "AddProgramWindowPage") {
     publishButtonCommit: async () => {},
     emitProgramSetupCommitted: async () => {},
     errorMessage: error => String(error),
+    installWindows: async () => {},
+    setupSource: "package", selectedProgram: { programName: "Fixture" },
+    installProgram: async () => context.present({ programName: "Fixture", status: "ready", message: "Added", restartNotes: "" }),
+    onWindowsComplete: undefined,
     getCurrentWindow: () => ({
       onCloseRequested(callback) {
         listener = callback;
@@ -164,10 +176,12 @@ function addProgramCloseHarness(componentName = "AddProgramWindowPage") {
     return new Function(...Object.keys(context), compiled)(...Object.values(context));
   };
   context.setBusy = evaluate(initializer("setBusy").arguments[0]);
+  if (componentName === "AddProgramWindowPage") context.present = evaluate(initializer("presentSetupResult"));
   const dispose = evaluate(effect.expression.arguments[0])();
   return {
     setBusy: context.setBusy, requestClose, dispose, statuses, stateUpdates,
-    present: componentName === "AddProgramWindowPage" ? evaluate(initializer("presentSetupResult")) : null,
+    present: context.present ?? null,
+    install: componentName === "AddProgramWindowPage" ? evaluate(initializer("install")) : null,
     finish: componentName === "AddPanelWindowPage" ? evaluate(initializer("finishSuccess")) : null,
     async registered() { completeRegistration(); await Promise.resolve(); },
     get unlistenCount() { return unlistenCount; },
@@ -200,12 +214,13 @@ test("Add Program removes a close listener that registers after disposal", async
   assert.deepEqual(h.statuses, [], "a disposed listener must not update the old window");
 });
 
-test("Add Program successful setup can still close its window while finishing", async () => {
+test("Add Program retains its completion screen and releases native close after installation", async () => {
   const h = addProgramCloseHarness();
   await h.registered();
-  h.setBusy(true);
-  await h.present({ programName: "Fixture", status: "ready", message: "Added", restartNotes: "" });
-  assert.equal(h.closed, true, "the completed transaction must release its close guard before auto-close");
+  await h.install();
+  assert.equal(h.closed, false, "the completion screen remains visible for setup notes and explicit Close");
+  assert.equal(h.requestClose().defaultPrevented, false, "the completed transaction must release its close guard");
+  assert.deepEqual(h.stateUpdates, [true, false]);
   h.dispose();
 });
 

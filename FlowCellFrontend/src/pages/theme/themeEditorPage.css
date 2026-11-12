@@ -1,6 +1,6 @@
 .theme-editor {
   box-sizing: border-box;
-  min-width: 760px;
+  min-width: 0;
   font-family: "Segoe UI", sans-serif;
   color: #edf3ef;
   background:
@@ -8,13 +8,10 @@
     #111715;
 }
 
-.theme-editor.theme-editor { grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; padding-bottom: 12px; }
-.theme-editor.theme-editor--program-page { grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; padding: 8px; }
-.theme-editor--program-page .theme-editor__scope { padding: 0; border: 0; background: none; }
-.theme-editor__program-import { align-self: end; justify-self: end; }
+.theme-editor.theme-editor { grid-template-rows: auto auto minmax(160px, 1fr) auto; overflow: auto; padding-bottom: 12px; }
 .theme-editor__header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .theme-editor__header-actions { justify-content: flex-end; }
-.theme-editor__content { min-height: 0; overflow: hidden; }
+.theme-editor__content { min-width: 0; min-height: 0; overflow: auto; }
 .theme-editor__common { height: 100%; overflow: auto; display: grid; gap: 14px; align-content: start; }
 .theme-editor__common[hidden] { display: none; }
 .theme-editor .theme-editor__status { position: static; padding: 8px 0; }
@@ -146,7 +143,7 @@
 .theme-editor__gradient-grid,
 .theme-editor__assignment-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   gap: 10px;
 }
 
@@ -156,6 +153,8 @@
   color: rgba(237, 243, 239, 0.66);
   font-size: 12px;
 }
+
+.theme-editor__scope { grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr); }
 
 .theme-editor__token-groups {
   display: grid;
@@ -220,7 +219,7 @@
 
 .theme-editor__effect-amount-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   gap: 12px;
 }
 
@@ -440,7 +439,9 @@
     justify-content: flex-start;
   }
 
-  .theme-editor__rail-row {
+  .theme-editor__rail-row,
+  .theme-editor__scope,
+  .theme-library-columns {
     grid-template-columns: 1fr;
   }
 

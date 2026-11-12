@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import ts from "typescript";
 import { fileURLToPath } from "node:url";
 import { normalizeButtonSkinColor } from "./.compiled-button-system/button/skins/buttonSkinColors.js";
 import { rails } from "./.compiled-button-system/pages/main/mainLayout.js";
@@ -50,7 +51,7 @@ test("Main and installed program contributions use the unified Theme Editor", ()
 
   assert.match(layout, /label: "Theme"[\s\S]{0,180}actionId: "open-theme-editor"/);
   assert.match(main, /openThemeEditorWindow\(\{ target: "FlowCell", page: "main" \}\)/);
-  assert.match(editor, /registeredPanels\.map/);
+  assert.match(editor, /const programs = await listProgramFolders\(\)/);
   assert.match(editor, /<option value=\{FLOWCELL_TARGET_VALUE\}>Main<\/option>/);
   assert.match(editor, /panelValue === POPOUTS_ONLY_VALUE/);
   assert.match(editor, /popoutsOnly \? \{ area: "popouts" as const \} : \{\}/);
@@ -70,6 +71,63 @@ test("Main and installed program contributions use the unified Theme Editor", ()
   assert.ok(JSON.parse(blenderScript).page.themeContribution);
   assert.match(blenderPage, /descriptor\.themeContribution/);
   assert.equal(JSON.parse(blenderManifest).themeLibrary, "themes/Blender");
+});
+
+test("Theme targets refresh immediately after setup and ignore stale program reads without changing selection", async () => {
+  const source = ts.createSourceFile("ThemeEditorPage.tsx", read("src", "pages", "theme", "ThemeEditorPage.tsx"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let effect;
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && node.expression.getText(source) === "useEffect" && node.arguments[0]?.getText(source).includes("const refreshPrograms = async")) effect = node.arguments[0].getText(source);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.ok(effect);
+  const handlers = new Map();
+  const reads = [];
+  let names = [];
+  let selected = "__flowcell__";
+  const cleanup = new Function("context", "listProgramFolders", "listen", "makeSafeTauriUnlisten", "PROGRAM_SETUP_COMMITTED_EVENT", "THEME_EDITOR_CONTEXT_EVENT", "setProgramNames", "setTargetValue", "setPageValue", "setPanelValue", "setStatus", "resolvedEditorContext", "errorMessage", ts.transpileModule(`return (${effect})();`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)(
+    {}, () => new Promise((resolve) => reads.push(resolve)),
+    async (name, handler) => { handlers.set(name, handler); return () => handlers.delete(name); }, (dispose) => dispose,
+    "setup", "context", (value) => { names = value; }, (value) => { selected = value; }, () => {}, () => {}, () => {},
+    (value) => ({ targetValue: value.target ?? "__flowcell__", pageValue: "main", panelValue: "__all_panels__" }), String
+  );
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  await flush();
+  assert.equal(handlers.has("setup"), true, "setup subscription must exist before the first program read");
+  assert.equal(reads.length, 1);
+  reads[0](["Windows"]);
+  await flush();
+  selected = "Windows";
+  handlers.get("setup")({ payload: { programName: "Blender" } });
+  handlers.get("setup")({ payload: { programName: "Krita" } });
+  reads[2](["Windows", "Blender", "Krita"]);
+  await flush();
+  reads[1](["Windows"]);
+  await flush();
+  assert.deepEqual(names, ["Windows", "Blender", "Krita"]);
+  assert.equal(selected, "Windows", "completed setup must preserve the current Target selection");
+  handlers.get("context")({ payload: { target: "Blender" } });
+  handlers.get("setup")({ payload: { programName: "Fusion" } });
+  reads[4](["Windows", "Blender", "Krita", "Fusion"]);
+  await flush();
+  assert.equal(selected, "Blender");
+  reads[3](["Windows"]);
+  await flush();
+  handlers.get("setup")({ payload: { programName: "Closed" } });
+  cleanup();
+  reads[5](["Closed"]);
+  await flush();
+  assert.deepEqual(names, ["Windows", "Blender", "Krita", "Fusion"]);
+  assert.equal(handlers.size, 0);
+});
+
+test("Theme Target retains one shared header and fixed column geometry for Main and program targets", () => {
+  const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
+  const css = read("src", "pages", "theme", "themeEditorPage.css");
+  assert.doesNotMatch(editor, /!showingProgramPage && <header/);
+  assert.doesNotMatch(css, /theme-editor--program-page[^}]*\b(?:padding|gap|grid-template-rows)\s*:/);
+  assert.match(css, /\.theme-editor__scope \{ grid-template-columns: minmax\(160px, 1fr\) minmax\(160px, 1fr\); \}/);
 });
 
 test("Theme Editor is a bulk override and saved-skin assignment workflow", () => {

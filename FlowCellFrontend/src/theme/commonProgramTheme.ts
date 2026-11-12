@@ -8,6 +8,7 @@ import {
   resolveProgramPopoutThemeOverride
 } from "./programPopoutTheme.js";
 import { normalizeButtonGlowAmount, normalizeButtonHighlightAmount, normalizeButtonSkinColor } from "../button/skins/buttonSkinColors.js";
+import type { ThemeToolDescriptor } from "./portableTheme.js";
 
 export type CommonProgramThemeEffectField = "hoverHighlightAmount" | "activeHighlightAmount" | "hoverGlowAmount" | "activeGlowAmount";
 export type CommonProgramThemeEdit =
@@ -73,9 +74,49 @@ export function applyCommonProgramThemeEdit(
   }
 }
 
-/** Legacy placement IDs are local to their original installation. */
+interface LegacyAppearanceSourceReference {
+  programId: string;
+  sourceId: string;
+  slot: string | null;
+  surfaceKind: "regular-popout" | "tool-set-popout" | "fan";
+}
+
+function legacyAppearanceSourceReference(value: unknown): LegacyAppearanceSourceReference | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (Object.keys(candidate).some((key) => !["programId", "sourceId", "slot", "surfaceKind"].includes(key)) ||
+    typeof candidate.programId !== "string" || !candidate.programId.trim() ||
+    typeof candidate.sourceId !== "string" || !candidate.sourceId.trim() ||
+    !(candidate.slot === null || typeof candidate.slot === "string" && candidate.slot.trim()) ||
+    !["regular-popout", "tool-set-popout", "fan"].includes(String(candidate.surfaceKind))) return null;
+  return candidate as unknown as LegacyAppearanceSourceReference;
+}
+
+function resolveLegacyAppearancePlacement(
+  document: ButtonStateDocument, target: ThemeTarget, reference: LegacyAppearanceSourceReference,
+  descriptors: readonly ThemeToolDescriptor[]
+): string | null {
+  const owners = [...new Set(descriptors.filter((descriptor) => descriptor.ownerButtonId &&
+    descriptor.programId.toLocaleLowerCase("en") === reference.programId.toLocaleLowerCase("en") &&
+    descriptor.sourceId === reference.sourceId).map((descriptor) => descriptor.ownerButtonId!))];
+  if (owners.length > 1) throw new Error(`Saved popped Button source '${reference.sourceId}' has ${owners.length} installed owners.`);
+  if (owners.length === 0) return null;
+  const matches = Object.values(document.placements).filter((placement) => {
+    if (!placementMatchesThemeTarget(document, placement, target) || document.surfaces[placement.surfaceId]?.kind !== reference.surfaceKind) return false;
+    const button = document.buttons[placement.buttonId];
+    if (reference.slot === null) return button?.id === owners[0];
+    return button?.toolSetParentId === owners[0] &&
+      (button.metadata.toolSetSlot === reference.slot ||
+        button.executionTarget?.kind === "tool-set-action" && button.executionTarget.command === reference.slot);
+  });
+  if (matches.length > 1) throw new Error(`Saved popped Button slot '${reference.slot ?? "owner"}' has ${matches.length} matching placements.`);
+  return matches[0]?.id ?? null;
+}
+
+/** Older local IDs remain supported; packaged source references resolve across installations. */
 export function applyLegacyProgramAppearance(
-  document: ButtonStateDocument, target: ThemeTarget, settings?: unknown, appearance?: unknown
+  document: ButtonStateDocument, target: ThemeTarget, settings?: unknown, appearance?: unknown,
+  descriptors: readonly ThemeToolDescriptor[] = []
 ): { document: ButtonStateDocument; skippedMissingPlacementCount: number } {
   if (target.kind !== "program") throw new Error("Program theme settings require a program target.");
   const next = cloneButtonDocument(document);
@@ -96,11 +137,12 @@ export function applyLegacyProgramAppearance(
       throw new Error("Saved popped Button appearances are invalid.");
     }
     const seen = new Set<string>();
+    const resolvedPlacements = new Set<string>();
     for (const raw of value.placements) {
-      const entry = raw as { placementId: string; buttonId: string; color?: string; textColor?: string; lockedAppearance?: ButtonThemeOverride } | null;
+      const entry = raw as { placementId: string; buttonId: string; color?: string; textColor?: string; lockedAppearance?: ButtonThemeOverride; sourceReference?: LegacyAppearanceSourceReference } | null;
       if (!entry || typeof entry.placementId !== "string" || !entry.placementId.trim() ||
         typeof entry.buttonId !== "string" || !entry.buttonId.trim() ||
-        Object.keys(entry).some((key) => !["placementId", "buttonId", "color", "textColor", "lockedAppearance"].includes(key)) ||
+        Object.keys(entry).some((key) => !["placementId", "buttonId", "color", "textColor", "lockedAppearance", "sourceReference"].includes(key)) ||
         seen.has(entry.placementId)) throw new Error("Saved popped Button identity is invalid or duplicated.");
       seen.add(entry.placementId);
       const colors = entry.color !== undefined || entry.textColor !== undefined ? normalizeProgramPopoutColorOverride({
@@ -109,14 +151,19 @@ export function applyLegacyProgramAppearance(
       if ((entry.color !== undefined || entry.textColor !== undefined) && !colors) throw new Error("Saved popped Button color is invalid.");
       const lock = entry.lockedAppearance === undefined ? null : normalizeProgramPopoutThemeLock(entry.lockedAppearance);
       if (entry.lockedAppearance !== undefined && !lock) throw new Error("Saved popped Button lock is invalid.");
-      if (!Object.hasOwn(next.placements, entry.placementId)) {
+      const reference = entry.sourceReference === undefined ? null : legacyAppearanceSourceReference(entry.sourceReference);
+      if (entry.sourceReference !== undefined && !reference) throw new Error("Saved popped Button source reference is invalid.");
+      const direct = next.placements[entry.placementId];
+      const placementId = direct?.buttonId === entry.buttonId ? direct.id
+        : reference ? resolveLegacyAppearancePlacement(next, target, reference, descriptors) : null;
+      if (!placementId) {
+        if (direct && !reference) throw new Error(`Saved Button '${entry.buttonId}' cannot be resolved exactly on this installation.`);
         skippedMissingPlacementCount += 1;
         continue;
       }
-      const placement = next.placements[entry.placementId];
-      if (placement.buttonId !== entry.buttonId) {
-        throw new Error(`Saved Button '${entry.buttonId}' cannot be resolved exactly on this installation.`);
-      }
+      const placement = next.placements[placementId];
+      if (resolvedPlacements.has(placement.id)) throw new Error("Saved popped Button appearance resolves to a duplicated placement.");
+      resolvedPlacements.add(placement.id);
       if (!placementMatchesThemeTarget(next, placement, target)) continue;
       if (!popped(next, placement.id)) throw new Error("Saved popped appearance references a non-popped Button.");
       if (next.programPopoutThemeLocks?.[placement.id]) continue;

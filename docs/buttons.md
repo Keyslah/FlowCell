@@ -337,14 +337,16 @@ ratio inside the fixed native canvas, so skin overflow cannot be clipped or
 shift the later expanded frame. Panel/program lifecycle still owns removal of a
 `panel-owner` and its dependent saved Fans.
 
-Legacy Fan Options also exposes additive Fan styles. `Spin Buttons as they fan
-out` is unchecked by default for new Fans and normalizes to unchecked when an
-older Button state or Fan settings file has no value. When enabled, every
+Enabling the Pop-out `Fan` checkbox exposes `Fan styles` immediately beneath it.
+`Spin Buttons as they fan out` is saved with that Pop-out, retained when Fan is
+switched off and on, and included in Button Settings and portable themes. It is
+unchecked by default when an older Pop-out has no style setting. Existing legacy
+Fan Options retain the same style control. When enabled, every
 non-owner Button spins from the fixed owner into its existing saved grid
 placement and reverses that motion before collapse. The motion is applied to
 the Fan placement wrapper rather than the Button skin, so it works with any
 skin; its total stagger window stays bounded even for large grids. It leaves
-the owner, Fan membership, and saved layout unchanged, and Fan Options' Run
+the owner, Fan membership, and saved layout unchanged, and the Editor's Run
 mode previews the same open-and-reverse lifecycle. The
 style is stored as its own option so later Fan-style checkboxes can be added
 without changing this opt-in behavior.

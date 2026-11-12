@@ -110,6 +110,90 @@ test("portable capture and apply uses owner and child slots, preserving authored
   assert.deepEqual(again, after);
 });
 
+test("portable themes preserve Pop-out Fan styles and accept earlier archives without a style", () => {
+  const donor = fixture();
+  const donorUnit = Object.values(donor.document.popoutUnits)[0];
+  const animation = { durationMs: 180, easing: "ease-out", staggerMs: 30, spinEnabled: true };
+  donorUnit.fanAnimation = structuredClone(animation);
+  const archive = JSON.parse(JSON.stringify(capturePortableTheme({ document: donor.document,
+    descriptors: [donor.descriptor], target, name: "Spinning Fan" })));
+  assert.equal(isPortableTheme(archive), true);
+  assert.deepEqual(archive.surfaces.find((surface) => surface.popout).popout.fanAnimation, animation);
+  const recipient = fixture("recipient");
+  const plan = planPortableThemeImport(recipient.document, archive, target, [recipient.descriptor]);
+  assert.deepEqual(plan.issues, []);
+  const restored = applyPortableTheme(recipient.document, archive, plan);
+  assert.deepEqual(Object.values(restored.popoutUnits)[0].fanAnimation, animation);
+  const legacy = structuredClone(archive);
+  delete legacy.surfaces.find((surface) => surface.popout).popout.fanAnimation;
+  assert.equal(isPortableTheme(legacy), true);
+  const oldRestored = applyPortableTheme(restored, legacy,
+    planPortableThemeImport(restored, legacy, target, [recipient.descriptor]));
+  assert.equal(Object.values(oldRestored.popoutUnits)[0].fanAnimation, undefined);
+  archive.surfaces.find((surface) => surface.popout).popout.fanAnimation.spinEnabled = "yes";
+  assert.equal(isPortableTheme(archive), false);
+});
+
+test("portable themes retain exact black locked appearance and every saved interaction state across owner IDs", () => {
+  const donor = fixture();
+  const child = Object.values(donor.document.buttons).find((button) => button.metadata.toolSetSlot === "left");
+  const placement = Object.values(donor.document.placements).find((entry) => entry.buttonId === child.id);
+  const skin = donor.document.skins[child.defaultSkinId];
+  for (const state of ["base", "hover", "play", "pressed", "held", "release", "disabled", "error"]) skin[state] += `\n--saved-${state}-color:#000000;`;
+  const lock = { colors: { surface: "#000000", text: "#000000" }, hoverEnabled: true, activeEnabled: true,
+    hoverColor: "#12345680", activeColor: "#65432180", hoverHighlightAmount: 161, activeHighlightAmount: 252,
+    hoverGlowAmount: 56.71285044680543, activeGlowAmount: 41.589423660990654,
+    idleEnabled: true, idleColor: "#000000", idleHighlightAmount: 38, idleGlowAmount: 31.19206774574299 };
+  donor.document.programPopoutThemeLocks = { [placement.id]: lock };
+  const archive = JSON.parse(JSON.stringify(capturePortableTheme({ document: donor.document, descriptors: [donor.descriptor], target, name: "Black Live" })));
+  const recipient = fixture("recipient");
+  const plan = planPortableThemeImport(recipient.document, archive, target, [recipient.descriptor]);
+  assert.deepEqual(plan.issues, []);
+  const after = applyPortableTheme(recipient.document, archive, plan);
+  const restoredId = plan.placementIds[archive.theme.buttons.find((entry) => archive.references[entry.buttonId].slot === "left").placementId];
+  assert.deepEqual(after.programPopoutThemeLocks[restoredId], lock);
+  const restored = after.placements[restoredId];
+  const restoredSkin = after.skins[restored.skinOverrideId ?? after.buttons[restored.buttonId].defaultSkinId];
+  for (const state of ["base", "hover", "play", "pressed", "held", "release", "disabled", "error"]) assert.equal(restoredSkin[state], skin[state]);
+});
+
+test("saved idle-only Button overrides survive theme capture and apply including explicit false and zero values", () => {
+  const donor = fixture();
+  const placement = Object.values(donor.document.placements)[0];
+  const override = { colors: {}, hoverEnabled: null, activeEnabled: null, hoverColor: null, activeColor: null,
+    idleEnabled: false, idleColor: "#000000", idleHighlightAmount: 0, idleGlowAmount: 0 };
+  donor.document.themeOverrides = { [placement.id]: override };
+  const archive = captureThemeFile({ document: donor.document, target });
+  const recipient = cloneButtonDocument(donor.document);
+  delete recipient.themeOverrides;
+  const restored = applyThemeFile(recipient, JSON.parse(JSON.stringify(archive))).document;
+  assert.deepEqual(restored.themeOverrides[placement.id], override);
+});
+
+test("packaged legacy black appearance resolves by exact source and child slot on a fresh import", () => {
+  const recipient = fixture("fresh-owner");
+  const child = Object.values(recipient.document.buttons).find((button) => button.metadata.toolSetSlot === "left");
+  const placement = Object.values(recipient.document.placements).find((entry) => entry.buttonId === child.id);
+  const lockedAppearance = { colors: { surface: "#000000", text: "#000000" }, hoverEnabled: true, activeEnabled: true,
+    hoverColor: "#FFFFFFCC", activeColor: "#FFFFFFCC", idleEnabled: true, idleColor: "#000000", idleHighlightAmount: 38, idleGlowAmount: 31.19206774574299 };
+  const appearance = { version: 1, placements: [{ placementId: "old-local-placement", buttonId: "old-local-button", lockedAppearance,
+    sourceReference: { programId: "blender", sourceId: recipient.descriptor.sourceId, slot: "left", surfaceKind: recipient.document.surfaces[placement.surfaceId].kind } }] };
+  const restored = applyLegacyProgramAppearance(recipient.document, target, undefined, appearance, [recipient.descriptor]);
+  assert.equal(restored.skippedMissingPlacementCount, 0);
+  assert.deepEqual(restored.document.programPopoutThemeLocks[placement.id], lockedAppearance);
+  assert.equal(recipient.document.programPopoutThemeLocks, undefined);
+  assert.throws(() => applyLegacyProgramAppearance(recipient.document, target, undefined, appearance,
+    [recipient.descriptor, { ...recipient.descriptor, ownerButtonId: "ambiguous-owner" }]), /2 installed owners/);
+  const unknown = structuredClone(appearance);
+  unknown.placements[0].sourceReference.sourceId = "another-source";
+  const missing = applyLegacyProgramAppearance(recipient.document, target, undefined, unknown, [recipient.descriptor]);
+  assert.equal(missing.skippedMissingPlacementCount, 1);
+  assert.equal(missing.document.programPopoutThemeLocks, undefined);
+  const duplicate = structuredClone(appearance);
+  duplicate.placements.push({ ...structuredClone(duplicate.placements[0]), placementId: "another-old-placement" });
+  assert.throws(() => applyLegacyProgramAppearance(recipient.document, target, undefined, duplicate, [recipient.descriptor]), /duplicated placement/);
+});
+
 test("duplicate installed identities and incompatible versions fail closed without arbitrary selection", () => {
   const donor = fixture();
   const theme = capturePortableTheme({ document: donor.document, descriptors: [donor.descriptor], target, name: "Example" });

@@ -37,13 +37,15 @@ function message(error: unknown): string {
 /** The native install and canonical Buttons are one recoverable setup transaction. */
 export async function applyManagedProgramPlan(
   request: AddProgramPlanRequest,
-  operations: typeof defaultOperations = defaultOperations
+  operations: typeof defaultOperations = defaultOperations,
+  onProgress: (stage: string) => void = () => {}
 ): Promise<ProgramSetupResult> {
   let token = "";
   let result: ProgramSetupResult;
   try {
     const applied = await operations.apply(request);
     token = applied.transactionToken;
+    onProgress("Saving installed buttons and panel choices…");
     const base = await operations.load();
     const next = reconcileBundledProgramSources(base, applied.descriptors);
     const panels = reconcileProgramPanelOwners(next, {
@@ -58,6 +60,7 @@ export async function applyManagedProgramPlan(
     ].filter(Boolean);
     await operations.prepare(token, expectedIds);
     if (!buttonStateDocumentsEqual(next, base)) await operations.commit(next, base.revision);
+    onProgress("Finishing application setup…");
     result = await operations.finalize(token);
   } catch (error) {
     if (!token) throw error;
@@ -79,14 +82,15 @@ export async function applyManagedProgramPlan(
 
   // Notification failures cannot undo a completed install or turn it into an install retry.
   try {
-    await operations.publish(await operations.load());
-  } catch (error) {
-    console.warn("Program was added, but its Button state could not be published.", error);
-  }
-  try {
     await operations.notify({ kind: "program", programName: result.programName });
   } catch (error) {
     console.warn("Program was added, but its navigation could not be refreshed.", error);
+  }
+  try {
+    onProgress("Refreshing FlowCell…");
+    await operations.publish(await operations.load());
+  } catch (error) {
+    console.warn("Program was added, but its Button state could not be published.", error);
   }
   return result;
 }

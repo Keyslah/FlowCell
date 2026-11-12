@@ -27,7 +27,9 @@ function hostHarness(exportName) {
       };
       if (name === "react/jsx-runtime") return { jsx: (type, props) => ({ type, props }) };
       if (name === "../../button/ButtonHost") return { ButtonHost: "ButtonHost" };
-      if (name === "../../button/skins/defaultButtonSkin") return { DEFAULT_BUTTON_SKIN: { id: "fallback-skin" } };
+      if (name === "../../button/skins/chippedConcreteButtonSkin") {
+        return { getChippedConcreteButtonSkin: () => ({ id: "fallback-skin" }) };
+      }
       if (name === "./mainLayout") return { rails };
       throw new Error(`Unexpected dependency ${name}`);
     }

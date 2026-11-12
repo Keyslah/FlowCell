@@ -9,6 +9,7 @@ import {
 } from "./buttonSkinFamily";
 import { BUTTON_SKIN_FILE_EXTENSION } from "./buttonSkinFormat";
 import { validateButtonSkin } from "./skinValidator";
+import { isBundledChippedConcreteDefaultSkin, getChippedConcreteButtonSkin } from "./chippedConcreteButtonSkin";
 
 const pendingVariants = new Map<string, Promise<ButtonSkin | null>>();
 
@@ -37,9 +38,18 @@ function loadFamilyVariant(relativePath: string): Promise<ButtonSkin | null> {
   return request;
 }
 
-export function useButtonSkinFamily(skin: ButtonSkin, placementId: string, label: string): ButtonSkin {
+export function useButtonSkinFamily(
+  skin: ButtonSkin,
+  placementId: string,
+  label: string,
+  preferredWidth?: number,
+  textSizeOverride?: number
+): ButtonSkin {
   const path = buttonSkinFamilyVariantPath(skin, placementId, label);
   const embedded = useMemo(() => {
+    if (isBundledChippedConcreteDefaultSkin(skin)) {
+      return getChippedConcreteButtonSkin(label, preferredWidth, textSizeOverride);
+    }
     const variant = resolveEmbeddedButtonSkinFamilySource(skin, placementId, label);
     if (!variant) return null;
     try {
@@ -52,7 +62,7 @@ export function useButtonSkinFamily(skin: ButtonSkin, placementId: string, label
     } catch {
       return null;
     }
-  }, [skin, placementId, label]);
+  }, [skin, placementId, label, preferredWidth, textSizeOverride]);
   const [variant, setVariant] = useState<{ path: string; skin: ButtonSkin } | null>(null);
   useEffect(() => {
     setVariant(null);

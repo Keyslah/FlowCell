@@ -5,6 +5,7 @@ import {
 } from "../skins/chippedConcreteButtonSkin.js";
 import { PANEL_BUTTON_GAP, panelButtonViewport } from "../../pages/main/mainLayout.js";
 import { resolveButtonPlacementPresentation } from "./buttonPresentation.js";
+import { DEFAULT_BUTTON_SKIN_ID } from "../skins/defaultButtonSkin.js";
 
 /** Match the bundled family's visible core, retaining the requested row height. */
 export function defaultPanelButtonSize(
@@ -14,10 +15,13 @@ export function defaultPanelButtonSize(
 ): { width: number; height: number } {
   const width = placement?.width ?? 160;
   const height = placement?.height ?? 44;
-  const skinId = placement?.skinOverrideId ?? button.defaultSkinId;
+  // A new Main panel occurrence receives Concrete locally; existing occurrences
+  // (including neutral Pop-outs) use their own effective assignment.
+  const skinId = placement ? placement.skinOverrideId ?? button.defaultSkinId
+    : button.defaultSkinId === DEFAULT_BUTTON_SKIN_ID ? CHIPPED_CONCRETE_BUTTON_SKIN_ID : button.defaultSkinId;
   if (skinId !== CHIPPED_CONCRETE_BUTTON_SKIN_ID) return { width, height };
   const presentation = placement ? resolveButtonPlacementPresentation(button, placement) : button;
-  const natural = getChippedConcreteButtonSize(presentation.label);
+  const natural = getChippedConcreteButtonSize(presentation.label, undefined, placement?.textSizeOverride ?? undefined);
   return { width: natural.width * height / natural.height, height };
 }
 

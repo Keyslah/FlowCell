@@ -1965,6 +1965,65 @@ pub(crate) fn check_blender_program_setup(
     run_blender_program_setup(program_name, exe_path, true)
 }
 
+pub(super) fn run_program_setup_process(
+    mut command: Command,
+    timeout_seconds: u64,
+    description: &str,
+) -> Result<std::process::Output, String> {
+    use std::io::Read;
+    const CAPTURE_LIMIT: usize = 64 * 1024;
+    let started = Instant::now();
+    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| format!("Could not start {description}: {error}"))?;
+    let stdout = child.stdout.take().ok_or_else(|| format!("Could not capture {description} output."))?;
+    let stderr = child.stderr.take().ok_or_else(|| format!("Could not capture {description} errors."))?;
+    // Drain both pipes while the child runs. Waiting before reading can fill a
+    // pipe and deadlock even when the child would otherwise finish successfully.
+    let capture = |mut stream: Box<dyn Read + Send>| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let result = (|| {
+                let mut bytes = Vec::new();
+                let mut buffer = [0u8; 8192];
+                let mut exceeded_limit = false;
+                loop {
+                    let count = stream.read(&mut buffer).map_err(|error| error.to_string())?;
+                    if count == 0 { break; }
+                    let retained = count.min(CAPTURE_LIMIT.saturating_sub(bytes.len()));
+                    bytes.extend_from_slice(&buffer[..retained]);
+                    exceeded_limit |= retained < count;
+                }
+                if exceeded_limit {
+                    Err(format!("Setup process output exceeded {CAPTURE_LIMIT} bytes."))
+                } else {
+                    Ok(bytes)
+                }
+            })();
+            let _ = sender.send(result);
+        });
+        receiver
+    };
+    let stdout = capture(Box::new(stdout));
+    let stderr = capture(Box::new(stderr));
+    let timeout = Duration::from_secs(timeout_seconds);
+    let timeout_message = format!("{description} exceeded {timeout_seconds} seconds and was stopped. Check program-setup.log, then retry the operation.");
+    // The shared waiter terminates this child's process tree on Windows.
+    let output = wait_for_child_output_with_timeout(child, timeout, &timeout_message);
+    let outcome = match &output {
+        Ok(output) => format!("exitCode={:?}", output.status.code()),
+        Err(error) => error.clone(),
+    };
+    append_flowcell_local_log("program-setup.log", &format!("{description}: elapsedMs={}, {outcome}", started.elapsed().as_millis()));
+    let mut output = output?;
+    let receive = |receiver: std::sync::mpsc::Receiver<Result<Vec<u8>, String>>| {
+        receiver.recv_timeout(timeout.saturating_sub(started.elapsed()))
+            .map_err(|_| format!("{description} output capture did not finish within {timeout_seconds} seconds."))?
+    };
+    output.stdout = receive(stdout)?;
+    output.stderr = receive(stderr)?;
+    Ok(output)
+}
+
 fn run_blender_program_setup(
     program_name: &str,
     exe_path: Option<&str>,
@@ -2005,12 +2064,7 @@ fn run_blender_program_setup(
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 
-    let output = command.output().map_err(|error| {
-        format!(
-            "Failed to start the Blender bridge installer at {}: {error}",
-            installer_path.display()
-        )
-    })?;
+    let output = run_program_setup_process(command, 30, if check_only { "Blender setup check" } else { "Blender connection setup" })?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if output.status.success() {
@@ -2285,7 +2339,7 @@ pub(crate) fn run_blender_bridge_action_direct_with_options(
         &response_path, &request_id, timeout_duration,
         || timeout_override.is_none() && blender_process_has_visible_dialog(target_blender_process_id),
     ).ok_or_else(|| format!(
-        "Blender did not finish the action '{action}' before the response timeout. Check Blender's dialogs and the FlowCell bridge add-on."
+        "Blender did not finish the action '{action}' before the response timeout. Check Blender's dialogs and the FlowCell bridge add-on. If FlowCell was just installed or updated, save your work and restart Blender to load the changes."
     ))?;
 
     let message = extract_blender_bridge_response_message(&response);
@@ -2481,6 +2535,35 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[cfg(windows)]
+    #[test]
+    fn program_setup_process_drains_both_pipes_before_waiting() {
+        let mut command = std::process::Command::new(crate::resolve_powershell_path());
+        command.args(["-NoProfile", "-NonInteractive", "-Command",
+            "[Console]::Out.Write(('x' * 49152)); [Console]::Error.Write(('y' * 49152))"]);
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+        let output = super::run_program_setup_process(command, 30, "setup pipe test")
+            .expect("output larger than both OS pipes must not deadlock");
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), 49152);
+        assert_eq!(output.stderr.len(), 49152);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn program_setup_process_times_out_without_waiting_for_pipe_eof() {
+        let mut command = std::process::Command::new(crate::resolve_powershell_path());
+        command.args(["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 60"]);
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+        let started = std::time::Instant::now();
+        let error = super::run_program_setup_process(command, 1, "setup timeout test")
+            .expect_err("a stalled process must be terminated");
+        assert!(error.contains("exceeded 1 seconds"));
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
 
     #[test]
     fn blender_setup_preserves_pending_and_restart_results() {

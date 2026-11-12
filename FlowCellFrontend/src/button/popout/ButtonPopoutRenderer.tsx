@@ -16,6 +16,8 @@ import type {
   ButtonVisualState,
   JsonValue
 } from "../types";
+import { useButtonFanMotion, type ButtonFanMotionPhase } from "../fan/useButtonFanMotion";
+import type { ButtonFanMotionDirection } from "../fan/buttonFanMotion";
 import { expandedButtonPopoutPlacementIds } from "../state/buttonPopoutInteractionOperations";
 import {
   createToolFieldRuntimeState,
@@ -111,6 +113,14 @@ export interface ButtonPopoutRendererProps {
   displayMode: "collapsed" | "expanded";
   surfaceScale?: number;
   surfaceEnvelope?: ButtonRect;
+  motionPhase?: ButtonFanMotionPhase;
+  motionSequence?: number;
+  onMotionStart?: (phase: ButtonFanMotionDirection, sequence: number) => void;
+  onMotionComplete?: (phase: ButtonFanMotionDirection, sequence: number) => void;
+  onHoverStart?: () => void;
+  onHoverEnd?: () => void;
+  onHoverCancel?: () => void;
+  onPlacementNaturalMeasurement?: (placementId: string, measurement: ButtonCoreMeasurement) => void;
   onOwnerActivate?: (button: ButtonRecord) => void | Promise<void>;
   onRequestInlineEditorFocus?: () => void | Promise<void>;
   onPlacementMeasurement?: (
@@ -135,6 +145,14 @@ export function ButtonPopoutRenderer({
   displayMode,
   surfaceScale = 1,
   surfaceEnvelope,
+  motionPhase = "resting",
+  motionSequence = 0,
+  onMotionStart,
+  onMotionComplete,
+  onHoverStart,
+  onHoverEnd,
+  onHoverCancel,
+  onPlacementNaturalMeasurement,
   onOwnerActivate,
   onRequestInlineEditorFocus,
   onPlacementMeasurement,
@@ -142,6 +160,7 @@ export function ButtonPopoutRenderer({
   onPreparePlacementVisualStateChange,
   onPlacementVisualStateChange
 }: ButtonPopoutRendererProps) {
+  const expandedSurfaceRef = useRef<HTMLDivElement | null>(null);
   const fields = unit.kind === "tool-set" ? unit.fields : EMPTY_TOOL_FIELDS;
   const schemaFingerprint = toolFieldSchemaFingerprint(fields);
   const incomingFieldState = useMemo(
@@ -260,6 +279,20 @@ export function ButtonPopoutRenderer({
     };
   }, [document, unit]);
 
+  useButtonFanMotion({
+    surfaceRootRef: expandedSurfaceRef,
+    document: expandedDocument,
+    surfaceId: unit.surfaceId,
+    ownerPlacementId: savedOwnerPlacement?.id,
+    animation: unit.fanAnimation,
+    enabled: authoredFan && unit.fanAnimation?.spinEnabled === true,
+    expanded: displayMode === "expanded",
+    motionPhase,
+    motionSequence,
+    onMotionStart,
+    onMotionComplete
+  });
+
   if (displayMode === "collapsed") {
     if (!collapsedOwner) {
       return <div className="button-window-error">Fan owner placement is missing.</div>;
@@ -290,6 +323,12 @@ export function ButtonPopoutRenderer({
             ownerPlacementId={collapsedOwner.placementId}
             onRequestInlineEditorFocus={onRequestInlineEditorFocus}
             onPlacementMeasurement={onPlacementMeasurement}
+            visualMeasurementSamplingKey={motionPhase === "resting" ? motionSequence : undefined}
+            onPlacementNaturalMeasurement={(_placementId, measurement) =>
+              onPlacementNaturalMeasurement?.(collapsedOwner.sourcePlacementId, measurement)}
+            onHoverStart={() => onHoverStart?.()}
+            onHoverEnd={() => onHoverEnd?.()}
+            onHoverCancel={() => onHoverCancel?.()}
             onPlacementVisualMeasurement={onPlacementVisualMeasurement}
             onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
             onPlacementVisualStateChange={onPlacementVisualStateChange}
@@ -318,6 +357,7 @@ export function ButtonPopoutRenderer({
       }}
     >
       <div
+        ref={expandedSurfaceRef}
         className="button-popout-renderer button-popout-renderer--expanded"
         style={{
           width: surface.width,
@@ -348,6 +388,11 @@ export function ButtonPopoutRenderer({
             applyExecutionResult(result)
           }
           onPlacementMeasurement={onPlacementMeasurement}
+          visualMeasurementSamplingKey={motionPhase === "resting" ? motionSequence : undefined}
+          onPlacementNaturalMeasurement={onPlacementNaturalMeasurement}
+          onHoverStart={() => onHoverStart?.()}
+          onHoverEnd={() => onHoverEnd?.()}
+          onHoverCancel={() => onHoverCancel?.()}
           onPlacementVisualMeasurement={onPlacementVisualMeasurement}
           onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
           onPlacementVisualStateChange={onPlacementVisualStateChange}

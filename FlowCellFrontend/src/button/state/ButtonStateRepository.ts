@@ -73,6 +73,7 @@ export interface InstallButtonSourceResult {
   label: string;
   tooltip: string;
   children: InstalledButtonChildResult[];
+  previousDefaultLabel?: string;
   layout?: InstalledButtonLayout;
   updateTransactionToken?: string;
 }
@@ -642,6 +643,9 @@ function normalizeInstallResult(
       ? { ...ownerTarget, events: { ...(ownerTarget.events ?? {}), ...sharedEvents } }
       : ownerTarget,
     label: String(owner.label ?? identity.displayFileName),
+    previousDefaultLabel: typeof response.previousDefaultLabel === "string"
+      ? response.previousDefaultLabel
+      : undefined,
     tooltip: String(owner.tooltip ?? ""),
     children: Array.isArray(response.children)
       ? response.children.map((child) => {

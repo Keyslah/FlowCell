@@ -55,7 +55,10 @@ function requestLabel(payload: ToolSetChildHotkeyPayload): string {
   return `Shortcut '${payload.shortcut}'`;
 }
 
-function findMountedButtonCore(root: ParentNode, buttonId: string): HTMLElement | SVGElement | null {
+function findMountedButtonInteraction(root: ParentNode, buttonId: string): {
+  core: HTMLElement | SVGElement;
+  inert: boolean;
+} | null {
   const candidates = root.querySelectorAll<HTMLElement>("[data-button-host-id]");
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index];
@@ -64,7 +67,13 @@ function findMountedButtonCore(root: ParentNode, buttonId: string): HTMLElement 
     const interactionCore = interactionHost?.shadowRoot?.querySelector<HTMLElement | SVGElement>(
       "[data-core]"
     );
-    if (interactionCore) return interactionCore;
+    if (interactionCore) {
+      return {
+        core: interactionCore,
+        // The placement wrapper is outside the skin's shadow root.
+        inert: Boolean(candidate.closest("[inert]") || interactionCore.closest("[inert]"))
+      };
+    }
   }
   return null;
 }
@@ -109,9 +118,13 @@ export function activateToolSetChildHotkey(
   if (!state.root) {
     return reject(`${label} could not run because the active tool-set host is not mounted.`, payload);
   }
-  const interactionCore = findMountedButtonCore(state.root, button.id);
-  if (!interactionCore) {
+  const interaction = findMountedButtonInteraction(state.root, button.id);
+  if (!interaction) {
     return reject(`${label} could not run because '${button.label}' is not mounted in the active tool set.`, payload);
+  }
+
+  if (interaction.inert) {
+    return reject(`${label} could not run because '${button.label}' is temporarily inactive.`, payload);
   }
 
   try {
@@ -122,8 +135,8 @@ export function activateToolSetChildHotkey(
       cancelable: true,
       repeat: false
     };
-    interactionCore.dispatchEvent(new KeyboardEvent("keydown", eventInit));
-    interactionCore.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+    interaction.core.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    interaction.core.dispatchEvent(new KeyboardEvent("keyup", eventInit));
   } catch (error) {
     return reject(
       `${label} could not activate '${button.label}': ${

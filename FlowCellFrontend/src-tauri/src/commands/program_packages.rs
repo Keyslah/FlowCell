@@ -25,6 +25,10 @@ pub(crate) struct ImportedProgramPackage {
     pub(crate) package_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) cleanup_warning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) available_package: Option<super::programs::AvailableProgramPackage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) inventory_warning: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -402,6 +406,8 @@ fn commit_package_with_options(
         program_name: name.into(),
         package_path: target.to_string_lossy().into(),
         cleanup_warning,
+        available_package: None,
+        inventory_warning: None,
     })
 }
 
@@ -463,7 +469,9 @@ pub(super) fn seed_installed_windows_catalog(
     result
 }
 
-fn import_from_zip(zip_path: &Path, programs: &Path) -> Result<ImportedProgramPackage, String> {
+fn import_from_zip(zip_path: &Path, programs: &Path, window: Option<&tauri::WebviewWindow>) -> Result<ImportedProgramPackage, String> {
+    let mut progress = super::programs::ProgramSetupProgress::new(window, "import", "");
+    progress.stage("Waiting to import the program ZIP…", None);
     let _guard = IMPORT_LOCK
         .lock()
         .map_err(|_| "Program ZIP import lock is unavailable.")?;
@@ -479,6 +487,7 @@ fn import_from_zip(zip_path: &Path, programs: &Path) -> Result<ImportedProgramPa
     let stage = programs.join(unique_name("flowcell-package-import"));
     fs::create_dir(&stage).map_err(|e| format!("Could not create program ZIP staging: {e}"))?;
     let result = (|| {
+        progress.stage("Extracting and checking the program ZIP…", None);
         let helper = stage.join("expand.ps1");
         fs::write(&helper, EXTRACTOR).map_err(|e| e.to_string())?;
         let payload = stage.join("payload");
@@ -502,9 +511,7 @@ fn import_from_zip(zip_path: &Path, programs: &Path) -> Result<ImportedProgramPa
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000);
         }
-        let output = command
-            .output()
-            .map_err(|e| format!("Could not read program ZIP: {e}"))?;
+        let output = super::execution::run_program_setup_process(command, 60, "Program ZIP extraction")?;
         if !output.status.success() {
             let message = String::from_utf8_lossy(&output.stderr)
                 .chars()
@@ -515,13 +522,31 @@ fn import_from_zip(zip_path: &Path, programs: &Path) -> Result<ImportedProgramPa
         let extracted: ExtractedPackage = serde_json::from_slice(&output.stdout)
             .map_err(|e| format!("Invalid ZIP inspection response: {e}"))?;
         let staged = payload.join("Programs").join(&extracted.program_name);
+        progress.set_program_name(&extracted.program_name);
+        progress.stage("Validating the imported program…", None);
         validate_staged_package(&staged, &extracted.program_name)?;
-        commit_package_with(
+        let mut imported = commit_package_with(
             &staged,
             programs,
             &extracted.program_name,
             super::filesystem::recycle_directory_path,
-        )
+        )?;
+        progress.stage("Reading the imported program’s panels and buttons…", None);
+        // Inspect only this package. Refreshing all packages repeats unrelated
+        // source validation and executable discovery after every ZIP import.
+        let inventory = (|| {
+            let root = Path::new(&imported.package_path);
+            let mut manifest: ProgramManifest = serde_json::from_value(read_json(&root.join("flowcell.program.json"))?)
+                .map_err(|error| format!("Invalid imported program manifest: {error}"))?;
+            manifest::validate_manifest(&mut manifest, &imported.program_name, root)?;
+            super::programs::validate_available_program_package_at(root, &manifest)
+        })();
+        match inventory {
+            Ok(package) => imported.available_package = Some(package),
+            Err(error) => imported.inventory_warning = Some(format!("The program ZIP was imported, but its setup options could not be read: {error}")),
+        }
+        progress.stage("Program ZIP imported.", None);
+        Ok(imported)
     })();
     // Only our newly created staging tree is eligible for permanent temp cleanup.
     let cleanup =
@@ -544,10 +569,11 @@ fn import_from_zip(zip_path: &Path, programs: &Path) -> Result<ImportedProgramPa
 
 #[tauri::command]
 pub(crate) async fn import_program_package(
+    window: tauri::WebviewWindow,
     zip_path: String,
 ) -> Result<ImportedProgramPackage, String> {
     let programs = super::programs::resolve_programs_root()?;
-    tauri::async_runtime::spawn_blocking(move || import_from_zip(Path::new(&zip_path), &programs))
+    tauri::async_runtime::spawn_blocking(move || import_from_zip(Path::new(&zip_path), &programs, Some(&window)))
         .await
         .map_err(|e| format!("Program ZIP import did not finish: {e}"))?
 }
@@ -804,7 +830,7 @@ mod tests {
             for (index, archive) in archives.iter().enumerate() {
                 let programs = root.join(index.to_string());
                 fs::create_dir(&programs).unwrap();
-                let imported = import_from_zip(archive, &programs)?;
+                let imported = import_from_zip(archive, &programs, None)?;
                 assert!(Path::new(&imported.package_path)
                     .join("flowcell.program.json")
                     .is_file());

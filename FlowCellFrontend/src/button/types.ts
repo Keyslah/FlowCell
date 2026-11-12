@@ -490,6 +490,7 @@ export type ButtonToolField =
 
 interface ButtonPopoutUnitBase {
   closeControlOffset?: { x: number; y: number };
+  fanAnimation?: ButtonFanAnimationSettings;
   id: ButtonPopoutUnitId;
   name: string;
   surfaceId: ButtonSurfaceId;

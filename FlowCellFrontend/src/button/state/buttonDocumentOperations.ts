@@ -13,6 +13,8 @@ import {
 import { cloneButtonDocument, createStableButtonId } from "./buttonDefaults.js";
 import { canonicalSourceIdentity, deriveRegularPopoutSelectionKey } from "./sourceIdentity.js";
 import { arrangeDefaultPanelButtons } from "./buttonPanelDefaults.js";
+import { DEFAULT_BUTTON_SKIN_ID } from "../skins/defaultButtonSkin.js";
+import { applyPanelPopoutPreset } from "./buttonPanelPopoutPresets.js";
 
 export interface RemoveOwnedButtonResult {
   removedButtonIds: string[];
@@ -54,7 +56,7 @@ function addPlacement(
     surfaceId,
     ...rect,
     zIndex: document.surfaces[surfaceId].placementIds.length,
-    skinOverrideId: null,
+    skinOverrideId: DEFAULT_BUTTON_SKIN_ID,
     textFitMode: document.buttons[buttonId].defaultTextFitMode,
     textAlignment: "skin",
     textOffsetX: 0,
@@ -176,23 +178,11 @@ export function ensureDefaultPanelPopout(
   if (!created && !options.resetLayout) return unit;
   const surface = document.surfaces[unit.surfaceId];
   const members = unit.memberPlacementIds.map((id) => document.placements[id]);
-  for (const placement of created ? members : []) {
-    const source = Object.values(document.placements).find((candidate) =>
-      candidate.buttonId === placement.buttonId && document.surfaces[candidate.surfaceId]?.kind === "panel"
-    );
-    if (!source) continue;
-    const { id, surfaceId, buttonId: sourceButtonId, ...presentation } = source;
-    Object.assign(placement, cloneButtonDocument(presentation));
-    if (document.themeOverrides?.[id]) {
-      document.themeOverrides[placement.id] = cloneButtonDocument(document.themeOverrides[id]);
-    }
-    const button = document.buttons[placement.buttonId];
-    const skin = document.skins[placement.skinOverrideId ?? button.defaultSkinId];
-    const baseline = skin?.metadata.buttonSkinFamilyBaseline;
-    if (baseline && typeof baseline === "object" && !Array.isArray(baseline) && typeof baseline[id] === "number") {
-      skin.metadata.buttonSkinFamilyBaseline = { ...baseline, [placement.id]: baseline[id] };
-    }
+  for (const placement of members) {
+    placement.skinOverrideId = DEFAULT_BUTTON_SKIN_ID;
+    if (document.themeOverrides) delete document.themeOverrides[placement.id];
   }
+  if (applyPanelPopoutPreset(document, unit)) return unit;
   const owner = unit.ownerPlacementId ? document.placements[unit.ownerPlacementId] : null;
   surface.placementIds = [...unit.memberPlacementIds];
   arrangeDefaultPanelButtons(document, surface.id);

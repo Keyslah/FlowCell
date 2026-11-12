@@ -21,7 +21,7 @@ export const DEFAULT_BUTTON_DOCUMENT_SETTINGS: ButtonDocumentSettings = {
   buttonSpacingMm: 0,
   defaultGap: 0,
   defaultSurfacePadding: 8,
-  defaultSkinId: CHIPPED_CONCRETE_BUTTON_SKIN_ID,
+  defaultSkinId: DEFAULT_BUTTON_SKIN_ID,
   defaultMinimumFontSize: 8,
   allowSurfaceAutoExpansion: false
 };
@@ -62,30 +62,35 @@ export function createButtonStateDocument(): ButtonStateDocument {
   };
 }
 
-/** Replace the shipped gray default while retaining assigned custom skins and geometry. */
-export function ensureChippedConcreteDefaults(document: ButtonStateDocument): boolean {
-  const previous = document.skins[DEFAULT_BUTTON_SKIN_ID];
-  if (!previous || !BUTTON_SKIN_SECTION_ORDER.every((section) => previous[section] === DEFAULT_BUTTON_SKIN[section])) return false;
+/** Main owns its Concrete appearance; shared Button defaults remain neutral. */
+export function ensureMainPageSkinDefaults(document: ButtonStateDocument): boolean {
   let changed = false;
-  const useChipped = () => {
-    if (!document.skins[CHIPPED_CONCRETE_BUTTON_SKIN_ID]) {
-      document.skins[CHIPPED_CONCRETE_BUTTON_SKIN_ID] = cloneButtonDocument(CHIPPED_CONCRETE_BUTTON_SKIN);
-    }
+  const concrete = document.skins[CHIPPED_CONCRETE_BUTTON_SKIN_ID];
+  if (!concrete) {
+    document.skins[CHIPPED_CONCRETE_BUTTON_SKIN_ID] = cloneButtonDocument(CHIPPED_CONCRETE_BUTTON_SKIN);
     changed = true;
-  };
-  if (document.settings.defaultSkinId === DEFAULT_BUTTON_SKIN_ID) {
-    useChipped();
-    document.settings.defaultSkinId = CHIPPED_CONCRETE_BUTTON_SKIN_ID;
   }
-  for (const button of Object.values(document.buttons)) {
-    if (button.defaultSkinId !== DEFAULT_BUTTON_SKIN_ID) continue;
-    useChipped();
-    button.defaultSkinId = CHIPPED_CONCRETE_BUTTON_SKIN_ID;
-  }
+  // Preserve every explicit placement assignment, including custom Concrete skins.
   for (const placement of Object.values(document.placements)) {
-    if (placement.skinOverrideId !== DEFAULT_BUTTON_SKIN_ID) continue;
-    useChipped();
+    const kind = document.surfaces[placement.surfaceId]?.kind;
+    const skinId = document.buttons[placement.buttonId]?.defaultSkinId;
+    if ((kind !== "main" && kind !== "panel") || placement.skinOverrideId !== null ||
+      (skinId !== DEFAULT_BUTTON_SKIN_ID && skinId !== CHIPPED_CONCRETE_BUTTON_SKIN_ID)) continue;
     placement.skinOverrideId = CHIPPED_CONCRETE_BUTTON_SKIN_ID;
+    changed = true;
+  }
+  // This exact bundled record default was host-assigned by the former global migration.
+  // User skin assignment writes placement overrides, never Button.defaultSkinId.
+  if (!concrete || BUTTON_SKIN_SECTION_ORDER.every((section) => concrete[section] === CHIPPED_CONCRETE_BUTTON_SKIN[section])) {
+    if (document.settings.defaultSkinId === CHIPPED_CONCRETE_BUTTON_SKIN_ID) {
+      document.settings.defaultSkinId = DEFAULT_BUTTON_SKIN_ID;
+      changed = true;
+    }
+    for (const button of Object.values(document.buttons)) {
+      if (button.defaultSkinId !== CHIPPED_CONCRETE_BUTTON_SKIN_ID) continue;
+      button.defaultSkinId = DEFAULT_BUTTON_SKIN_ID;
+      changed = true;
+    }
   }
   return changed;
 }

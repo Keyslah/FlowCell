@@ -10,6 +10,7 @@ import {
   buttonSpacingPixelsFromMillimeters
 } from "../geometry/buttonGeometry.js";
 import { removeOwnedButtonGraph } from "./buttonDocumentOperations.js";
+import { CHIPPED_CONCRETE_BUTTON_SKIN_ID } from "../skins/chippedConcreteButtonSkin.js";
 
 export interface PanelOwnerRailEntry {
   panelName: string;
@@ -334,7 +335,7 @@ function ensurePanelOwnerMainPlacement(
     surfaceId: surface.id,
     ...rect,
     zIndex: surface.placementIds.length,
-    skinOverrideId: null,
+    skinOverrideId: CHIPPED_CONCRETE_BUTTON_SKIN_ID,
     textFitMode: owner.defaultTextFitMode,
     textAlignment: "skin",
     textOffsetX: 0,

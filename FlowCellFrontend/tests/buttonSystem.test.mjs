@@ -3759,9 +3759,9 @@ test("default panel Pop-out includes every current script and preserves custom s
   const unit = ensureDefaultPanelPopout(document, "cura");
   const members = unit.memberPlacementIds.map((id) => document.placements[id]);
   assert.deepEqual(members.map(({ buttonId }) => buttonId), ["cura", "orca", "save", "slicer", "png"]);
-  assert.equal(members[0].width, 123);
-  assert.equal(members[0].height, 51);
-  assert.equal(members[0].textOffsetX, 7);
+  assert.equal(members[0].width, 160);
+  assert.equal(members[0].height, 44);
+  assert.equal(members[0].textOffsetX, 0, "Main placement presentation is not a Pop-out default");
   assert.equal(members[1].x - (members[0].x + members[0].width), 8);
   assert.equal(members[4].x, document.settings.defaultSurfacePadding);
   assert.equal(members[4].y - (members[0].y + members[0].height), 8);
@@ -3774,7 +3774,7 @@ test("default panel Pop-out includes every current script and preserves custom s
   members[0].skinOverrideId = "skin-default-neutral";
   ensureDefaultPanelPopout(document, "cura", { resetLayout: true });
   assert.equal(members[0].x, document.settings.defaultSurfacePadding);
-  assert.equal(members[0].skinOverrideId, "skin-default-neutral", "grid reset keeps the current skin");
+  assert.equal(members[0].skinOverrideId, "skin-default-neutral", "Load Default restores the neutral Pop-out skin");
   assert.deepEqual(validateButtonStateDocument(document).issues, []);
 });
 
@@ -6812,6 +6812,10 @@ test("opt-in Fan motion uses skin-independent wrappers and finishes exit before 
     join(frontendRoot, "src", "button", "fan", "ButtonFanRenderer.tsx"),
     "utf8"
   );
+  const motion = readFileSync(
+    join(frontendRoot, "src", "button", "fan", "useButtonFanMotion.ts"),
+    "utf8"
+  );
   const fanWindow = readFileSync(
     join(frontendRoot, "src", "button", "fan", "ButtonFanWindowPage.tsx"),
     "utf8"
@@ -6821,17 +6825,18 @@ test("opt-in Fan motion uses skin-independent wrappers and finishes exit before 
     "utf8"
   );
 
-  assert.match(renderer, /querySelectorAll<HTMLElement>\("\[data-button-placement-id\]"\)/);
-  assert.match(renderer, /wrapper\.dataset\.buttonPlacementId !== ownerPlacementId/);
-  assert.match(renderer, /return wrapper\.animate\(/);
-  assert.match(renderer, /wrapper\.toggleAttribute\("inert", inert\)/);
-  assert.match(renderer, /window\.matchMedia\("\(prefers-reduced-motion: reduce\)"\)/);
-  assert.match(renderer, /function supportedFanMotionEasing\(value: unknown\)/);
+  assert.match(motion, /querySelectorAll<HTMLElement>\("\[data-button-placement-id\]"\)/);
+  assert.match(motion, /wrapper\.dataset\.buttonPlacementId !== ownerPlacementId/);
+  assert.match(motion, /return wrapper\.animate\(/);
+  assert.match(motion, /wrapper\.toggleAttribute\("inert", inert\)/);
+  assert.match(motion, /window\.matchMedia\("\(prefers-reduced-motion: reduce\)"\)/);
+  assert.match(motion, /function supportedFanMotionEasing\(value: unknown\)/);
   assert.match(
     renderer,
     /visualMeasurementSamplingKey=\{motionPhase === "resting" \? motionSequence : undefined\}/
   );
-  assert.doesNotMatch(renderer, /ButtonSkinRenderer|\[data-core\].*animate/);
+  assert.match(renderer, /useButtonFanMotion\(\{/);
+  assert.doesNotMatch(motion, /ButtonSkinRenderer|\[data-core\].*animate/);
 
   const closeStart = fanWindow.indexOf('beginFanMotion("closing")');
   const closeFinish = fanWindow.indexOf("await motion.completion", closeStart);
@@ -7787,7 +7792,7 @@ test("Blender Flatten/Revolve ships one clean-import toolset with skinned select
 
   assert.equal(manifest.kind, "toolset");
   assert.equal(manifest.program, "Blender");
-  assert.equal(manifest.version, "1.1.2");
+  assert.equal(manifest.version, "1.1.3");
   assert.equal(manifest.source, "flatten revolve.py");
   assert.deepEqual(childSlots, [
     "pivot_select",
@@ -7919,7 +7924,7 @@ test("Blender Tri Poly ships clean-import skinned Angle and Sides value Buttons"
 
   assert.equal(manifest.kind, "toolset");
   assert.equal(manifest.program, "Blender");
-  assert.equal(manifest.version, "1.1.2");
+  assert.equal(manifest.version, "1.1.3");
   assert.equal(manifest.source, "tri poly.py");
   assert.deepEqual(
     manifest.children.map((child) => child.slot),
@@ -8045,7 +8050,7 @@ test("Blender Rotate shares one inline-value Button between Transform and Distri
     "flowcell.toolset.json"
   );
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  assert.equal(manifest.version, "1.1.2");
+  assert.equal(manifest.version, "1.1.3");
   assert.deepEqual(
     manifest.children.map((child) => child.slot),
     [

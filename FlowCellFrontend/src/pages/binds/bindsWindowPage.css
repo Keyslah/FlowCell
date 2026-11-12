@@ -428,3 +428,23 @@
     text-align: left;
   }
 }
+
+/* Wrapped toolbars must leave the lists reachable on constrained viewports. */
+@media (max-width: 1040px), (max-height: 620px) {
+  .binds-window-page {
+    overflow: auto;
+  }
+
+  .binds-window {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .binds-window__station {
+    grid-template-rows: auto auto auto auto;
+  }
+
+  .binds-window__card {
+    grid-template-rows: auto auto;
+  }
+}

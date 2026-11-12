@@ -47,6 +47,160 @@ function Resolve-BlenderThemePackageLibrary([string]$LibraryPath) {
   return $source
 }
 
+function Get-BlenderThemeProperty($Value, [string]$Name) {
+  if ($null -ne $Value -and $Value -is [pscustomobject] -and $Value.PSObject.Properties[$Name]) {
+    return $Value.$Name
+  }
+  return $null
+}
+
+function Read-BlenderThemeProvenanceJson([string]$Root, [string]$Path) {
+  Assert-NoReparsePathComponents $Root $Path 'Blender theme appearance provenance'
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    Stop-Package "Blender theme appearance provenance is missing: $Path. Resave the theme from its original installed Buttons before packaging."
+  }
+  try { $value = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json }
+  catch { Stop-Package "Invalid Blender theme appearance provenance: $Path ($($_.Exception.Message))" }
+  if ($value -isnot [pscustomobject]) { Stop-Package "Blender theme appearance provenance must be an object: $Path" }
+  return $value
+}
+
+function Join-BlenderThemeProvenancePath([string]$Root, [string]$Relative) {
+  if ([string]::IsNullOrWhiteSpace($Relative) -or [IO.Path]::IsPathRooted($Relative) -or $Relative.Contains(':') -or
+      @($Relative -split '[\\/]' | Where-Object { $_ -eq '' -or $_ -eq '.' -or $_ -eq '..' }).Count -gt 0) {
+    Stop-Package "Unsafe Blender theme appearance provenance path: $Relative"
+  }
+  $path = [IO.Path]::GetFullPath((Join-Path $Root $Relative))
+  Assert-NoReparsePathComponents $Root $path 'Blender theme appearance provenance'
+  return $path
+}
+
+function Get-BlenderThemeAppearanceContext([string]$SourceLibrary) {
+  $library = [IO.DirectoryInfo]$SourceLibrary
+  if ($library.Name -ieq 'Blender' -and $library.Parent.Name -ieq 'themes') { $localRoot = $library.Parent.Parent.FullName }
+  elseif ($library.Name -ieq 'blender_themes') { $localRoot = $library.Parent.FullName }
+  else {
+    Stop-Package "Legacy Blender theme appearance has no portable sourceReference. Package it from local/themes/Blender or local/blender_themes with its original button-system state, or resave it in the current Theme Editor."
+  }
+  $state = Read-BlenderThemeProvenanceJson $localRoot (Join-Path $localRoot 'button-system/button-state.json')
+  foreach ($field in @('buttons', 'placements', 'surfaces')) {
+    if ((Get-BlenderThemeProperty $state $field) -isnot [pscustomobject]) {
+      Stop-Package "Blender theme appearance provenance has no canonical $field object. Resave the theme from its original installation."
+    }
+  }
+  $programRoot = Join-Path $localRoot 'Programs/Blender'
+  $manifest = Read-BlenderThemeProvenanceJson $localRoot (Join-Path $programRoot 'flowcell.program.json')
+  if ((Get-BlenderThemeProperty $manifest 'programId') -cne 'blender') {
+    Stop-Package 'Blender theme appearance provenance must identify programId blender.'
+  }
+  return [pscustomobject]@{
+    State = $state; ProgramRoot = $programRoot; Manifest = $manifest
+    PanelsRoot = Join-BlenderThemeProvenancePath $programRoot ([string](Get-BlenderThemeProperty $manifest 'panelsFolder'))
+    ScriptsRoot = Join-BlenderThemeProvenancePath $programRoot ([string](Get-BlenderThemeProperty $manifest 'localScriptsFolder'))
+  }
+}
+
+function Add-BlenderThemeAppearanceReferences($Manifest, [string]$SourceLibrary, [string]$ManifestPath, [hashtable]$Cache) {
+  $appearance = Get-BlenderThemeProperty (Get-BlenderThemeProperty $Manifest 'values') 'popped_button_appearance'
+  if ($null -eq $appearance -or -not $appearance.PSObject.Properties['placements']) { return }
+  $entries = $appearance.placements
+  if ($null -eq $entries -or @($entries).Count -eq 0) { return }
+  if ($entries -isnot [array]) { Stop-Package "Blender theme appearance placements must be an array: $ManifestPath" }
+  foreach ($entry in $entries) {
+    $reference = Get-BlenderThemeProperty $entry 'sourceReference'
+    if ($null -ne $reference) {
+      $slot = Get-BlenderThemeProperty $reference 'slot'
+      if ($reference -isnot [pscustomobject] -or
+          (Get-BlenderThemeProperty $reference 'programId') -cne 'blender' -or
+          (Get-BlenderThemeProperty $reference 'sourceId') -isnot [string] -or
+          [string]::IsNullOrWhiteSpace($reference.sourceId) -or
+          -not $reference.PSObject.Properties['slot'] -or
+          ($null -ne $slot -and ($slot -isnot [string] -or [string]::IsNullOrWhiteSpace($slot))) -or
+          (Get-BlenderThemeProperty $reference 'surfaceKind') -notin @('regular-popout', 'tool-set-popout', 'fan')) {
+        Stop-Package "Invalid portable Blender theme appearance sourceReference: $ManifestPath"
+      }
+      continue
+    }
+    if ($null -eq $Cache.Context) { $Cache.Context = Get-BlenderThemeAppearanceContext $SourceLibrary }
+    $context = $Cache.Context
+    $placementId = [string](Get-BlenderThemeProperty $entry 'placementId')
+    $buttonId = [string](Get-BlenderThemeProperty $entry 'buttonId')
+    $placement = Get-BlenderThemeProperty $context.State.placements $placementId
+    $button = Get-BlenderThemeProperty $context.State.buttons $buttonId
+    $surface = Get-BlenderThemeProperty $context.State.surfaces ([string](Get-BlenderThemeProperty $placement 'surfaceId'))
+    $surfaceKind = Get-BlenderThemeProperty $surface 'kind'
+    if ($placementId -eq '' -or $buttonId -eq '' -or $null -eq $placement -or $null -eq $button -or
+        (Get-BlenderThemeProperty $placement 'id') -cne $placementId -or
+        (Get-BlenderThemeProperty $placement 'buttonId') -cne $buttonId -or
+        (Get-BlenderThemeProperty $button 'id') -cne $buttonId -or
+        (Get-BlenderThemeProperty $surface 'id') -cne (Get-BlenderThemeProperty $placement 'surfaceId') -or
+        $surfaceKind -notin @('regular-popout', 'tool-set-popout', 'fan') -or
+        $placementId -cnotin @(Get-BlenderThemeProperty $surface 'placementIds')) {
+      Stop-Package "Cannot prove Blender theme appearance placement '$placementId' owns Button '$buttonId': $ManifestPath. Resave the theme with its original canonical Button state."
+    }
+    $slot = $null
+    $owner = $button
+    if ((Get-BlenderThemeProperty $button 'role') -eq 'tool-set-child') {
+      $ownerId = [string](Get-BlenderThemeProperty $button 'toolSetParentId')
+      $owner = Get-BlenderThemeProperty $context.State.buttons $ownerId
+      $target = Get-BlenderThemeProperty $button 'executionTarget'
+      $slot = Get-BlenderThemeProperty $target 'command'
+      if ((Get-BlenderThemeProperty $owner 'role') -ne 'tool-set-owner' -or
+          (Get-BlenderThemeProperty $target 'kind') -ne 'tool-set-action' -or
+          $slot -isnot [string] -or [string]::IsNullOrWhiteSpace($slot)) {
+        Stop-Package "Cannot prove Blender theme child ownership/slot for '$buttonId': $ManifestPath. Resave the theme from the original Tool Set."
+      }
+    } elseif ((Get-BlenderThemeProperty $button 'role') -ne 'single-script') {
+      Stop-Package "Unsupported Blender theme appearance Button role for '$buttonId': $ManifestPath"
+    }
+    $identity = Get-BlenderThemeProperty $owner 'sourceIdentity'
+    $panel = [string](Get-BlenderThemeProperty $identity 'displayPanelName')
+    $file = [string](Get-BlenderThemeProperty $identity 'displayFileName')
+    if ((Get-BlenderThemeProperty $identity 'normalizedProgramName') -cne 'blender' -or
+        $panel -match '[\\/]' -or $file -match '[\\/]' -or -not $file.EndsWith('.flowcell-source.json')) {
+      Stop-Package "Cannot prove Blender theme source identity for '$buttonId': $ManifestPath"
+    }
+    $recordPath = Join-BlenderThemeProvenancePath $context.PanelsRoot "$panel/$file"
+    $record = Read-BlenderThemeProvenanceJson $context.ProgramRoot $recordPath
+    $ownerId = [string](Get-BlenderThemeProperty $owner 'id')
+    if ((Get-BlenderThemeProperty $record 'ownerButtonId') -cne $ownerId -or
+        (Get-BlenderThemeProperty $record 'installId') -cne $ownerId -or
+        (Get-BlenderThemeProperty $record 'programId') -cne 'blender' -or
+        (Get-BlenderThemeProperty $record 'panelName') -cne $panel) {
+      Stop-Package "Blender theme source record ownership differs for '$buttonId': $ManifestPath"
+    }
+    $sourceRoot = Join-BlenderThemeProvenancePath $context.ScriptsRoot "$ownerId/source"
+    $packageFiles = @('flowcell.script.json', 'flowcell.toolset.json') | ForEach-Object {
+      Join-BlenderThemeProvenancePath $sourceRoot $_
+    } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    if (@($packageFiles).Count -gt 1) { Stop-Package "Ambiguous Blender theme source manifests for '$buttonId': $ManifestPath" }
+    $package = if (@($packageFiles).Count -eq 1) { Read-BlenderThemeProvenanceJson $sourceRoot @($packageFiles)[0] } else { $null }
+    $sourceId = Get-BlenderThemeProperty $record 'bundledSourceId'
+    if ($null -eq $sourceId -or $sourceId -eq '') { $sourceId = Get-BlenderThemeProperty $package 'id' }
+    if ($sourceId -isnot [string] -or [string]::IsNullOrWhiteSpace($sourceId)) {
+      Stop-Package "Blender theme appearance source '$ownerId' has no portable source ID: $ManifestPath. Resave it with its owned source manifest."
+    }
+    if ($null -ne $slot) {
+      $ownedSlots = @(Get-BlenderThemeProperty $record 'children' | Where-Object { (Get-BlenderThemeProperty $_ 'slot') -ceq $slot })
+      $declaredSlots = @(Get-BlenderThemeProperty $package 'children' | Where-Object { (Get-BlenderThemeProperty $_ 'slot') -ceq $slot })
+      if ($ownedSlots.Count -ne 1 -or $declaredSlots.Count -ne 1 -or
+          (Get-BlenderThemeProperty $target 'ownerFileName') -cne $file -or
+          (Get-BlenderThemeProperty $target 'panelName') -cne $panel -or
+          (Get-BlenderThemeProperty $target 'programName') -ine 'Blender') {
+        Stop-Package "Missing or ambiguous Blender theme source slot '$slot' for '$buttonId': $ManifestPath. Resave it from the original Tool Set."
+      }
+    }
+    $sameTargets = @($context.State.placements.PSObject.Properties.Value | Where-Object {
+      (Get-BlenderThemeProperty $_ 'buttonId') -ceq $buttonId -and
+      (Get-BlenderThemeProperty (Get-BlenderThemeProperty $context.State.surfaces ([string](Get-BlenderThemeProperty $_ 'surfaceId'))) 'kind') -ceq $surfaceKind
+    })
+    if ($sameTargets.Count -ne 1) { Stop-Package "Ambiguous Blender theme appearance placements for '$buttonId' on '$surfaceKind': $ManifestPath" }
+    $entry | Add-Member -MemberType NoteProperty -Name sourceReference -Value ([pscustomobject]@{
+      programId = 'blender'; sourceId = $sourceId; slot = $slot; surfaceKind = $surfaceKind
+    }) -Force
+  }
+}
+
 function Copy-BlenderThemePackages([string]$SourceLibrary, [string]$Destination) {
   if ([string]::IsNullOrWhiteSpace($SourceLibrary) -or [string]::IsNullOrWhiteSpace($Destination)) {
     Stop-Package 'Blender theme packaging requires source and destination folders.'
@@ -74,6 +228,7 @@ function Copy-BlenderThemePackages([string]$SourceLibrary, [string]$Destination)
   $packages = New-Object System.Collections.Generic.List[object]
   $assetCount = 0
   $flatThemes = New-Object System.Collections.Generic.List[object]
+  $appearanceProvenance = @{ Context = $null }
   foreach ($file in @(Get-ChildItem -LiteralPath $sourceRoot -File -Force | Where-Object {
     -not $_.Name.StartsWith('.') -and ($_.Name.EndsWith('.flowtheme.json') -or $_.Name.EndsWith('.flowcell-theme-pack.json'))
   })) {
@@ -173,6 +328,7 @@ function Copy-BlenderThemePackages([string]$SourceLibrary, [string]$Destination)
     if ($assets.Count -eq 0) {
       Stop-Package "Blender theme package has no image assets: $manifestPath"
     }
+    Add-BlenderThemeAppearanceReferences $manifest $sourceRoot $manifestPath $appearanceProvenance
     $assetCount += $assets.Count
     $packages.Add([pscustomobject]@{
       Name = $directory.Name

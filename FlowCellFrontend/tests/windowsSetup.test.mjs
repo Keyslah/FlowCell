@@ -2,12 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
-import { applyManagedProgramPlan } from "./.compiled-button-system/pages/program-setup/applyManagedProgramPlan.js";
 import { buildWindowsSetupPlan } from "./.compiled-button-system/pages/program-setup/windowsSetupPlan.js";
 import { createButtonStateDocument } from "./.compiled-button-system/button/state/buttonDefaults.js";
-import { runButtonStateBootstrapSequence } from "./.compiled-button-system/button/state/ButtonStateRepository.js";
+import { buttonStateDocumentsEqual, reconcileBundledProgramSources, runButtonStateBootstrapSequence } from "./.compiled-button-system/button/state/ButtonStateRepository.js";
 import { reconcileMainPageButtonDiscovery } from "./.compiled-button-system/button/state/mainPageButtonDiscovery.js";
-import { buildProgramRailButtons, buildPanelRailButtons } from "./.compiled-button-system/pages/main/mainLayout.js";
+import { reconcileProgramPanelOwners } from "./.compiled-button-system/button/state/panelOwnerButtonOperations.js";
+import { buildProgramRailButtons, buildPanelRailButtons, buildPanelRailOwnerEntries, panelRailOwnerSurfaceBounds } from "./.compiled-button-system/pages/main/mainLayout.js";
+
+// Exercise today's transaction orchestration without rebuilding the application
+// or relying on an older emitted copy of this changed module.
+const transactionSource = componentSource("pages/program-setup/applyManagedProgramPlan.ts", "applyManagedProgramPlan");
+const applyManagedProgramPlan = evaluate(transactionSource.component, transactionSource.parsed, {
+  buttonStateDocumentsEqual, reconcileBundledProgramSources, reconcileProgramPanelOwners,
+  buildPanelRailOwnerEntries, panelRailOwnerSurfaceBounds, console,
+  message: evaluate(transactionSource.parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "message"), transactionSource.parsed, {})
+});
 
 const manifest = JSON.parse(readFileSync(new URL("../../Programs/Windows/flowcell.program.json", import.meta.url), "utf8"));
 const program = {
@@ -24,7 +33,10 @@ const program = {
 test("Windows selection installs default tools only in checked panels", () => {
   const plan = buildWindowsSetupPlan(program, new Set(["Files", "Startup"]));
   assert.deepEqual(plan.selectedPanels, ["Files", "Startup"]);
-  assert.deepEqual(plan.selectedSources.map(source => source.sourceId), ["windows.setup-organization", "windows.update-git-scripts"]);
+  assert.deepEqual(plan.selectedSources.map(source => source.sourceId), program.sources
+    .filter(source => ["Files", "Startup"].includes(source.panelName) && (source.defaultSelected || source.required))
+    .map(source => source.id));
+  assert.ok(plan.selectedSources.every(source => ["Files", "Startup"].includes(source.destinationPanel)));
   assert.equal(plan.programName, "Windows");
   assert.equal(plan.createPlainProgram, false);
   assert.equal(plan.executablePath, "C:\\Windows\\explorer.exe");
@@ -70,7 +82,7 @@ function harness(overrides = {}) {
 test("managed setup commits canonical panel owners before finalizing and notifies after commit", async () => {
   const h = harness();
   assert.deepEqual(await applyManagedProgramPlan(request, h.operations), result);
-  assert.deepEqual(h.events, ["apply", "load", "prepare", "commit", "finalize", "load", "publish", "notify"]);
+  assert.deepEqual(h.events, ["apply", "load", "prepare", "commit", "finalize", "notify", "load", "publish"]);
   assert.ok(Object.values(h.document().buttons).some(button => button.label === "Files"));
 });
 
@@ -87,7 +99,7 @@ test("lost finalize response recovers committed setup instead of reinstalling", 
   assert.deepEqual(await applyManagedProgramPlan(request, h.operations), result);
   assert.equal(h.events.filter(event => event === "apply").length, 1);
   assert.ok(h.events.includes("statuses"));
-  assert.equal(h.events.at(-1), "notify");
+  assert.equal(h.events.at(-1), "publish");
 });
 
 test("failed native apply does not try rolling back an unknown transaction", async () => {
@@ -120,14 +132,42 @@ test("a failed Button notification still refreshes navigation without rolling ba
   } finally {
     console.warn = oldWarn;
   }
-  assert.equal(h.events.at(-1), "notify");
+  assert.equal(h.events.filter(event => event === "notify").length, 1);
   assert.equal(h.events.includes("rollback"), false);
+});
+
+test("installed targets are announced before a delayed full Button-state refresh", async () => {
+  let loads = 0;
+  let release;
+  const delayed = new Promise(resolve => { release = resolve; });
+  const h = harness({ load: async () => {
+    if (++loads === 2) await delayed;
+    return h.document();
+  } });
+  const installing = applyManagedProgramPlan(request, h.operations);
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(loads, 2);
+    assert.equal(h.events.includes("notify"), true, "Theme/navigation and the restart notice can refresh while Buttons are still loading");
+    assert.equal(h.events.includes("publish"), false);
+  } finally { release(); }
+  assert.deepEqual(await installing, result);
 });
 
 function componentSource(relativePath, name) {
   const source = readFileSync(new URL(`../src/${relativePath}`, import.meta.url), "utf8");
   const parsed = ts.createSourceFile(relativePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   return { parsed, component: parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name) };
+}
+
+function initializerOf(component, parsed, name) {
+  const declaration = component.body.statements.filter(ts.isVariableStatement)
+    .flatMap(node => [...node.declarationList.declarations])
+    .find(node => ts.isArrayBindingPattern(node.name)
+      ? node.name.elements.some(element => element.name?.getText(parsed) === name)
+      : node.name.getText(parsed) === name);
+  assert.ok(declaration, `Missing ${name} in ${component.name.text}`);
+  return declaration.initializer;
 }
 
 function effectContaining(component, parsed, fragment) {
@@ -139,19 +179,142 @@ function effectContaining(component, parsed, fragment) {
 }
 
 function evaluate(node, parsed, context) {
-  const compiled = ts.transpileModule(`return (${node.getText(parsed)});`, {
+  const compiled = ts.transpileModule(`return (${node.getText(parsed).replace(/^export\s+/, "")});`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
   }).outputText;
   return new Function(...Object.keys(context), compiled)(...Object.values(context));
 }
 
+function installationHarness(overrides = {}) {
+  const setup = componentSource("pages/program-setup/AddProgramWindowPage.tsx", "AddProgramWindowPage");
+  const events = [];
+  const statuses = [];
+  const state = { complete: false };
+  const busyRef = { current: false };
+  const context = {
+    busyRef, setBusy: value => { busyRef.current = value; events.push(`busy:${value}`); },
+    setProgress() {}, setStatus: value => statuses.push(value),
+    setInstallationComplete: value => { state.complete = value; },
+    installWindows: async () => { events.push("Windows"); },
+    setupSource: "package", selectedProgram: { programName: "Blender" },
+    addPlainProgram: async () => { events.push("plain"); },
+    installProgram: async () => { events.push("Blender"); return { status: "ready", restartNotes: "" }; },
+    onWindowsComplete: () => events.push("complete"), errorMessage: error => error.message,
+    ...overrides
+  };
+  return {
+    events, statuses, busyRef, state,
+    install: evaluate(initializerOf(setup.component, setup.parsed, "install"), setup.parsed, context)
+  };
+}
+
+test("one installation action finishes Windows and the selected program before releasing first-run setup", async () => {
+  const h = installationHarness();
+  await h.install();
+  assert.deepEqual(h.events, ["busy:true", "Windows", "Blender", "complete", "busy:false"]);
+  assert.equal(h.statuses.at(-1), "Installation complete.");
+  assert.equal(h.state.complete, true);
+});
+
+test("Windows installation failure keeps first-run setup open and does not install the optional program", async () => {
+  const h = installationHarness({ installWindows: async () => { throw new Error("Windows write failed"); } });
+  await h.install();
+  assert.deepEqual(h.events, ["busy:true", "busy:false"]);
+  assert.match(h.statuses.at(-1), /Windows write failed/);
+  assert.equal(h.busyRef.current, false);
+  assert.equal(h.state.complete, false);
+});
+
+test("optional program installation failure does not report first-run completion", async () => {
+  const h = installationHarness({ installProgram: async () => { throw new Error("Blender setup failed"); } });
+  await h.install();
+  assert.deepEqual(h.events, ["busy:true", "Windows", "busy:false"]);
+  assert.match(h.statuses.at(-1), /Blender setup failed/);
+  assert.equal(h.state.complete, false);
+});
+
+test("application initialization and restart notes remain visible before first-run completion", async () => {
+  for (const result of [
+    { status: "needsHostInitialization", restartNotes: "Open Blender to finish setup." },
+    { status: "ready", restartNotes: "Restart Blender to load the installed add-on." }
+  ]) {
+    const h = installationHarness({ installProgram: async () => result });
+    await h.install();
+    assert.deepEqual(h.events, ["busy:true", "Windows", "busy:false"]);
+    assert.equal(h.state.complete, true, "the completed installation is retained while the user reads the application notes");
+  }
+});
+
+test("a second Install click cannot start another transaction while setup is busy", async () => {
+  const h = installationHarness({ busyRef: { current: true } });
+  await h.install();
+  assert.deepEqual(h.events, []);
+  assert.deepEqual(h.statuses, []);
+});
+
+test("ZIP import uses its returned package without rescanning other programs or overwriting their inventory", async () => {
+  const setup = componentSource("pages/program-setup/AddProgramWindowPage.tsx", "AddProgramWindowPage");
+  const importedProgram = { programId: "blender", programName: "Blender", suggestedExecutable: "" };
+  const otherProgram = { programId: "illustrator", programName: "Illustrator" };
+  let inventory = {
+    packages: [otherProgram, { programId: "blender", programName: "Old Blender" }],
+    rejectedPackages: [{ folderName: "Blender", error: "old package" }, { folderName: "Unrelated", error: "keep" }]
+  };
+  const busy = [];
+  const statuses = [];
+  const selected = [];
+  const packageActionPending = { current: false };
+  const inventoryRequestRef = { current: 3 };
+  await evaluate(initializerOf(setup.component, setup.parsed, "importPackage"), setup.parsed, {
+    busy: false, packageActionPending, inventoryRequestRef,
+    setBusy: value => busy.push(value), setProgress() {},
+    setStatus: value => statuses.push(value),
+    showOpenFileDialog: async () => ["D:\\Downloads\\FlowCell-Blender.zip"],
+    importProgramPackage: async path => {
+      assert.equal(path, "D:\\Downloads\\FlowCell-Blender.zip");
+      return { availablePackage: importedProgram, cleanupWarning: "The previous package backup was retained." };
+    },
+    listAvailableProgramPackages: async () => { assert.fail("import must not rescan every available package"); },
+    setInventory: update => { assert.equal(typeof update, "function"); inventory = update(inventory); },
+    setSetupSource: value => selected.push(value),
+    setSelectedProgramName: value => selected.push(value),
+    resetForProgram: value => selected.push(value), errorMessage: error => error.message
+  })();
+  assert.deepEqual(inventory.packages, [otherProgram, importedProgram]);
+  assert.equal(inventory.packages[0], otherProgram);
+  assert.deepEqual(inventory.rejectedPackages, [{ folderName: "Unrelated", error: "keep" }]);
+  assert.deepEqual(selected, ["package", "Blender", importedProgram]);
+  assert.match(statuses.at(-1), /Blender was imported\. Select its \.exe path below/);
+  assert.match(statuses.at(-1), /previous package backup was retained/);
+  assert.equal(inventoryRequestRef.current, 4, "an earlier all-package response must no longer replace this import");
+  assert.equal(packageActionPending.current, false);
+  assert.deepEqual(busy, [true, false]);
+});
+
+test("an imported package that cannot supply setup inventory reports its specific warning and releases the import guard", async () => {
+  const setup = componentSource("pages/program-setup/AddProgramWindowPage.tsx", "AddProgramWindowPage");
+  const statuses = [];
+  const busy = [];
+  const packageActionPending = { current: false };
+  await evaluate(initializerOf(setup.component, setup.parsed, "importPackage"), setup.parsed, {
+    busy: false, packageActionPending, inventoryRequestRef: { current: 0 },
+    setBusy: value => busy.push(value), setProgress() {}, setStatus: value => statuses.push(value),
+    showOpenFileDialog: async () => ["D:\\Downloads\\FlowCell-Blender.zip"],
+    importProgramPackage: async () => ({ packagePath: "D:\\FlowCell\\Programs\\Blender", availablePackage: null, inventoryWarning: "The source catalog could not be validated." }),
+    setInventory: () => assert.fail("unavailable inventory must not replace the current packages"),
+    listAvailableProgramPackages: () => assert.fail("import must not fall back to an unrelated full scan"),
+    errorMessage: error => error.message
+  })();
+  assert.match(statuses.at(-1), /Package import failed:.*D:\\FlowCell\\Programs\\Blender.*source catalog could not be validated/);
+  assert.equal(packageActionPending.current, false);
+  assert.deepEqual(busy, [true, false]);
+});
+
 for (const selectedPanelNames of [["Files", "Startup"], ["Files", "Utility", "Startup"], []]) {
   test(`fresh Windows setup exposes its program Button and exactly ${selectedPanelNames.length} selected panel Buttons`, async () => {
-    const setup = componentSource("pages/program-setup/WindowsSetup.tsx", "WindowsSetup");
+    const gate = componentSource("pages/program-setup/WindowsSetup.tsx", "WindowsSetup");
+    const setup = componentSource("pages/program-setup/AddProgramWindowPage.tsx", "AddProgramWindowPage");
     const main = componentSource("pages/main/MainPage.tsx", "MainPage");
-    const declaration = (name) => setup.component.body.statements.filter(ts.isVariableStatement)
-      .flatMap(node => [...node.declarationList.declarations])
-      .find(node => node.name.getText(setup.parsed) === name).initializer;
     const selection = main.parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "resolveFolderSelection");
     const resolveFolderSelection = evaluate(selection, main.parsed, {});
     const state = { program: null, panels: new Set(), complete: false, error: "", programs: [], panelNames: [] };
@@ -177,15 +340,17 @@ for (const selectedPanelNames of [["Files", "Startup"], ["Files", "Utility", "St
     })();
     assert.equal(buildProgramRailButtons(state.programs, null).filter(button => button.folderName === "Windows").length, 0);
     const onCompleteRef = { current: () => { state.complete = true; } };
-    const callback = declaration("checkRequirement").arguments[0];
-    await evaluate(callback, setup.parsed, {
+    const callback = initializerOf(gate.component, gate.parsed, "checkRequirement").arguments[0];
+    await evaluate(callback, gate.parsed, {
       getWindowsSetupRequirement: async () => program,
       setLoading() {}, setError: error => { state.error = error; },
       setProgram: value => { state.program = value; },
-      setSelectedPanels: panels => { state.panels = panels; },
       onCompleteRef
     })();
     assert.equal(state.complete, false, "fresh setup waits for the user's choices");
+    state.panels = evaluate(initializerOf(setup.component, setup.parsed, "selectedWindowsPanels").arguments[0], setup.parsed, {
+      requiredWindowsProgram: state.program
+    })();
     assert.deepEqual([...state.panels], ["Files", "Utility", "Startup"]);
     state.panels = new Set(selectedPanelNames);
     const expectedPlan = buildWindowsSetupPlan(program, state.panels);
@@ -225,13 +390,19 @@ for (const selectedPanelNames of [["Files", "Startup"], ["Files", "Utility", "St
       }
     };
     try {
-      await evaluate(declaration("install"), setup.parsed, {
-        program: state.program, selectedPanels: state.panels, busyRef,
-        setBusy() {}, setError: error => { state.error = error; },
+      const installWindows = evaluate(initializerOf(setup.component, setup.parsed, "installWindows"), setup.parsed, {
+        windowsProgram: state.program, selectedWindowsPanels: state.panels,
         buildWindowsSetupPlan,
-        preflightAddProgramPlan: async request => assert.deepEqual(request, expectedPlan),
         applyManagedProgramPlan: request => applyManagedProgramPlan(request, operations),
-        onCompleteRef
+        setStatus() {},
+        setWindowsProgram: value => { state.program = value; }
+      });
+      await evaluate(initializerOf(setup.component, setup.parsed, "install"), setup.parsed, {
+        busyRef, setBusy: busy => { busyRef.current = busy; }, setProgress() {},
+        setInstallationComplete() {},
+        setStatus: status => { if (status.startsWith("Program setup failed:")) state.error = status; },
+        installWindows, setupSource: "package", selectedProgram: null,
+        onWindowsComplete: () => onCompleteRef.current(), errorMessage: error => error.message
       })();
       assert.equal(state.error, "");
       assert.equal(state.complete, true);

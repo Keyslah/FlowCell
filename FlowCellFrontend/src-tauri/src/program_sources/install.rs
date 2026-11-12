@@ -143,6 +143,9 @@ pub(crate) struct InstallButtonSourceResponse {
     pub theme_contribution_only: bool,
     pub source_identity: InstalledSourceIdentity,
     pub owner: InstalledButtonSnapshot,
+    /// A managed source default that may be replaced only while the owner still uses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_default_label: Option<String>,
     pub children: Vec<InstalledChildSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub events: Option<BTreeMap<String, Value>>,
@@ -3079,6 +3082,7 @@ pub(crate) fn build_response(
         theme_contribution_only: record.page.as_ref().is_some_and(|page| page.theme_contribution.is_some()),
         source_identity,
         owner,
+        previous_default_label: None,
         children,
         events: record.events.clone(),
         layout: record.layout.clone(),
@@ -3398,7 +3402,16 @@ fn install_from_path_while_source_locked_with_completion(
             )
         }
     };
-    let prepared = prepare_source(&manifest, &source_path, import_kind)?;
+    let mut prepared = prepare_source(&manifest, &source_path, import_kind)?;
+    if let Some((id, _)) = &bundled_identity {
+        if let Some(source) = manifest
+            .bundled_sources
+            .iter()
+            .find(|source| source.id == *id && !source.display_label.is_empty())
+        {
+            prepared.label = source.display_label.clone();
+        }
+    }
     if deferred_canonical_update.is_some()
         && (!replace_existing
             || bundled_identity.is_some()
@@ -3731,6 +3744,12 @@ fn install_from_path_while_source_locked_with_completion(
         })?;
     }
     let mut response = build_response(&record, active_file_name);
+    if record.bundled_source_id.is_some() {
+        response.previous_default_label = previous_record
+            .as_ref()
+            .filter(|previous| previous.label != record.label)
+            .map(|previous| previous.label.clone());
+    }
     if journal.phase == InstallTransactionPhase::AwaitingCanonical {
         response.update_transaction_token = Some(transaction_token);
     } else {

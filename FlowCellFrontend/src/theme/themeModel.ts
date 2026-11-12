@@ -206,7 +206,11 @@ export function buttonThemeOverrideIsEmpty(override: ButtonThemeOverride): boole
     override.hoverHighlightAmount == null &&
     override.activeHighlightAmount == null &&
     override.hoverGlowAmount == null &&
-    override.activeGlowAmount == null;
+    override.activeGlowAmount == null &&
+    override.idleEnabled === undefined &&
+    override.idleColor === undefined &&
+    override.idleHighlightAmount === undefined &&
+    override.idleGlowAmount === undefined;
 }
 
 export function clearButtonThemeOverrideColors(
@@ -835,6 +839,10 @@ function mergeThemeOverride(
     const amount = normalizeButtonGlowAmount(incoming.activeGlowAmount);
     if (amount !== null) next.activeGlowAmount = amount;
   }
+  if (incoming.idleEnabled !== undefined) next.idleEnabled = incoming.idleEnabled;
+  if (incoming.idleColor !== undefined) next.idleColor = normalizeButtonSkinColor(incoming.idleColor) ?? incoming.idleColor;
+  if (incoming.idleHighlightAmount !== undefined) next.idleHighlightAmount = incoming.idleHighlightAmount;
+  if (incoming.idleGlowAmount !== undefined) next.idleGlowAmount = incoming.idleGlowAmount;
   return next;
 }
 
@@ -1785,7 +1793,11 @@ function isButtonThemeOverride(value: unknown): value is ButtonThemeOverride {
       "hoverHighlightAmount",
       "activeHighlightAmount",
       "hoverGlowAmount",
-      "activeGlowAmount"
+      "activeGlowAmount",
+      "idleEnabled",
+      "idleColor",
+      "idleHighlightAmount",
+      "idleGlowAmount"
     ]
   )) return false;
   if (!isRecord(value.colors)) return false;
@@ -1809,7 +1821,11 @@ function isButtonThemeOverride(value: unknown): value is ButtonThemeOverride {
     [value.highlightAmount, value.hoverGlowAmount, value.activeGlowAmount].every(
       (amount) => amount === undefined || amount === null ||
         normalizeButtonGlowAmount(amount) !== null
-    );
+    ) &&
+    (value.idleEnabled === undefined || typeof value.idleEnabled === "boolean") &&
+    (value.idleColor === undefined || typeof value.idleColor === "string" && normalizeButtonSkinColor(value.idleColor) !== null) &&
+    (value.idleHighlightAmount === undefined || normalizeButtonHighlightAmount(value.idleHighlightAmount) !== null) &&
+    (value.idleGlowAmount === undefined || normalizeButtonGlowAmount(value.idleGlowAmount) !== null);
 }
 
 export function isThemeGradientDefinition(

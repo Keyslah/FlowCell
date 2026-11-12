@@ -7,7 +7,7 @@ import {
   THEME_EDITOR_CONTEXT_EVENT,
   type ThemeEditorWindowContext
 } from "../../lib/windowContext.js";
-import { listPanelFolders, listProgramFolders } from "../../lib/programRails.js";
+import { listPanelFolders, listProgramFolders, PROGRAM_SETUP_COMMITTED_EVENT } from "../../lib/programRails.js";
 import { showOpenFileDialog } from "../../lib/tauri.js";
 import {
   getButtonSkinDirectory,
@@ -490,6 +490,7 @@ export default function ThemeEditorPage({
   );
   const [canonicalDocument, setCanonicalDocument] = useState<ButtonStateDocument | null>(null);
   const canonicalBaseline = useRef<ButtonStateDocument | null>(null);
+  const canonicalLoadRequest = useRef(0);
   const [draftDocument, setDraftDocument] = useState<ButtonStateDocument | null>(null);
   const [pageAppearances, setPageAppearances] = useState(readAllPageAppearances);
   const [savedSkins, setSavedSkins] = useState<SavedSkinChoice[]>([]);
@@ -551,29 +552,65 @@ export default function ThemeEditorPage({
 
   useEffect(() => {
     let cancelled = false;
+    const request = ++canonicalLoadRequest.current;
     void migrateStoredThemePaths().then(() => loadMainPageButtonBootstrap({ removeStaleOwners: false }))
-      .then(({ document, registeredPanels }) => {
-        if (cancelled) return;
-        const programs = registeredPanels.map((entry) => entry.programName);
-        const resolved = resolvedEditorContext(context, programs);
-        setProgramNames(programs);
-        setTargetValue(resolved.targetValue);
-        setPageValue(resolved.pageValue);
-        setPanelValue(resolved.panelValue);
+      .then(({ document }) => {
+        if (cancelled || request !== canonicalLoadRequest.current) return;
         setCanonicalDocument(document);
         canonicalBaseline.current = document;
         setPageAppearances(readAllPageAppearances());
         setDraftDocument(cloneButtonDocument(document));
-        setStatus(resolved.unavailableTarget
-          ? `Target '${resolved.unavailableTarget}' is not currently installed; showing FlowCell.`
-          : "Ready.");
+        setStatus("Ready.");
       })
       .catch((error) => {
-        if (!cancelled) setStatus(`Theme Editor could not load: ${errorMessage(error)}`);
+        if (!cancelled && request === canonicalLoadRequest.current) setStatus(`Theme Editor could not load: ${errorMessage(error)}`);
       });
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let request = 0;
+    let requestedContext: ThemeEditorWindowContext | undefined;
+    const unlisteners: UnlistenFn[] = [];
+    const refreshPrograms = async (nextContext?: ThemeEditorWindowContext) => {
+      if (nextContext) requestedContext = nextContext;
+      const currentRequest = ++request;
+      try {
+        const programs = await listProgramFolders();
+        if (cancelled || currentRequest !== request) return;
+        setProgramNames(programs);
+        if (requestedContext) {
+          const resolved = resolvedEditorContext(requestedContext, programs);
+          requestedContext = undefined;
+          setTargetValue(resolved.targetValue);
+          setPageValue(resolved.pageValue);
+          setPanelValue(resolved.panelValue);
+          if (resolved.unavailableTarget) setStatus(`Target '${resolved.unavailableTarget}' is not currently installed; showing FlowCell.`);
+        }
+      } catch (error) {
+        if (!cancelled && currentRequest === request) setStatus(`Theme targets could not refresh: ${errorMessage(error)}`);
+      }
+    };
+    void (async () => {
+      try {
+        for (const [eventName, callback] of [
+          [PROGRAM_SETUP_COMMITTED_EVENT, () => { void refreshPrograms(); }],
+          [THEME_EDITOR_CONTEXT_EVENT, (event: { payload: ThemeEditorWindowContext }) => { void refreshPrograms(event.payload); }]
+        ] as const) {
+          const dispose = makeSafeTauriUnlisten(await listen<ThemeEditorWindowContext>(eventName, callback));
+          if (cancelled) { dispose(); return; }
+          unlisteners.push(dispose);
+        }
+      } catch (error) {
+        if (!cancelled) setStatus(`Theme target updates could not subscribe: ${errorMessage(error)}`);
+      }
+      // Target names do not depend on Button state, panel discovery, or theme migration.
+      await refreshPrograms(context);
+    })();
+    return () => { cancelled = true; unlisteners.forEach((dispose) => dispose()); };
   }, []);
 
   useEffect(() => {
@@ -607,15 +644,10 @@ export default function ThemeEditorPage({
     let cancelled = false;
     let unlisten: UnlistenFn | undefined;
     void listen<ThemeEditorWindowContext>(THEME_EDITOR_CONTEXT_EVENT, (event) => {
+      const request = ++canonicalLoadRequest.current;
       void loadMainPageButtonBootstrap({ removeStaleOwners: false })
-        .then(({ document, registeredPanels }) => {
-          if (cancelled) return;
-          const programs = registeredPanels.map((entry) => entry.programName);
-          const resolved = resolvedEditorContext(event.payload, programs);
-          setProgramNames(programs);
-          setTargetValue(resolved.targetValue);
-          setPageValue(resolved.pageValue);
-          setPanelValue(resolved.panelValue);
+        .then(({ document }) => {
+          if (cancelled || request !== canonicalLoadRequest.current) return;
           setCanonicalDocument(cloneButtonDocument(document));
             const baseline = canonicalBaseline.current;
             canonicalBaseline.current = document;
@@ -625,12 +657,10 @@ export default function ThemeEditorPage({
               dirtyPlacementIds.current,
               baseline
           ));
-          setStatus(resolved.unavailableTarget
-            ? `Target '${resolved.unavailableTarget}' is not currently installed; showing FlowCell.`
-            : "Theme Editor scope updated.");
+          setStatus("Theme Editor scope updated.");
         })
         .catch((error) => {
-          if (!cancelled) setStatus(`Theme Editor scope could not update: ${errorMessage(error)}`);
+          if (!cancelled && request === canonicalLoadRequest.current) setStatus(`Theme Editor scope could not update: ${errorMessage(error)}`);
         });
     })
       .then((dispose) => {
@@ -650,6 +680,8 @@ export default function ThemeEditorPage({
     let unlisten: UnlistenFn | undefined;
     void subscribeButtonCommits((document) => {
       if (cancelled) return;
+      canonicalLoadRequest.current += 1;
+      const firstDocument = canonicalBaseline.current === null;
       setCanonicalDocument(cloneButtonDocument(document));
       const baseline = canonicalBaseline.current;
       canonicalBaseline.current = document;
@@ -661,6 +693,8 @@ export default function ThemeEditorPage({
       ));
       if (editorDirty.current) {
         setStatus("Canonical Buttons updated; unsaved Theme Editor changes were preserved.");
+      } else if (firstDocument) {
+        setStatus("Ready.");
       }
     })
       .then((dispose) => {
@@ -1118,7 +1152,7 @@ export default function ThemeEditorPage({
       const previous = await contribution.current.capture();
       const latest = await loadButtonStateDocument();
       const { document: next, skippedMissingPlacementCount } = applyLegacyProgramAppearance(
-        latest, target, legacy.buttonSettings, legacy.buttonAppearance
+        latest, target, legacy.buttonSettings, legacy.buttonAppearance, await getThemeToolDescriptors(target)
       );
       if (skippedMissingPlacementCount > 0) {
         warnings.push(`Skipped ${skippedMissingPlacementCount} legacy Button appearance ${skippedMissingPlacementCount === 1 ? "override" : "overrides"} for missing placements.`);
@@ -1237,7 +1271,7 @@ export default function ThemeEditorPage({
 
   return (
     <main className={`theme-editor${showingProgramPage ? " theme-editor--program-page" : ""}`}>
-      {!showingProgramPage && <header className="theme-editor__header">
+      <header className="theme-editor__header">
         <div>
           <h1>Theme Editor</h1>
           <p>Interface colors, Button appearance, and authored arrangements.</p>
@@ -1251,7 +1285,7 @@ export default function ThemeEditorPage({
           <button type="button" disabled={pending} onClick={resetDraftFromCanonical}>Discard</button>
           <button type="button" disabled={pending} onClick={() => void getCurrentWindow().close()}>Close</button>
         </div>
-      </header>}
+      </header>
 
       <section className="theme-editor__card theme-editor__scope">
         <label>
@@ -1276,9 +1310,6 @@ export default function ThemeEditorPage({
             </select>
           </label>
         ) : null}
-        {showingProgramPage && contributionAvailable === true &&
-          <button className="theme-editor__program-import" type="button" disabled={pending}
-            onClick={() => setLibraryMode("import")}>Import Theme</button>}
         {!showingProgramPage && <p className="theme-editor__scope-summary">
           {scopedPlacements.length} Button occurrence{scopedPlacements.length === 1 ? "" : "s"} in scope
           {surfaceSummary ? ` · ${surfaceSummary}` : ""}

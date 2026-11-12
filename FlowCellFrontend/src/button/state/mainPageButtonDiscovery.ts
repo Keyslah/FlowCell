@@ -5,7 +5,7 @@ import {
 import type { ButtonStateDocument } from "../types.js";
 import { ensureFlowCellMainPageButtons } from "./mainPageButtonOperations.js";
 import { reconcileProgramPanelOwners } from "./panelOwnerButtonOperations.js";
-import { ensureChippedConcreteDefaults } from "./buttonDefaults.js";
+import { ensureMainPageSkinDefaults } from "./buttonDefaults.js";
 
 export interface RegisteredProgramPanels {
   programName: string;
@@ -26,7 +26,7 @@ export function reconcileMainPageButtonDiscovery(
   registeredPanels: readonly RegisteredProgramPanels[],
   options: MainPageButtonDiscoveryOptions = {}
 ): MainPageButtonDiscoveryResult {
-  let changed = ensureChippedConcreteDefaults(document);
+  let changed = false;
   const removedOwnerButtonIds = new Set<string>();
   for (const entry of registeredPanels) {
     const result = reconcileProgramPanelOwners(document, {
@@ -44,5 +44,7 @@ export function reconcileMainPageButtonDiscovery(
     { removeLegacyTemplates: options.removeStaleOwners !== false }
   );
   changed ||= mainPageButtonsChanged;
+  const skinDefaultsChanged = ensureMainPageSkinDefaults(document);
+  changed ||= skinDefaultsChanged;
   return { changed, removedOwnerButtonIds: [...removedOwnerButtonIds] };
 }

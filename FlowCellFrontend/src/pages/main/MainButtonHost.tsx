@@ -144,7 +144,8 @@ export function MainControlHost({
   onDoubleActivate,
   onRequestContextMenu
 }: MainControlHostProps) {
-  const skin = getChippedConcreteButtonSkin(control.label);
+  const isHeader = control.groupId === "top-left-actions" || control.groupId === "top-right-actions";
+  const skin = getChippedConcreteButtonSkin(control.label, isHeader ? control.width : undefined);
   const height = targetHeightOverride ?? control.height;
   const railPosition = useMainRailPosition(control, absolute, control.width);
   const canonicalControl: CanonicalButtonRecord = {
@@ -155,13 +156,17 @@ export function MainControlHost({
     tooltip: control.tooltip ?? "",
     executionTarget: null,
     defaultSkinId: skin.id,
-    defaultTextFitMode: "shrink-and-stack",
+    defaultTextFitMode: "shrink",
     disabled: Boolean(control.disabled),
     activationAnimation: null,
     activationBehavior: null,
     toolSetParentId: null,
     toolSetBehavior: null,
-    metadata: { actionId: control.actionId }
+    metadata: {
+      actionId: control.actionId,
+      mainPageControl: true,
+      ...(isHeader ? { mainPageSection: "Header Buttons" } : {})
+    }
   };
   const placement: ButtonPlacement = {
     id: `main-control-placement:${control.id}`,
@@ -173,14 +178,14 @@ export function MainControlHost({
     height,
     zIndex: 0,
     skinOverrideId: null,
-    textFitMode: "shrink-and-stack",
+    textFitMode: "shrink",
     textAlignment: "skin",
     textOffsetX: 0,
     textOffsetY: 0,
     minimumFontSize: 8,
     textSizeOverride: null,
     allowLabelResize: false,
-    matchHitboxToSkin: true,
+    matchHitboxToSkin: !isHeader,
     allowStretching: false,
     highlightOnHover: false,
     activationCycle: null,

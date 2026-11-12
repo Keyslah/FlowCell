@@ -51,6 +51,11 @@ class FakeKeyboardEvent {
 class FakeInteractionHost {
   events = [];
 
+  closest(selector) {
+    assert.equal(selector, "[inert]");
+    return null;
+  }
+
   dispatchEvent(event) {
     this.events.push(event);
     return true;
@@ -61,6 +66,12 @@ class FakeButtonHost {
   constructor(buttonId, interactionCore) {
     this.dataset = { buttonHostId: buttonId };
     this.interactionCore = interactionCore;
+    this.inert = false;
+  }
+
+  closest(selector) {
+    assert.equal(selector, "[inert]");
+    return this.inert ? this : null;
   }
 
   querySelector(selector) {
@@ -167,4 +178,14 @@ test("child hotkey rejects an active child whose ButtonHost is not mounted", () 
   );
   assert.equal(result.accepted, false);
   assert.match(result.message, /not mounted/i);
+});
+
+test("child hotkey rejects an inert Fan placement across its skin shadow root", () => {
+  const interactionCore = new FakeInteractionHost();
+  const host = new FakeButtonHost(PAYLOAD.buttonId, interactionCore);
+  host.inert = true;
+  const result = activateToolSetChildHotkey(PAYLOAD, hostState({ root: new FakeRoot([host]) }));
+  assert.equal(result.accepted, false);
+  assert.match(result.message, /temporarily inactive/i);
+  assert.deepEqual(interactionCore.events, []);
 });

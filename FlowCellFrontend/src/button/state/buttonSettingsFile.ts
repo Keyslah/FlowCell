@@ -66,6 +66,7 @@ interface ButtonSettingsMainPageBehavior {
 
 interface ButtonSettingsPopoutBehaviorBase {
   closeControlOffset?: { x: number; y: number };
+  fanAnimation?: ButtonFanAnimationSettings;
   interactionMode: ButtonPopoutInteractionMode;
   ownerButtonId: string | null;
   ownerPlacementId: string | null;
@@ -266,6 +267,22 @@ function isUtcIsoTimestamp(value: unknown): value is string {
   }
   const parsed = new Date(value);
   return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+function validateFanAnimation(value: unknown, path: string, issues: string[]): void {
+  if (!isObject(value)) {
+    issues.push(`${path}: Expected Fan animation settings.`);
+    return;
+  }
+  hasExactKeys(value, ["durationMs", "easing", "staggerMs", "spinEnabled"], path, issues);
+  if (!isFiniteNumber(value.durationMs) || value.durationMs < 0) {
+    issues.push(`${path}.durationMs: Expected a nonnegative finite number.`);
+  }
+  if (typeof value.easing !== "string") issues.push(`${path}.easing: Expected a string.`);
+  if (!isFiniteNumber(value.staggerMs) || value.staggerMs < 0) {
+    issues.push(`${path}.staggerMs: Expected a nonnegative finite number.`);
+  }
+  if (typeof value.spinEnabled !== "boolean") issues.push(`${path}.spinEnabled: Expected a boolean.`);
 }
 
 function validateBounds(
@@ -469,12 +486,14 @@ function validateBehavior(
       [
         "kind", "interactionMode", "ownerButtonId", "ownerPlacementId", "openRule",
         "closeRule", "transparency", "pinnedDefault", "windowFitMode",
+        ...("fanAnimation" in value ? ["fanAnimation"] : []),
         ...("closeControlOffset" in value ? ["closeControlOffset"] : [])
       ],
       path,
       issues
     );
     if (value.closeControlOffset !== undefined && !isButtonWindowCloseOffset(value.closeControlOffset)) issues.push(`${path}.closeControlOffset: Expected finite x/y offsets.`);
+    if ("fanAnimation" in value) validateFanAnimation(value.fanAnimation, `${path}.fanAnimation`, issues);
     if (placementKind !== "pop-out") {
       issues.push(`${path}.kind: Pop-out behavior requires Pop-out settings.`);
     }
@@ -562,28 +581,7 @@ function validateBehavior(
     if (typeof value.pinnedDefault !== "boolean") {
       issues.push(`${path}.pinnedDefault: Expected a boolean.`);
     }
-    if (!isObject(value.animation)) {
-      issues.push(`${path}.animation: Expected Fan animation settings.`);
-    } else {
-      hasExactKeys(
-        value.animation,
-        ["durationMs", "easing", "staggerMs", "spinEnabled"],
-        `${path}.animation`,
-        issues
-      );
-      if (!isFiniteNumber(value.animation.durationMs) || value.animation.durationMs < 0) {
-        issues.push(`${path}.animation.durationMs: Expected a nonnegative finite number.`);
-      }
-      if (typeof value.animation.easing !== "string") {
-        issues.push(`${path}.animation.easing: Expected a string.`);
-      }
-      if (!isFiniteNumber(value.animation.staggerMs) || value.animation.staggerMs < 0) {
-        issues.push(`${path}.animation.staggerMs: Expected a nonnegative finite number.`);
-      }
-      if (typeof value.animation.spinEnabled !== "boolean") {
-        issues.push(`${path}.animation.spinEnabled: Expected a boolean.`);
-      }
-    }
+    validateFanAnimation(value.animation, `${path}.animation`, issues);
     if (!BUTTON_WINDOW_FIT_MODES.has(value.windowFitMode as ButtonWindowFitMode)) {
       issues.push(`${path}.windowFitMode: Unsupported window-fit mode.`);
     }
@@ -835,6 +833,7 @@ function resolveBehavior(
   if (!unit) throw new Error(`Pop-out surface '${surface.id}' has no saved Pop-out unit.`);
   const common = {
     interactionMode: unit.interactionMode ?? "pop",
+    ...(unit.fanAnimation ? { fanAnimation: structuredClone(unit.fanAnimation) } : {}),
     ownerPlacementId: unit.ownerPlacementId ?? null,
     openRule: unit.openRule,
     closeRule: unit.closeRule,
@@ -1108,6 +1107,8 @@ function updateSurfaceOwnerRecords(
     unit.openRule = file.behavior.openRule;
     unit.closeRule = file.behavior.closeRule;
     unit.interactionMode = file.behavior.interactionMode;
+    if (file.behavior.fanAnimation) unit.fanAnimation = structuredClone(file.behavior.fanAnimation);
+    else delete unit.fanAnimation;
     unit.transparency = file.behavior.transparency;
     unit.pinnedDefault = file.behavior.pinnedDefault;
     unit.closeControlOffset = file.behavior.closeControlOffset ? { ...file.behavior.closeControlOffset } : undefined;
@@ -1462,6 +1463,7 @@ export function buildTransientButtonPopoutSettingsDocument(
       openRule: file.behavior.openRule,
       closeRule: file.behavior.closeRule,
       interactionMode: file.behavior.interactionMode,
+      ...(file.behavior.fanAnimation ? { fanAnimation: structuredClone(file.behavior.fanAnimation) } : {}),
       ownerButtonId: file.behavior.ownerButtonId,
       ownerPlacementId: null,
       transparency: file.behavior.transparency,
@@ -1545,6 +1547,7 @@ export function buildTransientButtonPopoutSettingsDocument(
       openRule: file.behavior.openRule,
       closeRule: file.behavior.closeRule,
       interactionMode: file.behavior.interactionMode,
+      ...(file.behavior.fanAnimation ? { fanAnimation: structuredClone(file.behavior.fanAnimation) } : {}),
       ownerPlacementId: null,
       transparency: file.behavior.transparency,
       pinnedDefault: file.behavior.pinnedDefault,

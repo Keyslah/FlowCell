@@ -27,6 +27,7 @@ import type {
   ButtonWindowFitMode
 } from "../types";
 import { ButtonSurface } from "../ButtonSurface";
+import { ButtonPopoutRenderer } from "../popout/ButtonPopoutRenderer";
 import {
   ButtonFanRenderer,
   type ButtonFanMotionPhase
@@ -152,7 +153,8 @@ function pointerPlacementId(event: PointerEvent): string | null {
 
 function buttonFanPreviewIsHovered(root: HTMLElement | null): boolean {
   return Boolean(root?.querySelector(
-    ".button-fan-renderer--expanded [data-button-placement-id]:hover"
+    ".button-fan-renderer--expanded [data-button-placement-id]:hover, " +
+    ".button-popout-renderer--expanded [data-button-placement-id]:hover"
   ));
 }
 
@@ -241,7 +243,9 @@ export function ButtonWorkspace({
   const unitInteractionMode = unit && "interactionMode" in unit && unit.interactionMode === "fan"
     ? "fan"
     : "pop";
-  const fanOwnerPlacementId = fanSetup && surface
+  const previewFanSetup = fanSetup ?? (unitInteractionMode === "fan" ? unit : undefined);
+  const previewFanAnimation = fanSetup?.animation ?? (unitInteractionMode === "fan" ? unit?.fanAnimation : undefined);
+  const fanOwnerPlacementId = unitInteractionMode === "fan" ? unitOwnerPlacementId : fanSetup && surface
     ? surface.placementIds.find((placementId) =>
         document.placements[placementId]?.buttonId === fanSetup.panelOwnerButtonId
       ) ?? null
@@ -353,7 +357,7 @@ export function ButtonWorkspace({
       ? fanSetup.windowFitMode ?? "surface"
       : undefined;
   const [fanDisclosure, setFanDisclosure] = useState(() =>
-    createInitialButtonFanDisclosureState(fanSetup)
+    createInitialButtonFanDisclosureState(previewFanSetup)
   );
   const [renderedFanExpanded, setRenderedFanExpanded] = useState(false);
   const [previewFanMotion, setPreviewFanMotion] = useState<{
@@ -367,24 +371,24 @@ export function ButtonWorkspace({
   const fanDisclosurePinnedRef = useRef(fanDisclosure.pinned);
   const previewFanHoveredRef = useRef(false);
   const previewFanMotionPhaseRef = useRef<ButtonFanMotionPhase>(previewFanMotion.phase);
-  const fanSetupRef = useRef(fanSetup);
+  const fanSetupRef = useRef(previewFanSetup);
   renderedFanExpandedRef.current = renderedFanExpanded;
   fanDisclosureExpandedRef.current = fanDisclosure.expanded;
   fanDisclosurePinnedRef.current = fanDisclosure.pinned;
   previewFanMotionPhaseRef.current = previewFanMotion.phase;
-  fanSetupRef.current = fanSetup;
+  fanSetupRef.current = previewFanSetup;
   const previewFanMotionStyles = useMemo(
-    () => enabledButtonFanMotionStyles(fanSetup?.animation),
-    [fanSetup?.animation.spinEnabled]
+    () => enabledButtonFanMotionStyles(previewFanAnimation),
+    [previewFanAnimation?.spinEnabled]
   );
   const previewFanMotionEnabled = previewFanMotionStyles.length > 0;
   const previewFanConfiguration = JSON.stringify([
     mode,
     surfaceId,
-    fanSetup?.id ?? null,
-    fanSetup?.openRule ?? null,
-    fanSetup?.closeRule ?? null,
-    fanSetup?.pinnedDefault ?? null
+    previewFanSetup?.id ?? null,
+    previewFanSetup?.openRule ?? null,
+    previewFanSetup?.closeRule ?? null,
+    previewFanSetup?.pinnedDefault ?? null
   ]);
   const previewFanConfigurationMatches =
     previewFanConfigurationRef.current === previewFanConfiguration;
@@ -397,11 +401,7 @@ export function ButtonWorkspace({
     ? previewFanMotion.phase
     : "resting";
   const fanCloseTimerRef = useRef<number | null>(null);
-  const fanOwnerPlacement = fanSetup
-    ? surface?.placementIds
-        .map((placementId) => document.placements[placementId])
-        .find((placement) => placement?.buttonId === fanSetup.panelOwnerButtonId)
-    : undefined;
+  const fanOwnerPlacement = fanOwnerPlacementId ? document.placements[fanOwnerPlacementId] : undefined;
 
   const clearFanCloseTimer = useCallback(() => {
     if (fanCloseTimerRef.current !== null) {
@@ -436,8 +436,8 @@ export function ButtonWorkspace({
       previewFanConfigurationRef.current = previewFanConfiguration;
       previewFanHoveredRef.current = false;
       clearFanCloseTimer();
-      const initialDisclosure = createInitialButtonFanDisclosureState(fanSetup);
-      const initialExpanded = mode === "run" && Boolean(fanSetup) && initialDisclosure.expanded;
+      const initialDisclosure = createInitialButtonFanDisclosureState(previewFanSetup);
+      const initialExpanded = mode === "run" && Boolean(previewFanSetup) && initialDisclosure.expanded;
       setFanDisclosure(initialDisclosure);
       setRenderedFanExpanded(initialExpanded);
       setPreviewFanMotion({
@@ -447,7 +447,7 @@ export function ButtonWorkspace({
       return;
     }
 
-    if (mode !== "run" || !fanSetup) {
+    if (mode !== "run" || !previewFanSetup) {
       setRenderedFanExpanded(false);
       setPreviewFanMotion({ phase: "resting", sequence });
       return;
@@ -463,7 +463,7 @@ export function ButtonWorkspace({
         wasOpening &&
         !pointerStillOverFan &&
         !fanDisclosurePinnedRef.current &&
-        fanSetup.closeRule === "hover-out"
+        previewFanSetup.closeRule === "hover-out"
       ) {
         scheduleFanHoverClose();
       }
@@ -482,7 +482,7 @@ export function ButtonWorkspace({
     });
   }, [
     fanDisclosure.expanded,
-    fanSetup?.id,
+    previewFanSetup?.id,
     clearFanCloseTimer,
     mode,
     previewFanConfiguration,
@@ -518,29 +518,29 @@ export function ButtonWorkspace({
     previewFanHoveredRef.current = true;
     clearFanCloseTimer();
     setFanDisclosure((current) =>
-      reduceButtonFanDisclosure(current, { type: "hover-enter" }, fanSetup)
+      reduceButtonFanDisclosure(current, { type: "hover-enter" }, previewFanSetup)
     );
-  }, [clearFanCloseTimer, fanSetup]);
+  }, [clearFanCloseTimer, previewFanSetup]);
 
   const handleFanHoverEnd = useCallback(() => {
     previewFanHoveredRef.current = false;
     clearFanCloseTimer();
-    if (fanSetup?.closeRule !== "hover-out") {
+    if (previewFanSetup?.closeRule !== "hover-out") {
       setFanDisclosure((current) =>
-        reduceButtonFanDisclosure(current, { type: "hover-leave" }, fanSetup)
+        reduceButtonFanDisclosure(current, { type: "hover-leave" }, previewFanSetup)
       );
       return;
     }
     if (previewFanMotionEnabled && previewFanMotionPhaseRef.current === "opening") return;
     scheduleFanHoverClose();
-  }, [clearFanCloseTimer, fanSetup, previewFanMotionEnabled, scheduleFanHoverClose]);
+  }, [clearFanCloseTimer, previewFanSetup, previewFanMotionEnabled, scheduleFanHoverClose]);
 
   const handleFanOwnerActivate = useCallback(() => {
     clearFanCloseTimer();
     setFanDisclosure((current) =>
-      reduceButtonFanDisclosure(current, { type: "owner-activate" }, fanSetup)
+      reduceButtonFanDisclosure(current, { type: "owner-activate" }, previewFanSetup)
     );
-  }, [clearFanCloseTimer, fanSetup]);
+  }, [clearFanCloseTimer, previewFanSetup]);
 
   const buildReorderCandidates = useCallback((
     movingPlacementId: string,
@@ -1045,7 +1045,7 @@ export function ButtonWorkspace({
               onChange={onCloseControlOffsetChange}
             />
           ) : null}
-          {mode === "run" && fanSetup ? (
+          {mode === "run" && previewFanSetup ? (
             <div
               style={{
                 position: "absolute",
@@ -1053,7 +1053,7 @@ export function ButtonWorkspace({
                 top: displayedFanExpanded ? 0 : fanOwnerPlacement?.y ?? 0
               }}
             >
-              <ButtonFanRenderer
+              {fanSetup ? <ButtonFanRenderer
                 document={renderedDocument}
                 setup={fanSetup}
                 expanded={displayedFanExpanded}
@@ -1068,7 +1068,21 @@ export function ButtonWorkspace({
                 onPlacementNaturalMeasurement={handlePlacementNaturalMeasurement}
                 onPlacementVisualMeasurement={handlePlacementVisualMeasurement}
                 onPlacementVisualStateChange={handlePlacementVisualStateChange}
-              />
+              /> : unit ? <ButtonPopoutRenderer
+                document={renderedDocument}
+                unit={unit}
+                displayMode={displayedFanExpanded ? "expanded" : "collapsed"}
+                motionPhase={displayedFanMotionPhase}
+                motionSequence={previewFanMotion.sequence}
+                onMotionComplete={handlePreviewFanMotionComplete}
+                onOwnerActivate={handleFanOwnerActivate}
+                onHoverStart={handleFanHoverStart}
+                onHoverEnd={handleFanHoverEnd}
+                onHoverCancel={handleFanHoverEnd}
+                onPlacementNaturalMeasurement={handlePlacementNaturalMeasurement}
+                onPlacementVisualMeasurement={handlePlacementVisualMeasurement}
+                onPlacementVisualStateChange={handlePlacementVisualStateChange}
+              /> : null}
             </div>
           ) : (
             <ButtonSurface

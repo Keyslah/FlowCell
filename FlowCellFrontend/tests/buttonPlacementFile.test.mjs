@@ -31,6 +31,7 @@ import {
   deriveRegularPopoutSelectionKey
 } from "./.compiled-button-system/button/state/sourceIdentity.js";
 import { ensureFanSetup } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
+import { setButtonPopoutFanMode } from "./.compiled-button-system/button/state/buttonPopoutInteractionOperations.js";
 import {
   reconcileProgramPanelOwners,
   resolvePanelOwnerFanPlacement
@@ -1227,6 +1228,48 @@ test("legacy Pop-out state and settings normalize to Pop mode without an owner p
   assert.equal(normalizedToolSetState.popoutUnits["tool-pop"].ownerButtonId, "tool-owner");
   assert.equal(normalizedToolSetState.popoutUnits["tool-pop"].ownerPlacementId, null);
   assert.equal(validateButtonStateDocument(normalizedToolSetState).valid, true);
+});
+
+test("Pop-out Fan styles survive settings roundtrip, transient opening and Fan mode changes", () => {
+  for (const fixture of [regularPopSettingsFixture, toolSetPopSettingsFixture]) {
+    const { document, settings } = fixture();
+    reconcileProgramPanelOwners(document, {
+      programName: "Windows",
+      panels: [{ panelName: "Files", rect: { x: 8, y: 8, width: 132, height: 37 } }],
+      surfaceBounds: { width: 1225, height: 721 }
+    });
+    const unit = Object.values(document.popoutUnits)[0];
+    const animation = { durationMs: 180, easing: "ease-out", staggerMs: 30, spinEnabled: true };
+    const context = { programName: "Windows", panelName: "Files" };
+    unit.fanAnimation = structuredClone(animation);
+    assert.equal(validateButtonStateDocument(document).valid, true);
+    for (const enabled of [true, false, true]) {
+      setButtonPopoutFanMode({ document, surfaceId: unit.surfaceId, enabled, ...context });
+      assert.deepEqual(unit.fanAnimation, animation);
+    }
+    const file = JSON.parse(JSON.stringify(buildButtonSettingsFile(document, unit.surfaceId, context)));
+    assert.deepEqual(file.behavior.fanAnimation, animation);
+    assert.equal(validateButtonSettingsFile(file).valid, true);
+    unit.fanAnimation.spinEnabled = false;
+    const restored = applyButtonSettingsFile(document, unit.surfaceId, file, context);
+    assert.deepEqual(restored.popoutUnits[unit.id].fanAnimation, animation);
+    const transient = buildTransientButtonPopoutSettingsDocument(document, file, context, `fan-style-${unit.id}`);
+    assert.deepEqual(transient.document.popoutUnits[transient.popoutUnitId].fanAnimation, animation);
+    const legacy = structuredClone(file);
+    delete legacy.behavior.fanAnimation;
+    assert.equal(validateButtonSettingsFile(legacy).valid, true);
+    const oldRestored = applyButtonSettingsFile(restored, unit.surfaceId, legacy, context);
+    assert.equal(oldRestored.popoutUnits[unit.id].fanAnimation, undefined);
+    assert.equal(validateButtonSettingsFile(settings).valid, true);
+    for (const invalid of [null, { ...animation, spinEnabled: "yes" }, { ...animation, durationMs: -1 }, { ...animation, other: true }]) {
+      const invalidFile = structuredClone(file);
+      invalidFile.behavior.fanAnimation = invalid;
+      assert.equal(validateButtonSettingsFile(invalidFile).valid, false);
+      const invalidDocument = structuredClone(restored);
+      invalidDocument.popoutUnits[unit.id].fanAnimation = invalid;
+      assert.equal(validateButtonStateDocument(invalidDocument).valid, false);
+    }
+  }
 });
 
 test("Tool Set Fan settings map by package slot while preserving target behavior and ownership", () => {

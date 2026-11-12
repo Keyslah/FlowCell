@@ -367,3 +367,27 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Use page scrolling when wrapped controls cannot share the fixed-height canvas. */
+@media (max-width: 1100px), (max-height: 620px) {
+  .macro-lab-page {
+    overflow: auto;
+  }
+
+  .macro-lab {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .macro-lab__header-actions,
+  .macro-lab__command-bar,
+  .macro-lab__section-header div,
+  .macro-lab__target-row {
+    flex-wrap: wrap;
+  }
+
+  .macro-lab__step-table {
+    grid-template-rows: auto auto;
+    overflow: auto;
+  }
+}

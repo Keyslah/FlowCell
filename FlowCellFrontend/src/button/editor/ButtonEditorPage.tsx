@@ -86,6 +86,8 @@ import {
   resolveDiscardedStagedOwnerButtonIds
 } from "../state/buttonDocumentOperations";
 import { arrangeDefaultPanelButtons, defaultPanelButtonSize } from "../state/buttonPanelDefaults";
+import { applyPanelPopoutPreset, availablePanelPopoutPresets, type PanelPopoutPresetId } from "../state/buttonPanelPopoutPresets";
+import { CHIPPED_CONCRETE_BUTTON_SKIN_ID } from "../skins/chippedConcreteButtonSkin";
 import { setButtonPopoutFanMode } from "../state/buttonPopoutInteractionOperations";
 import {
   FLOWCELL_MAIN_PAGE_SECTIONS,
@@ -394,7 +396,7 @@ function addPlacement(
     surfaceId,
     ...available,
     zIndex: desired?.zIndex ?? surface.placementIds.length,
-    skinOverrideId: null,
+    skinOverrideId: surface.kind === "panel" || surface.kind === "main" ? CHIPPED_CONCRETE_BUTTON_SKIN_ID : null,
     textFitMode: document.buttons[buttonId]?.defaultTextFitMode ?? "shrink",
     textAlignment: "skin",
     minimumFontSize: document.settings.defaultMinimumFontSize,
@@ -723,9 +725,12 @@ function ButtonEditorContent({
     (candidate) => candidate.surfaceId === selectedSurfaceId
   );
   const usesLogicalGridDefault = selectedSurface?.kind === "panel" || selectedSurfaceUnit?.kind === "regular";
+  const panelPopoutPresets = selectedSurfaceUnit?.kind === "regular"
+    ? availablePanelPopoutPresets(store.draft, selectedSurfaceUnit) : [];
   const selectedFanSetup = Object.values(store.draft.fanSetups).find(
     (candidate) => candidate.fanSurfaceId === selectedSurfaceId
   ) ?? null;
+  const selectedFanAnimation = selectedSurfaceUnit?.fanAnimation ?? selectedFanSetup?.animation;
   const updateCloseControlOffset = (offset: { x: number; y: number } | undefined) => {
     store.transact((draft) => {
       const target = selectedSurfaceUnit ? draft.popoutUnits[selectedSurfaceUnit.id]
@@ -1432,7 +1437,7 @@ function ButtonEditorContent({
         setSelectedPlacementIds(new Set(firstPlacementId ? [firstPlacementId] : []));
         setActivePage("placement");
         setReorderMode(false);
-        setMessage(`${settingsPlacementLabel} default grid loaded with the current Buttons and skins. Use Save ${settingsPlacementLabel} Settings to keep it.`);
+        setMessage(`${settingsPlacementLabel} default loaded. Use Save ${settingsPlacementLabel} Settings to keep it.`);
         return;
       }
       const surface = store.committed.surfaces[selectedSurfaceId];
@@ -1462,6 +1467,27 @@ function ButtonEditorContent({
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const loadPanelPopoutPreset = (preset: PanelPopoutPresetId) => {
+    if (busyRef.current || selectedSurfaceUnit?.kind !== "regular") return;
+    try {
+      if (stagedInstallsRef.current.size > 0) throw new Error("Save or cancel the newly added Button before loading different settings.");
+      const next = cloneButtonDocument(store.current());
+      const unit = next.popoutUnits[selectedSurfaceUnit.id];
+      if (unit?.kind !== "regular" || !applyPanelPopoutPreset(next, unit, preset)) {
+        throw new Error("This Pop-out no longer has the complete Collections preset's Buttons.");
+      }
+      store.transact(() => next, { label: "Load Collections Pop-out preset" });
+      const first = unit.memberPlacementIds[0] ?? null;
+      setFocusedPlacementId(first);
+      setSelectedPlacementIds(new Set(first ? [first] : []));
+      setActivePage("placement");
+      setReorderMode(false);
+      setMessage("Collections preset loaded. Use Save Pop-out Settings to keep it.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -1517,6 +1543,25 @@ function ButtonEditorContent({
 
   const setSelectedFanSpinEnabled = useCallback((enabled: boolean) => {
     const current = store.current();
+    const unit = Object.values(current.popoutUnits).find(
+      (candidate) => candidate.surfaceId === selectedSurfaceId
+    );
+    if (unit) {
+      if ((unit.fanAnimation?.spinEnabled ?? false) === enabled) return;
+      store.transact((draft) => {
+        const target = draft.popoutUnits[unit.id];
+        if (!target || target.surfaceId !== selectedSurfaceId) return;
+        target.fanAnimation = {
+          durationMs: 180,
+          easing: "ease-out",
+          staggerMs: 30,
+          ...target.fanAnimation,
+          spinEnabled: enabled
+        };
+      }, { label: enabled ? "Enable Fan spin" : "Disable Fan spin" });
+      setMessage(null);
+      return;
+    }
     const setup = Object.values(current.fanSetups).find(
       (candidate) => candidate.fanSurfaceId === selectedSurfaceId
     );
@@ -3010,13 +3055,13 @@ function ButtonEditorContent({
                 <span>Fan</span>
               </label>
             ) : null}
-            {settingsPlacementKind === "fan" && selectedFanSetup ? (
+            {selectedSurfaceShowsOwner || (settingsPlacementKind === "fan" && selectedFanSetup) ? (
               <fieldset className="button-editor-sidebar__fan-styles" disabled={busy}>
                 <legend>Fan styles</legend>
                 <label className="button-editor-check button-editor-sidebar__fan-animation">
                   <input
                     type="checkbox"
-                    checked={selectedFanSetup.animation.spinEnabled}
+                    checked={selectedFanAnimation?.spinEnabled ?? false}
                     onChange={(event) => setSelectedFanSpinEnabled(event.currentTarget.checked)}
                   />
                   <span>Spin Buttons as they fan out</span>
@@ -3039,6 +3084,18 @@ function ButtonEditorContent({
             >
               Load {settingsPlacementLabel} Settings
             </button>
+            {panelPopoutPresets.length > 0 ? (
+              <label>
+                <span>Load Pop-out Preset</span>
+                <select value="" disabled={busy} onChange={(event) => {
+                  const preset = event.currentTarget.value as PanelPopoutPresetId;
+                  if (preset) loadPanelPopoutPreset(preset);
+                }}>
+                  <option value="">Choose a saved design</option>
+                  {panelPopoutPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+                </select>
+              </label>
+            ) : null}
             <button
               type="button"
               className="button-editor-sidebar__placement-file"

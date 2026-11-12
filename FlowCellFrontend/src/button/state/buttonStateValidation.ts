@@ -1017,7 +1017,7 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       "hoverGlowAmount",
       "activeGlowAmount"
     ];
-    const allowedKeys = new Set([...requiredKeys, ...amountKeys]);
+    const allowedKeys = new Set([...requiredKeys, ...amountKeys, "idleEnabled", "idleColor", "idleHighlightAmount", "idleGlowAmount"]);
     if (
       Object.keys(override).some((key) => !allowedKeys.has(key)) ||
       !requiredKeys.every((key) => Object.hasOwn(override, key))
@@ -1061,6 +1061,18 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
           `${path}.${key}`,
           "Theme highlight or glow amount must be a whole percentage from 0 through 100 or null."
         );
+      }
+    }
+    if (override.idleEnabled !== undefined && typeof override.idleEnabled !== "boolean") {
+      addIssue(issues, `${path}.idleEnabled`, "Idle highlight setting must be boolean.");
+    }
+    if (override.idleColor !== undefined && (typeof override.idleColor !== "string" || !normalizeButtonSkinColor(override.idleColor))) {
+      addIssue(issues, `${path}.idleColor`, "Idle highlight color must be a concrete CSS color.");
+    }
+    for (const key of ["idleHighlightAmount", "idleGlowAmount"] as const) {
+      if (override[key] !== undefined && (key === "idleHighlightAmount"
+        ? normalizeButtonHighlightAmount(override[key]) : normalizeButtonGlowAmount(override[key])) === null) {
+        addIssue(issues, `${path}.${key}`, "Idle highlight or glow amount is invalid.");
       }
     }
   }
@@ -1136,7 +1148,7 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     const commonKeys = [
       "id", "name", "kind", "surfaceId", "canonicalBounds", "desktopBounds",
       "openRule", "closeRule", "transparency", "pinnedDefault", "windowFitMode",
-      "desktopBoundsFitMode", "desktopBoundsEnvelope", "interactionMode", "ownerPlacementId", "closeControlOffset"
+      "desktopBoundsFitMode", "desktopBoundsEnvelope", "interactionMode", "ownerPlacementId", "closeControlOffset", "fanAnimation"
     ];
     const allowedKeys = new Set(unit.kind === "regular"
       ? [...commonKeys, "ownerButtonId", "memberPlacementIds", "memberSourceIdentities", "selectionKey"]
@@ -1144,6 +1156,22 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     Object.keys(rawUnit).forEach((property) => {
       if (!allowedKeys.has(property)) addIssue(issues, `${path}.${property}`, `Property '${property}' is not part of the ${unit.kind} popout contract.`);
     });
+    if (unit.fanAnimation !== undefined) {
+      const animation = unit.fanAnimation;
+      const animationPath = `${path}.fanAnimation`;
+      if (!isObject(animation)) {
+        addIssue(issues, animationPath, "Fan animation settings must be an object.");
+      } else {
+        const animationKeys = new Set(["durationMs", "easing", "staggerMs", "spinEnabled"]);
+        Object.keys(animation).forEach((property) => {
+          if (!animationKeys.has(property)) addIssue(issues, `${animationPath}.${property}`, "Unknown Fan animation setting.");
+        });
+        if (!isFiniteNumber(animation.durationMs) || animation.durationMs < 0) addIssue(issues, `${animationPath}.durationMs`, "Fan duration must be a nonnegative finite number.");
+        if (typeof animation.easing !== "string") addIssue(issues, `${animationPath}.easing`, "Fan easing must be a string.");
+        if (!isFiniteNumber(animation.staggerMs) || animation.staggerMs < 0) addIssue(issues, `${animationPath}.staggerMs`, "Fan stagger must be a nonnegative finite number.");
+        if (typeof animation.spinEnabled !== "boolean") addIssue(issues, `${animationPath}.spinEnabled`, "Fan spin setting must be a boolean.");
+      }
+    }
     if (unit.id !== key || !document.surfaces[unit.surfaceId]) addIssue(issues, path, "Popout ID or surface reference is invalid.");
     if (!BUTTON_WINDOW_FIT_MODES.has(unit.windowFitMode ?? "surface")) {
       addIssue(issues, `${path}.windowFitMode`, "Popout window-fit mode is invalid.");

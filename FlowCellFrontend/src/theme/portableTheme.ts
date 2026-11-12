@@ -76,6 +76,7 @@ export interface PortableThemeSurface {
     openRule: ButtonPopoutUnit["openRule"];
     closeRule: ButtonPopoutUnit["closeRule"];
     interactionMode?: ButtonPopoutUnit["interactionMode"];
+    fanAnimation?: ButtonPopoutUnit["fanAnimation"];
     transparency: number;
     pinnedDefault: boolean;
     windowFitMode?: ButtonPopoutUnit["windowFitMode"];
@@ -337,6 +338,7 @@ export function capturePortableTheme(args: {
       kind: unit.kind, canonicalBounds: structuredClone(unit.canonicalBounds), openRule: unit.openRule,
       closeRule: unit.closeRule, interactionMode: unit.interactionMode, transparency: unit.transparency,
       pinnedDefault: unit.pinnedDefault, windowFitMode: unit.windowFitMode,
+      ...(unit.fanAnimation ? { fanAnimation: structuredClone(unit.fanAnimation) } : {}),
       ...(unit.closeControlOffset ? { closeControlOffset: structuredClone(unit.closeControlOffset) } : {}),
       ...(unit.kind === "tool-set" ? { fieldGeometry: Object.fromEntries(unit.fields.map((field) =>
         [field.id, { x: field.x, y: field.y, width: field.width, height: field.height, zIndex: field.zIndex }])) } : {})
@@ -387,7 +389,7 @@ const PLACEMENT_PRESENTATION_KEYS = ["x", "y", "width", "height", "zIndex", "tex
   "textOffsetX", "textOffsetY", "minimumFontSize", "textSizeOverride", "allowLabelResize", "matchHitboxToSkin",
   "allowStretching", "highlightOnHover", "resizeAnchor", "activationCycle", "visualStateMap"];
 const POPOUT_PRESENTATION_KEYS = ["kind", "canonicalBounds", "openRule", "closeRule", "interactionMode",
-  "transparency", "pinnedDefault", "windowFitMode", "closeControlOffset", "fieldGeometry"];
+  "transparency", "pinnedDefault", "windowFitMode", "closeControlOffset", "fieldGeometry", "fanAnimation"];
 const FAN_PRESENTATION_KEYS = ["openRule", "closeRule", "pinnedDefault", "animation", "windowFitMode", "closeControlOffset", "selectedToolSetOwnerButtonIds"];
 
 function validOffset(value: unknown): boolean {
@@ -479,6 +481,11 @@ export function isPortableTheme(value: unknown): value is PortableTheme {
         !record(popout.canonicalBounds) || !keysAllowed(popout.canonicalBounds, ["x", "y", "width", "height"]) ||
         !Object.values(popout.canonicalBounds).every(finite) || popout.canonicalBounds.width <= 0 || popout.canonicalBounds.height <= 0 ||
         !(popout.interactionMode === undefined || ["pop", "fan"].includes(popout.interactionMode))) return false;
+      if (popout.fanAnimation !== undefined && (!record(popout.fanAnimation) ||
+        !keysAllowed(popout.fanAnimation, ["durationMs", "easing", "staggerMs", "spinEnabled"]) ||
+        !finite(popout.fanAnimation.durationMs) || popout.fanAnimation.durationMs < 0 ||
+        !finite(popout.fanAnimation.staggerMs) || popout.fanAnimation.staggerMs < 0 ||
+        !nonempty(popout.fanAnimation.easing) || typeof popout.fanAnimation.spinEnabled !== "boolean")) return false;
       if (popout.fieldGeometry !== undefined && (!record(popout.fieldGeometry) || !Object.values(popout.fieldGeometry).every((entry) =>
         record(entry) && keysAllowed(entry, ["x", "y", "width", "height", "zIndex"]) &&
         [entry.x, entry.y, entry.width, entry.height, entry.zIndex].every(finite) && entry.width > 0 && entry.height > 0))) return false;
@@ -681,6 +688,7 @@ export function applyPortableTheme(document: ButtonStateDocument, theme: Portabl
       const unit = units[0];
       if (appearance.kind !== unit.kind) throw new Error(`Arrangement '${saved.name}' changed kind.`);
       Object.assign(unit, structuredClone(appearance));
+      if (!appearance.fanAnimation) delete unit.fanAnimation;
       if (unit.kind === "tool-set" && fieldGeometry) unit.fields = unit.fields.map((field) =>
         fieldGeometry[field.id] ? { ...field, ...structuredClone(fieldGeometry[field.id]) } : field);
     }

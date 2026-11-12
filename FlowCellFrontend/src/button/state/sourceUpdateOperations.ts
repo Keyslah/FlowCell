@@ -133,6 +133,8 @@ export function applyInstalledSourceUpdate(
   if (!owner?.sourceIdentity) {
     throw new Error(`Button '${installed.ownerButtonId}' is not an installed source owner.`);
   }
+  const usesPreviousDefaultLabel = installed.previousDefaultLabel !== undefined &&
+    owner.label === installed.previousDefaultLabel;
 
   if (installed.children.length === 0) {
     if (owner.role !== "single-script" || !installed.executionTarget) {
@@ -140,6 +142,7 @@ export function applyInstalledSourceUpdate(
     }
     owner.sourceIdentity = installed.sourceIdentity;
     owner.executionTarget = installed.executionTarget;
+    if (usesPreviousDefaultLabel) owner.label = installed.label;
     if (installed.themeContributionOnly) hideThemeContributionOwner(document, owner.id);
     if (installed.updateTransactionToken) {
       owner.metadata = {
@@ -204,4 +207,5 @@ export function applyInstalledSourceUpdate(
     const previous = previousFields.get(field.id.trim().toLocaleLowerCase("en-US"));
     return previous ? { ...field, x: previous.x, y: previous.y, width: previous.width, height: previous.height, zIndex: previous.zIndex } : field;
   });
+  if (usesPreviousDefaultLabel) owner.label = installed.label;
 }

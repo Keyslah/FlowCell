@@ -35,6 +35,7 @@ import ThemeEditorPage from "./pages/theme/ThemeEditorPage";
 import MainPage from "./pages/main/MainPage";
 import InstalledPageWindowPage from "./pages/installed-page/InstalledPageWindowPage";
 import AddProgramWindowPage from "./pages/program-setup/AddProgramWindowPage";
+import ProgramHostRestartNotice from "./pages/program-setup/ProgramHostRestartNotice";
 import AddPanelWindowPage from "./pages/program-setup/AddPanelWindowPage";
 import TooltipWindowPage from "./pages/tooltip/TooltipWindowPage";
 import { runFrontendMacro } from "./lib/macros";
@@ -391,7 +392,7 @@ export default function App() {
     return <BindsWindowPage context={windowContext} />;
   }
   if (windowContext.kind === "add-program") {
-    return <AddProgramWindowPage />;
+    return <><AddProgramWindowPage /><ProgramHostRestartNotice /></>;
   }
   if (windowContext.kind === "add-panel") {
     return <AddPanelWindowPage context={windowContext} />;

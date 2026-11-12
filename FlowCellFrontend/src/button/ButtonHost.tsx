@@ -25,6 +25,7 @@ import type {
 } from "./types";
 import { ButtonSkinRenderer } from "./skins/ButtonSkinRenderer";
 import { useButtonSkinFamily } from "./skins/useButtonSkinFamily";
+import { isBundledChippedConcreteDefaultSkin } from "./skins/chippedConcreteButtonSkin";
 import { ButtonSelectFieldFanout } from "./ButtonSelectFieldFanout";
 import {
   executeButtonRecord,
@@ -173,11 +174,15 @@ export function ButtonHost({
   onNaturalMeasurement
 }: ButtonHostProps) {
   const button = useMemo(() => resolveButtonPlacementPresentation(canonicalButton, placement), [canonicalButton, placement]);
-  const skin = useButtonSkinFamily(assignedSkin, placement.id, button.label);
+  const bundledMainHeader = isBundledChippedConcreteDefaultSkin(assignedSkin) &&
+    button.metadata.mainPageControl === true && button.metadata.mainPageSection === "Header Buttons" &&
+    !placement.matchHitboxToSkin;
+  const skin = useButtonSkinFamily(assignedSkin, placement.id, button.label,
+    bundledMainHeader ? placement.width : undefined, placement.textSizeOverride ?? undefined);
   // A different authored width must fit inside the saved placement, including in uniform rows.
-  const skinPlacement = useMemo(() => skin === assignedSkin || placement.matchHitboxToSkin
+  const skinPlacement = useMemo(() => skin === assignedSkin || placement.matchHitboxToSkin || bundledMainHeader
     ? placement
-    : { ...placement, matchHitboxToSkin: true }, [assignedSkin, placement, skin]);
+    : { ...placement, matchHitboxToSkin: true }, [assignedSkin, placement, skin, bundledMainHeader]);
   const [coreElement, setCoreElement] = useState<HTMLElement | SVGElement | null>(null);
   const [labelElement, setLabelElement] = useState<HTMLElement | SVGElement | null>(null);
   const [shadowRoot, setShadowRoot] = useState<ShadowRoot | null>(null);

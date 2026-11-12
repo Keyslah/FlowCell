@@ -81,6 +81,8 @@ import {
   type ToolSetChildHotkeyHostState
 } from "../runtime/toolSetChildHotkeyBridge";
 import ButtonPopoutRenderer from "./ButtonPopoutRenderer";
+import type { ButtonFanMotionDirection } from "../fan/buttonFanMotion";
+import type { ButtonFanMotionPhase } from "../fan/useButtonFanMotion";
 
 function isUsableDesktopBounds(bounds: ButtonDesktopBounds | null | undefined): bounds is ButtonDesktopBounds {
   return Boolean(
@@ -174,6 +176,17 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   const appliedEnvelopeRef = useRef<ButtonRect | null>(null);
   const appliedFrameBoundsRef = useRef<ButtonDesktopBounds | null>(null);
   const appliedFanModeRef = useRef<"collapsed" | "expanded">("collapsed");
+  const renderedFanModeRef = useRef<"collapsed" | "expanded">("collapsed");
+  const nativeHoveredRef = useRef(false);
+  const pinnedRef = useRef(false);
+  const motionMeasurementsFrozenRef = useRef(false);
+  const fanMotionSequenceRef = useRef(0);
+  const fanMotionPhaseRef = useRef<ButtonFanMotionPhase>("resting");
+  const fanMotionWaiterRef = useRef<{
+    phase: ButtonFanMotionDirection;
+    sequence: number;
+    resolve: () => void;
+  } | null>(null);
   const appliedCanvasRef = useRef<AppliedButtonCanvas | null>(null);
   const restingEnvelopeFrameRef = useRef<{
     envelope: ButtonRect;
@@ -194,6 +207,13 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   const [displayMode, setDisplayMode] = useState(context.initialDisplayMode);
   const [renderedFanMode, setRenderedFanMode] = useState<"collapsed" | "expanded">("collapsed");
   const [pinned, setPinned] = useState(false);
+  const [fanMotion, setFanMotion] = useState<{
+    phase: ButtonFanMotionPhase;
+    sequence: number;
+  }>({ phase: "resting", sequence: 0 });
+  renderedFanModeRef.current = renderedFanMode;
+  fanMotionPhaseRef.current = fanMotion.phase;
+  pinnedRef.current = pinned;
   const [idleMeasurements, setIdleMeasurements] = useState<Record<string, ButtonCoreMeasurement>>({});
   const [currentMeasurements, setCurrentMeasurements] = useState<Record<string, ButtonCoreMeasurement>>({});
   const [visualStates, setVisualStates] = useState<Record<string, ButtonVisualState>>({});
@@ -257,6 +277,40 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     [document, unit]
   );
   const authoredFan = unit?.interactionMode === "fan" && Boolean(savedOwnerPlacement);
+  const fanMotionEnabled = authoredFan && unit?.fanAnimation?.spinEnabled === true;
+  const beginFanMotion = useCallback((phase: ButtonFanMotionDirection) => {
+    fanMotionWaiterRef.current?.resolve();
+    motionMeasurementsFrozenRef.current = true;
+    const sequence = ++fanMotionSequenceRef.current;
+    let resolve = () => {};
+    const completion = new Promise<void>((nextResolve) => { resolve = nextResolve; });
+    fanMotionWaiterRef.current = { phase, sequence, resolve };
+    setFanMotion({ phase, sequence });
+    return { sequence, completion };
+  }, []);
+  const cancelFanMotion = useCallback((resetPhase = true) => {
+    fanMotionSequenceRef.current += 1;
+    fanMotionWaiterRef.current?.resolve();
+    fanMotionWaiterRef.current = null;
+    motionMeasurementsFrozenRef.current = false;
+    if (resetPhase) {
+      setFanMotion({ phase: "resting", sequence: fanMotionSequenceRef.current });
+    }
+  }, []);
+  const handleFanMotionStart = useCallback((phase: ButtonFanMotionDirection, sequence: number) => {
+    const waiter = fanMotionWaiterRef.current;
+    if (waiter?.phase === phase && waiter.sequence === sequence) {
+      motionMeasurementsFrozenRef.current = true;
+    }
+  }, []);
+  const handleFanMotionComplete = useCallback((phase: ButtonFanMotionDirection, sequence: number) => {
+    const waiter = fanMotionWaiterRef.current;
+    if (waiter?.phase !== phase || waiter.sequence !== sequence) return;
+    fanMotionWaiterRef.current = null;
+    if (phase === "opening") motionMeasurementsFrozenRef.current = false;
+    waiter.resolve();
+  }, []);
+  useEffect(() => () => cancelFanMotion(false), [cancelFanMotion]);
   const legacyCollapsedToolSet = Boolean(
     unit?.kind === "tool-set" &&
     !authoredFan &&
@@ -770,6 +824,8 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       return;
     }
     initializedUnitIdRef.current = initializationKey;
+    cancelFanMotion();
+    nativeHoveredRef.current = false;
     setGeometryInitialized(false);
     collapsedOriginRef.current = null;
     const explicitRestoreBounds = buttonDesktopBoundsFromFlowCellBounds(
@@ -934,6 +990,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     activeContext.restoreBounds,
     applyCanvasForFrame,
     authoredFan,
+    cancelFanMotion,
     canvasMetrics.left,
     canvasMetrics.ready,
     canvasMetrics.scaleFactor,
@@ -1074,43 +1131,91 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
 
   useEffect(() => {
     writeRegisteredLayoutWindowButtonDisplayMode(getCurrentWindow().label, displayMode);
-    if (!geometryInitialized || !unit) {
-      return;
-    }
-    // Normal Pops are already placed by the window opener. Authored Fans and
-    // legacy collapsed Tool Sets need explicit placement around their owner.
+    if (!geometryInitialized || !unit) return;
+    // Keep the expanded semantic frame until the reverse motion finishes.
     if (!collapsiblePopout || dragging) {
+      cancelFanMotion();
       return;
     }
     let cancelled = false;
+    let ownedMotionSequence: number | null = null;
     pendingEnvelopeRef.current = null;
-    const transition = scheduleNativeGeometryTransition(async () => {
+    void (async () => {
       if (displayMode === "expanded") {
-        await applyExpandedGeometry(() => {
-          if (!cancelled) setRenderedFanMode("expanded");
+        const motion = fanMotionEnabled ? beginFanMotion("opening") : null;
+        if (!motion) cancelFanMotion();
+        ownedMotionSequence = motion?.sequence ?? null;
+        await scheduleNativeGeometryTransition(async () => {
+          if (cancelled) return;
+          await applyExpandedGeometry(() => {
+            if (!cancelled) setRenderedFanMode("expanded");
+          });
         });
+        if (cancelled) return;
+        if (motion) {
+          await motion.completion;
+          if (cancelled) return;
+          setFanMotion((current) => current.sequence === motion.sequence
+            ? { phase: "resting", sequence: current.sequence }
+            : current);
+        }
+        if (!nativeHoveredRef.current && !pinnedRef.current && unit.closeRule === "hover-out") {
+          if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+          closeTimerRef.current = window.setTimeout(() => {
+            closeTimerRef.current = null;
+            if (!nativeHoveredRef.current && !pinnedRef.current) setDisplayMode("collapsed");
+          }, 140);
+        }
+        return;
+      }
+      const motion = fanMotionEnabled && renderedFanModeRef.current === "expanded"
+        ? beginFanMotion("closing")
+        : null;
+      ownedMotionSequence = motion?.sequence ?? null;
+      if (motion) {
+        await motion.completion;
+        if (cancelled) return;
       } else {
+        cancelFanMotion();
+      }
+      await scheduleNativeGeometryTransition(async () => {
+        if (cancelled) return;
         setRenderedFanMode("collapsed");
         await waitForAppliedButtonWindowRender();
         if (cancelled) return;
         await applyCollapsedGeometry(collapsedWindowEnvelope.resting);
+      });
+      if (cancelled) return;
+      motionMeasurementsFrozenRef.current = false;
+      if (!cancelled) {
+        setFanMotion((current) => motion && current.sequence !== motion.sequence
+          ? current
+          : { phase: "resting", sequence: current.sequence });
       }
-    });
-    void transition.catch((geometryError) => {
-      setRuntimeError(
-        geometryError instanceof Error ? geometryError.message : String(geometryError)
-      );
+    })().catch((geometryError) => {
+      if (cancelled) return;
+      cancelFanMotion();
+      setRuntimeError(geometryError instanceof Error ? geometryError.message : String(geometryError));
     });
     return () => {
       cancelled = true;
+      const waiter = fanMotionWaiterRef.current;
+      if (ownedMotionSequence !== null && waiter?.sequence === ownedMotionSequence) {
+        fanMotionWaiterRef.current = null;
+        waiter.resolve();
+      }
     };
   }, [
+    beginFanMotion,
+    cancelFanMotion,
     displayMode,
     collapsiblePopout,
     dragging,
+    fanMotionEnabled,
     geometryInitialized,
     geometryRefreshToken,
     scheduleNativeGeometryTransition,
+    unit?.closeRule,
     unit?.id
   ]);
 
@@ -1292,6 +1397,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
 
   const handleNativeHoverChange = useCallback(
     (hovered: boolean) => {
+      nativeHoveredRef.current = hovered;
       if (!unit || dragging || resizing || spaceDragActive) {
         return;
       }
@@ -1342,9 +1448,10 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         !pinned &&
         unit.closeRule === "hover-out"
       ) {
+        if (fanMotionEnabled && fanMotionPhaseRef.current === "opening") return;
         closeTimerRef.current = window.setTimeout(() => {
           closeTimerRef.current = null;
-          setDisplayMode("collapsed");
+          if (!nativeHoveredRef.current && !pinnedRef.current) setDisplayMode("collapsed");
         }, 140);
       }
     },
@@ -1354,6 +1461,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       collapsiblePopout,
       displayMode,
       dragging,
+      fanMotionEnabled,
       pinned,
       resizing,
       spaceDragActive,
@@ -1854,6 +1962,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     placementId: string,
     measurement: ButtonVisualMeasurement
   ) => {
+    if (motionMeasurementsFrozenRef.current && placementId !== savedOwnerPlacement?.id) return;
     const { state, ...geometry } = measurement;
     setCurrentMeasurements((current) => measurementsEqual(current[placementId], geometry)
       ? current
@@ -1872,7 +1981,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         return { ...current, [placementId]: geometry };
       });
     }
-  }, []);
+  }, [savedOwnerPlacement?.id]);
 
   const handlePlacementVisualStateChange = useCallback((
     placementId: string,
@@ -2020,6 +2129,10 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
             programPopoutThemeScreenGeometry={programPopoutThemeScreenGeometry}
             unit={unit}
             displayMode={renderedDisplayMode}
+            motionPhase={fanMotion.phase}
+            motionSequence={fanMotion.sequence}
+            onMotionStart={handleFanMotionStart}
+            onMotionComplete={handleFanMotionComplete}
             surfaceScale={surfaceScale}
             surfaceEnvelope={renderedEnvelope}
             onOwnerActivate={handleOwnerActivate}

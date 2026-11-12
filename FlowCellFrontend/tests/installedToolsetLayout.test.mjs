@@ -15,7 +15,7 @@ import { assignInstalledToolSetSkins, parseInstalledToolSetSkin } from "./.compi
 import { BUTTON_SKIN_SECTION_ORDER, serializeButtonSkinSections } from "./.compiled-button-system/button/skins/buttonSkinFormat.js";
 import { getEmbeddedButtonSkinFamilySources, resolveEmbeddedButtonSkinFamilySource } from "./.compiled-button-system/button/skins/buttonSkinFamily.js";
 import { defaultPanelButtonSize, arrangeDefaultPanelButtons } from "./.compiled-button-system/button/state/buttonPanelDefaults.js";
-import { getChippedConcreteButtonSize } from "./.compiled-button-system/button/skins/chippedConcreteButtonSkin.js";
+import { CHIPPED_CONCRETE_BUTTON_SKIN_ID, getChippedConcreteButtonSize } from "./.compiled-button-system/button/skins/chippedConcreteButtonSkin.js";
 import { panelButtonViewport } from "./.compiled-button-system/pages/main/mainLayout.js";
 import { buttonSpacingPixelsFromMillimeters, createStarterButtonLayout, findFirstAvailableButtonPosition, validateExactButtonLayoutGeometry } from "./.compiled-button-system/button/geometry/buttonGeometry.js";
 
@@ -24,7 +24,7 @@ const parsed = ts.createSourceFile(editorPath, readFileSync(editorPath, "utf8"),
 const names = ["createButtonRecord", "addPlacement", "createSurface", "addInstalledToolSet"];
 const selected = parsed.statements.filter((node) => ts.isFunctionDeclaration(node) && names.includes(node.name?.text)).map((node) => node.getText(parsed)).join("\n");
 const compiled = ts.transpileModule(selected, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-const dependencies = { DEFAULT_BUTTON_SKIN_ID, cloneButtonDocument, createStableButtonId, validateInstalledButtonLayout, resolveInstalledToolFields, assignInstalledToolSetSkins,
+const dependencies = { DEFAULT_BUTTON_SKIN_ID, CHIPPED_CONCRETE_BUTTON_SKIN_ID, cloneButtonDocument, createStableButtonId, validateInstalledButtonLayout, resolveInstalledToolFields, assignInstalledToolSetSkins,
   buttonSpacingPixelsFromMillimeters, createStarterButtonLayout, findFirstAvailableButtonPosition, validateExactButtonLayoutGeometry, defaultPanelButtonSize };
 const addInstalledToolSet = new Function(...Object.keys(dependencies), `${compiled}\nreturn addInstalledToolSet;`)(...Object.values(dependencies));
 
@@ -114,23 +114,25 @@ test("fresh panel grids use visible family widths and the same 8 CSS px Main gap
   assert.ok(placements.at(-1).y > 8, "the test exercises wrapping");
 });
 
-test("explicit grid defaults retain current height, presentation and custom skin sizes", () => {
+test("explicit grid defaults retain neutral and custom placement sizes, height and presentation", () => {
   const document = mergeLegacyInstallsIntoDocument(createButtonStateDocument(), [
     regularInstall("cura", "cura"), regularInstall("custom", "Custom")
   ]);
   const surface = Object.values(document.surfaces).find((candidate) => candidate.kind === "panel");
-  const [family, custom] = surface.placementIds.map((id) => document.placements[id]);
-  Object.assign(family, { x: 700, y: 320, width: 96, height: 37.294964,
+  const [neutral, custom] = surface.placementIds.map((id) => document.placements[id]);
+  assert.equal(neutral.skinOverrideId, null);
+  assert.equal(document.buttons[neutral.buttonId].defaultSkinId, DEFAULT_BUTTON_SKIN_ID);
+  Object.assign(neutral, { x: 700, y: 320, width: 96, height: 37.294964,
     presentationOverride: { label: "orca" } });
   Object.assign(custom, { x: 320, y: 250, width: 123, height: 51, skinOverrideId: DEFAULT_BUTTON_SKIN_ID });
   const skins = structuredClone(document.skins);
   arrangeDefaultPanelButtons(document, surface.id);
-  assert.equal(family.width, 52 * 37.294964 / 37.295);
-  assert.equal(family.height, 37.294964);
-  assert.deepEqual(family.presentationOverride, { label: "orca" });
+  assert.equal(neutral.width, 96, "neutral occurrences retain their saved width instead of receiving a Concrete family width");
+  assert.equal(neutral.height, 37.294964);
+  assert.deepEqual(neutral.presentationOverride, { label: "orca" });
   assert.equal(custom.width, 123);
   assert.equal(custom.height, 51);
-  assert.equal(custom.x, family.x + family.width + 8);
+  assert.equal(custom.x, neutral.x + neutral.width + 8);
   assert.deepEqual(document.skins, skins, "grid defaults never rewrite the authored skin");
   assert.deepEqual(defaultPanelButtonSize(document, document.buttons.custom, custom), { width: 123, height: 51 });
 });

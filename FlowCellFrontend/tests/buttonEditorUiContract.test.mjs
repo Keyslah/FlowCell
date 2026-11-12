@@ -348,7 +348,7 @@ test("Tool Set owners expose one Pop-out Placement and use its Fan checkbox", ()
   );
 });
 
-test("legacy Fan Options exposes and previews a draft-only spinning animation checkbox", () => {
+test("Fan styles sit below the Fan checkbox and preview current and legacy Fans", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const workspace = readEditorFile("ButtonWorkspace.tsx");
 
@@ -358,15 +358,19 @@ test("legacy Fan Options exposes and previews a draft-only spinning animation ch
   );
   assert.match(
     editor,
-    /const setSelectedFanSpinEnabled = useCallback\([\s\S]{0,700}store\.transact\([\s\S]{0,260}target\.animation\.spinEnabled = enabled/
+    /const setSelectedFanSpinEnabled = useCallback\([\s\S]{0,1600}target\.animation\.spinEnabled = enabled/
   );
   assert.match(
     editor,
-    /settingsPlacementKind === "fan" && selectedFanSetup[\s\S]{0,320}checked=\{selectedFanSetup\.animation\.spinEnabled\}[\s\S]{0,320}Spin Buttons as they fan out/
+    /selectedSurfaceShowsOwner \|\| \(settingsPlacementKind === "fan" && selectedFanSetup\)[\s\S]{0,380}checked=\{selectedFanAnimation\?\.spinEnabled \?\? false\}[\s\S]{0,320}Spin Buttons as they fan out/
   );
   assert.match(
     editor,
     /<fieldset className="button-editor-sidebar__fan-styles" disabled=\{busy\}>[\s\S]{0,120}<legend>Fan styles<\/legend>/
+  );
+  assert.equal(
+    editor.indexOf("<span>Fan</span>") < editor.indexOf("<legend>Fan styles</legend>"),
+    true
   );
   assert.equal(
     editor.indexOf("Spin Buttons as they fan out") <
@@ -375,8 +379,11 @@ test("legacy Fan Options exposes and previews a draft-only spinning animation ch
   );
   assert.match(
     workspace,
-    /enabledButtonFanMotionStyles\(fanSetup\?\.animation\)/
+    /enabledButtonFanMotionStyles\(previewFanAnimation\)/
   );
+  assert.match(editor, /target\.fanAnimation = \{[\s\S]{0,180}\.\.\.target\.fanAnimation,[\s\S]{0,80}spinEnabled: enabled/);
+  assert.match(workspace, /fanSetup\?\.animation \?\? \(unitInteractionMode === "fan" \? unit\?\.fanAnimation : undefined\)/);
+  assert.match(workspace, /<ButtonPopoutRenderer[\s\S]{0,220}displayMode=\{displayedFanExpanded \? "expanded" : "collapsed"\}[\s\S]{0,260}onMotionComplete=\{handlePreviewFanMotionComplete\}/);
   assert.match(
     workspace,
     /expanded=\{displayedFanExpanded\}[\s\S]{0,260}motionPhase=\{displayedFanMotionPhase\}[\s\S]{0,180}motionStyles=\{previewFanMotionStyles\}/

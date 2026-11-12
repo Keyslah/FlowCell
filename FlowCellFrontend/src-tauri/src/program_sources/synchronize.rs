@@ -668,7 +668,7 @@ fn synchronize_registered_program_sources(
                 None,
             )),
         };
-        let (operation, status, message, owner_button_id, descriptor) = match outcome {
+        let (operation, status, message, owner_button_id, mut descriptor) = match outcome {
             Ok(result) => result,
             Err(error) => (
                 attempted_operation,
@@ -681,6 +681,20 @@ fn synchronize_registered_program_sources(
                 None,
             ),
         };
+        if !plan.source.display_label.is_empty() {
+            if let Some(descriptor) = descriptor.as_mut() {
+                let previous_label = match &plan.action {
+                    PlannedAction::Current(entry) | PlannedAction::Update(entry) => {
+                        Some(&entry.record.label)
+                    }
+                    _ => None,
+                };
+                descriptor.previous_default_label = previous_label
+                    .filter(|label| **label != plan.source.display_label)
+                    .cloned();
+                descriptor.owner.label = plan.source.display_label.clone();
+            }
+        }
         sources.push(BundledProgramSourceSyncResult {
             program_name: plan.program_name,
             program_id: plan.manifest.program_id,

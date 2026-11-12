@@ -859,6 +859,40 @@ function readLabelTextMeasurement(
   };
 }
 
+function readLabelFitSize(mounted: MountedSkin): { width: number; height: number } {
+  const coreRect = mounted.core.getBoundingClientRect();
+  let width = Number.isFinite(coreRect.width) && coreRect.width > 0 ? coreRect.width : Math.max(1, mounted.core.clientWidth);
+  let height = Number.isFinite(coreRect.height) && coreRect.height > 0 ? coreRect.height : Math.max(1, mounted.core.clientHeight);
+  if (!mounted.labelNode || isSvgElement(mounted.labelNode)) return { width, height };
+
+  // The label's carrier can reserve space inside the core. Fit inside its content
+  // box, preserving the authored padding even under page/skin scaling.
+  for (let parent = mounted.labelNode.parentElement; parent; parent = parent.parentElement) {
+    const style = getComputedStyle(parent);
+    const horizontalInset = (Number.parseFloat(style.paddingLeft) || 0) +
+      (Number.parseFloat(style.paddingRight) || 0) +
+      (Number.parseFloat(style.borderLeftWidth) || 0) +
+      (Number.parseFloat(style.borderRightWidth) || 0);
+    const verticalInset = (Number.parseFloat(style.paddingTop) || 0) +
+      (Number.parseFloat(style.paddingBottom) || 0) +
+      (Number.parseFloat(style.borderTopWidth) || 0) +
+      (Number.parseFloat(style.borderBottomWidth) || 0);
+    if (horizontalInset > 0 || verticalInset > 0) {
+      const rect = parent.getBoundingClientRect();
+      const borderBoxWidth = Number.parseFloat(style.width) + (style.boxSizing === "border-box" ? 0 : horizontalInset);
+      const borderBoxHeight = Number.parseFloat(style.height) + (style.boxSizing === "border-box" ? 0 : verticalInset);
+      if (horizontalInset > 0 && borderBoxWidth > 0 && rect.width > 0) {
+        width = Math.min(width, Math.max(1, rect.width * (borderBoxWidth - horizontalInset) / borderBoxWidth));
+      }
+      if (verticalInset > 0 && borderBoxHeight > 0 && rect.height > 0) {
+        height = Math.min(height, Math.max(1, rect.height * (borderBoxHeight - verticalInset) / borderBoxHeight));
+      }
+    }
+    if (parent === mounted.core) break;
+  }
+  return { width, height };
+}
+
 function applyTextFit(
   mounted: MountedSkin,
   label: string,
@@ -889,13 +923,7 @@ function applyTextFit(
   applyLabelLines(labelNode, [label], textSizeOverride);
   const computed = getComputedStyle(labelNode);
   const naturalFontSize = textSizeOverride ?? (Number.parseFloat(computed.fontSize) || 13);
-  const coreRect = mounted.core.getBoundingClientRect();
-  const maximumWidth = Number.isFinite(coreRect.width) && coreRect.width > 0
-    ? coreRect.width
-    : Math.max(1, mounted.core.clientWidth);
-  const maximumHeight = Number.isFinite(coreRect.height) && coreRect.height > 0
-    ? coreRect.height
-    : Math.max(1, mounted.core.clientHeight);
+  const { width: maximumWidth, height: maximumHeight } = readLabelFitSize(mounted);
   const plan = computeButtonTextFitPlan({
     label,
     mode,

@@ -21,7 +21,8 @@ import {
   orderRaisedKeyPaintSlots
 } from "./.compiled-button-system/button/geometry/buttonGeometry.js";
 import { cloneButtonDocument, createButtonStateDocument } from "./.compiled-button-system/button/state/buttonDefaults.js";
-import { ensureRegularPopout } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
+import { ensureDefaultPanelPopout, ensureRegularPopout } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
+import { applyPanelPopoutPreset } from "./.compiled-button-system/button/state/buttonPanelPopoutPresets.js";
 import { defaultPanelButtonSize } from "./.compiled-button-system/button/state/buttonPanelDefaults.js";
 import { createButtonSourceIdentity } from "./.compiled-button-system/button/state/sourceIdentity.js";
 import { validateButtonStateDocument } from "./.compiled-button-system/button/state/buttonStateValidation.js";
@@ -94,7 +95,8 @@ function mainPopHarness(fixture, selectedIds = []) {
       sandbox.buttonDocumentRef.current = current;
       return current;
     },
-    ensureRegularPopout, cloneButtonDocument, createStarterButtonLayout, buttonSpacingPixelsFromMillimeters, orderButtonRectsByVisualRows,
+    ensureDefaultPanelPopout, ensureRegularPopout, applyPanelPopoutPreset,
+    cloneButtonDocument, createStarterButtonLayout, buttonSpacingPixelsFromMillimeters, orderButtonRectsByVisualRows,
     defaultPanelButtonSize, PANEL_BUTTON_GAP,
     areFolderNamesEqual: (left, right) => left?.trim().toLowerCase() === right?.trim().toLowerCase(),
     openButtonPopoutWindow: async (args) => opened.push(structuredClone(args)),
@@ -114,6 +116,7 @@ function mainPopHarness(fixture, selectedIds = []) {
 
 test("Main Pop opens only highlighted Project even when another multi-Button Pop already exists", async () => {
   const fixture = mainPopFixture();
+  fixture.document.placements["main-Project"].skinOverrideId = "skin-chipped-concrete-family-default";
   const previous = ensureRegularPopout(fixture.document, fixture.ids.map((id) => fixture.document.buttons[id]));
   const original = structuredClone(fixture.document);
   const harness = mainPopHarness(fixture, ["Project"]);
@@ -125,14 +128,29 @@ test("Main Pop opens only highlighted Project even when another multi-Button Pop
   assert.deepEqual(Array.from(unit.memberPlacementIds, (id) => harness.document.placements[id].buttonId), ["Project"]);
   const placement = harness.document.placements[unit.memberPlacementIds[0]];
   const source = original.placements["main-Project"];
-  for (const key of ["width", "height", "skinOverrideId", "textFitMode", "textAlignment", "textOffsetX", "textOffsetY",
-    "minimumFontSize", "textSizeOverride", "matchHitboxToSkin", "highlightOnHover"]) {
-    assert.deepEqual(placement[key], source[key], `Project keeps its authored ${key}`);
+  for (const [key, value] of Object.entries({
+    width: 160, height: 44, skinOverrideId: "skin-default-neutral", textFitMode: "shrink",
+    textAlignment: "skin", textOffsetX: 0, textOffsetY: 0, minimumFontSize: 8,
+    textSizeOverride: null, matchHitboxToSkin: true, highlightOnHover: false
+  })) {
+    assert.deepEqual(placement[key], value, `new Pop uses its own neutral ${key}`);
   }
   assert.deepEqual(harness.document.popoutUnits[previous.id], original.popoutUnits[previous.id]);
   assert.deepEqual(harness.document.placements["main-Project"], source);
+  Object.assign(placement, {
+    x: 28, y: 20, width: 116, height: 40, textOffsetX: 9,
+    skinOverrideId: "skin-chipped-concrete-family-default"
+  });
+  const popupBeforeReopen = structuredClone({
+    placement, unit, surface: harness.document.surfaces[unit.surfaceId]
+  });
   await harness.open();
   assert.equal(harness.opened[1].popoutUnitId, unit.id, "repeated Pop reuses the exact selected unit");
+  assert.deepEqual({
+    placement: harness.document.placements[placement.id],
+    unit: harness.document.popoutUnits[unit.id],
+    surface: harness.document.surfaces[unit.surfaceId]
+  }, popupBeforeReopen, "reopening preserves the Pop's custom skin, size, position and text offset");
 });
 
 test("Main Pop preserves an authored Fan with the same selection and reuses a separate ownerless Pop", async () => {
@@ -179,19 +197,22 @@ for (const count of [2, 8, 9]) {
     assert.equal(harness.opened.length, 1);
     const unit = harness.document.popoutUnits[harness.opened[0].popoutUnitId];
     const placements = Array.from(unit.memberPlacementIds, (id) => harness.document.placements[id]);
-    assert.deepEqual(placements.map((placement) => placement.buttonId), selected, "grid follows Main's visible row order");
-    assert.deepEqual(placements.map((placement) => placement.y), selected.map((_, index) => 8 + Math.floor(index / 4) * 48));
+    assert.deepEqual(new Set(placements.map((placement) => placement.buttonId)), new Set(selected), "Pop includes exactly the selected scripts");
+    assert.deepEqual(placements.map((placement) => placement.y), selected.map((_, index) => 8 + Math.floor(index / 4) * 44));
     assert.equal(new Set(placements.map((placement) => placement.y)).size, Math.ceil(count / 4));
     for (let index = 0; index < placements.length; index += 1) {
       const placement = placements[index];
-      const source = fixture.document.placements[`main-${placement.buttonId}`];
-      assert.deepEqual([placement.width, placement.height], [source.width, source.height]);
-      const expectedX = index % 4 === 0 ? 8 : placements[index - 1].x + placements[index - 1].width + 8;
-      assert.equal(placement.x, expectedX, "adjacent grid Buttons have the same 8 CSS px gap as Main");
+      assert.deepEqual([placement.width, placement.height], [160, 44]);
+      assert.equal(placement.skinOverrideId, "skin-default-neutral");
+      const expectedX = index % 4 === 0 ? 8 : placements[index - 1].x + placements[index - 1].width;
+      assert.equal(placement.x, expectedX, "fresh selected Pops use the document's 0 mm spacing");
     }
     const surface = harness.document.surfaces[unit.surfaceId];
-    assert.equal(surface.width, count === 2 ? 248 : 520);
-    assert.equal(surface.height, 16 + Math.ceil(count / 4) * 40 + (Math.ceil(count / 4) - 1) * 8);
+    assert.equal(surface.width, count === 2 ? 336 : 656);
+    assert.equal(surface.height, 16 + Math.ceil(count / 4) * 44);
+    for (const id of selected) {
+      assert.deepEqual(harness.document.placements[`main-${id}`], fixture.document.placements[`main-${id}`], "Pop creation preserves Main presentation");
+    }
     assert.deepEqual(JSON.parse(JSON.stringify(unit.canonicalBounds)), { x: 0, y: 0, width: surface.width, height: surface.height });
   });
 }

@@ -10,6 +10,7 @@ import type {
   ButtonStateDocument,
   ButtonSurface
 } from "../types.js";
+import { CHIPPED_CONCRETE_BUTTON_SKIN_ID } from "../skins/chippedConcreteButtonSkin.js";
 
 export const FLOWCELL_MAIN_PAGE_PROGRAM = "FlowCell Main Page";
 
@@ -299,7 +300,7 @@ export function ensureFlowCellMainPageButtons(
         tooltip: entry.button.tooltip ?? "",
         executionTarget: null,
         defaultSkinId: document.settings.defaultSkinId,
-        defaultTextFitMode: "shrink-and-stack",
+        defaultTextFitMode: "shrink",
         disabled: false,
         activationAnimation: null,
         activationBehavior: null,
@@ -357,8 +358,8 @@ export function ensureFlowCellMainPageButtons(
         width: entry.button.width,
         height: entry.button.height,
         zIndex: document.surfaces[targetSurfaceId].placementIds.length,
-        skinOverrideId: null,
-        textFitMode: "shrink-and-stack",
+        skinOverrideId: CHIPPED_CONCRETE_BUTTON_SKIN_ID,
+        textFitMode: "shrink",
         textAlignment: "skin",
         textOffsetX: 0,
         textOffsetY: 0,

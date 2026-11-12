@@ -96,6 +96,55 @@ pub(crate) struct AppliedProgramSetup {
     pub(crate) install_effects: Vec<String>,
 }
 
+const PROGRAM_SETUP_PROGRESS_EVENT: &str = "flowcell:program-setup-progress";
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgramSetupProgressEvent<'a> {
+    operation: &'a str,
+    program_name: &'a str,
+    stage: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completed_sources: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_sources: Option<usize>,
+    elapsed_ms: u128,
+}
+
+pub(super) struct ProgramSetupProgress {
+    window: Option<tauri::WebviewWindow>,
+    operation: &'static str,
+    program_name: String,
+    started: Instant,
+}
+
+impl ProgramSetupProgress {
+    pub(super) fn new(window: Option<&tauri::WebviewWindow>, operation: &'static str, program_name: &str) -> Self {
+        Self { window: window.cloned(), operation, program_name: program_name.to_string(), started: Instant::now() }
+    }
+
+    pub(super) fn set_program_name(&mut self, program_name: &str) {
+        self.program_name = program_name.to_string();
+    }
+
+    pub(super) fn stage(&self, stage: &str, sources: Option<(usize, usize)>) {
+        let payload = ProgramSetupProgressEvent {
+            operation: self.operation,
+            program_name: &self.program_name,
+            stage,
+            completed_sources: sources.map(|(completed, _)| completed),
+            total_sources: sources.map(|(_, total)| total),
+            elapsed_ms: self.started.elapsed().as_millis(),
+        };
+        if let Ok(message) = serde_json::to_string(&payload) {
+            append_flowcell_local_log("program-setup.log", &message);
+        }
+        if let Some(window) = &self.window {
+            let _ = window.app_handle().emit_to(window.label(), PROGRAM_SETUP_PROGRESS_EVENT, payload);
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AddPanelPlanRequest {
@@ -1976,7 +2025,7 @@ pub(super) fn validate_available_program_package(
     validate_available_program_package_at(&program_root, &manifest)
 }
 
-fn validate_available_program_package_at(
+pub(super) fn validate_available_program_package_at(
     program_root: &Path,
     manifest: &program_sources::manifest::ProgramManifest,
 ) -> Result<AvailableProgramPackage, String> {
@@ -2123,8 +2172,11 @@ fn is_core_program_placeholder(programs_root: &Path, folder_name: &str) -> bool 
 }
 
 #[tauri::command]
-pub(crate) fn list_available_program_packages() -> Result<AvailableProgramPackagesResponse, String>
-{
+pub(crate) async fn list_available_program_packages() -> Result<AvailableProgramPackagesResponse, String> {
+    run_add_program_blocking("inventory", list_available_program_packages_inner).await
+}
+
+fn list_available_program_packages_inner() -> Result<AvailableProgramPackagesResponse, String> {
     let programs_root = resolve_programs_root()?;
     let available = list_child_directory_names(&programs_root)?;
     let (_, bindings, _) = read_bindings_file_state()?;
@@ -2302,10 +2354,15 @@ fn preflight_add_program_plan_inner(
 }
 
 #[tauri::command]
-pub(crate) fn preflight_add_program_plan(
+pub(crate) async fn preflight_add_program_plan(
+    window: tauri::WebviewWindow,
     request: AddProgramPlanRequest,
 ) -> Result<AddProgramPreflight, String> {
-    preflight_add_program_plan_inner(&request)
+    run_add_program_blocking("preflight", move || {
+        let progress = ProgramSetupProgress::new(Some(&window), "install", &request.program_name);
+        progress.stage("Checking the selected program…", None);
+        preflight_add_program_plan_inner(&request)
+    }).await
 }
 
 const ADD_PROGRAM_TRANSACTION_SCHEMA_VERSION: u32 = 1;
@@ -2359,6 +2416,8 @@ struct AddProgramTransactionJournal {
     planned_sources: Vec<PlannedProgramSourceOwner>,
     #[serde(default)]
     expected_button_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prepared_setup_result: Option<ProgramSetupResult>,
 }
 
 fn add_program_transactions_root() -> Result<PathBuf, String> {
@@ -2829,6 +2888,7 @@ fn install_add_program_sources_while_source_locked(
     manifest: &program_sources::manifest::ProgramManifest,
     program_root: &Path,
     source_guard: &std::sync::MutexGuard<'static, ()>,
+    progress: Option<&ProgramSetupProgress>,
 ) -> Result<Vec<program_sources::install::InstallButtonSourceResponse>, String> {
     if preflight.sources.len() != planned_sources.len() {
         return Err(
@@ -2837,6 +2897,9 @@ fn install_add_program_sources_while_source_locked(
     }
     let mut descriptors = Vec::with_capacity(preflight.sources.len());
     for (source, planned) in preflight.sources.iter().zip(planned_sources) {
+        if let Some(progress) = progress {
+            progress.stage(&format!("Installing {}…", source.label), Some((descriptors.len(), preflight.sources.len())));
+        }
         let declared = manifest
             .bundled_sources
             .iter()
@@ -2864,6 +2927,9 @@ fn install_add_program_sources_while_source_locked(
                 source_guard,
             )?,
         );
+    }
+    if let Some(progress) = progress {
+        progress.stage("Selected buttons installed.", Some((descriptors.len(), preflight.sources.len())));
     }
     Ok(descriptors)
 }
@@ -3393,10 +3459,34 @@ mod program_setup_status_tests {
     }
 }
 
+fn reusable_prepared_program_setup(
+    journal: &AddProgramTransactionJournal,
+    normal_finalization: bool,
+) -> Option<ProgramSetupResult> {
+    // Recovery deliberately reruns the deployment adapter. Only a live successful
+    // apply, durably recorded before canonical publication, can skip its duplicate.
+    if !normal_finalization
+        || journal.phase != AddProgramTransactionPhase::AwaitingCanonical
+        || journal.preflight.sources.is_empty()
+        || journal.request.create_plain_program
+    {
+        return None;
+    }
+    journal.prepared_setup_result.as_ref().filter(|result| {
+        result.program_name == journal.preflight.program_name
+            && result.status == ProgramSetupState::Ready
+    }).cloned()
+}
+
 fn finalize_add_program_transaction(
     root: &Path,
     journal: &mut AddProgramTransactionJournal,
+    reuse_prepared_setup: bool,
+    progress: Option<&ProgramSetupProgress>,
 ) -> Result<ProgramSetupResult, String> {
+    if let Some(progress) = progress {
+        progress.stage("Verifying the installed panels and buttons…", None);
+    }
     {
         let _source_guard = program_sources::source_quarantine_guard()?;
         let _bindings_guard = super::bindings::bindings_state_guard()?;
@@ -3407,11 +3497,22 @@ fn finalize_add_program_transaction(
     let restart_notes = [&manifest.addon_reload_notes, &manifest.app_restart_notes]
         .into_iter().map(|note| note.trim()).filter(|note| !note.is_empty()).collect::<Vec<_>>().join("\n");
     let setup_result = match manifest.runner.kind.as_str() {
-        "blender-bridge" => bootstrap_blender_program(
-                &journal.preflight.program_name,
-                Some(&journal.preflight.executable_path),
-            )?,
+        "blender-bridge" => match reusable_prepared_program_setup(journal, reuse_prepared_setup) {
+            Some(result) => result,
+            None => {
+                if let Some(progress) = progress {
+                    progress.stage("Completing the Blender connection setup…", None);
+                }
+                bootstrap_blender_program(
+                    &journal.preflight.program_name,
+                    Some(&journal.preflight.executable_path),
+                )?
+            }
+        },
         "fusion-bridge" => {
+            if let Some(progress) = progress {
+                progress.stage("Completing the Fusion 360 connection setup…", None);
+            }
             let message = bootstrap_fusion_program(
                 &journal.preflight.program_name,
                 Some(&journal.preflight.executable_path),
@@ -3430,7 +3531,13 @@ fn finalize_add_program_transaction(
             restart_notes,
         },
     };
+    if let Some(progress) = progress {
+        progress.stage("Restarting the FlowCell background service…", None);
+    }
     restart_flowcell_headless_backend()?;
+    if let Some(progress) = progress {
+        progress.stage("Saving program setup completion…", None);
+    }
     {
         let _source_guard = program_sources::source_quarantine_guard()?;
         let _bindings_guard = super::bindings::bindings_state_guard()?;
@@ -3472,21 +3579,26 @@ async fn run_add_program_blocking<T: Send + 'static>(
 #[tauri::command]
 pub(crate) async fn apply_add_program_plan(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     request: AddProgramPlanRequest,
 ) -> Result<AppliedProgramSetup, String> {
-    run_add_program_blocking("apply", move || apply_add_program_plan_inner(app, request)).await
+    run_add_program_blocking("apply", move || apply_add_program_plan_inner(app, window, request)).await
 }
 
 fn apply_add_program_plan_inner(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     request: AddProgramPlanRequest,
 ) -> Result<AppliedProgramSetup, String> {
+    let progress = ProgramSetupProgress::new(Some(&window), "install", &request.program_name);
+    progress.stage("Waiting to begin program setup…", None);
     let lock = ADD_PROGRAM_TRANSACTION_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock
         .lock()
         .map_err(|_| "Add Program transaction lock was poisoned.".to_string())?;
     let source_guard = program_sources::source_quarantine_guard()?;
     let bindings_guard = super::bindings::bindings_state_guard()?;
+    progress.stage("Checking the selected program and buttons…", None);
     let preflight = preflight_add_program_plan_inner(&request)?;
     let creates_plain_program = request.create_plain_program;
     let (program_root, manifest) = if creates_plain_program {
@@ -3587,6 +3699,7 @@ fn apply_add_program_plan_inner(
         created_program_package_manifest,
         planned_sources,
         expected_button_ids: Vec::new(),
+        prepared_setup_result: None,
     };
     write_add_program_journal(
         &transaction_root,
@@ -3625,8 +3738,10 @@ fn apply_add_program_plan_inner(
             enabled_state.clone(),
         )?;
         if !preflight.sources.is_empty() && manifest.runner.kind == "blender-bridge" {
+            progress.stage("Installing the Blender connection…", None);
             let setup = bootstrap_blender_program(&preflight.program_name, Some(&preflight.executable_path))?;
             require_initialized_setup_for_sources(&setup)?;
+            journal.prepared_setup_result = Some(setup);
         }
         install_add_program_sources_while_source_locked(
             &preflight,
@@ -3634,6 +3749,7 @@ fn apply_add_program_plan_inner(
             &manifest,
             &program_root,
             &source_guard,
+            Some(&progress),
         )
     })();
     drop(bindings_guard);
@@ -4028,17 +4144,19 @@ fn prepare_add_program_canonical_commit_inner(
 }
 
 #[tauri::command]
-pub(crate) async fn finalize_add_program_plan(transaction_token: String) -> Result<ProgramSetupResult, String> {
-    run_add_program_blocking("finalize", move || finalize_add_program_plan_inner(transaction_token)).await
+pub(crate) async fn finalize_add_program_plan(window: tauri::WebviewWindow, transaction_token: String) -> Result<ProgramSetupResult, String> {
+    run_add_program_blocking("finalize", move || finalize_add_program_plan_inner(window, transaction_token)).await
 }
 
-fn finalize_add_program_plan_inner(transaction_token: String) -> Result<ProgramSetupResult, String> {
+fn finalize_add_program_plan_inner(window: tauri::WebviewWindow, transaction_token: String) -> Result<ProgramSetupResult, String> {
     let lock = ADD_PROGRAM_TRANSACTION_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock
         .lock()
         .map_err(|_| "Add Program transaction lock was poisoned.".to_string())?;
     let root = locate_add_program_transaction(&transaction_token)?;
     let mut journal = read_add_program_journal(&root)?;
+    let progress = ProgramSetupProgress::new(Some(&window), "install", &journal.preflight.program_name);
+    progress.stage("Completing program setup…", None);
     if journal.phase != AddProgramTransactionPhase::AwaitingCanonical {
         return Err("Add Program transaction is not awaiting canonical state.".to_string());
     }
@@ -4048,7 +4166,9 @@ fn finalize_add_program_plan_inner(transaction_token: String) -> Result<ProgramS
                 .to_string(),
         );
     }
-    finalize_add_program_transaction(&root, &mut journal)
+    let result = finalize_add_program_transaction(&root, &mut journal, true, Some(&progress))?;
+    progress.stage("Program setup complete.", None);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -4084,7 +4204,7 @@ fn rollback_add_program_plan_inner(
     if journal.phase == AddProgramTransactionPhase::AwaitingCanonical
         && canonical_matches_add_program(&journal)?
     {
-        finalize_add_program_transaction(&root, &mut journal)?;
+        finalize_add_program_transaction(&root, &mut journal, false, None)?;
         return Ok("finalized".to_string());
     }
     if journal.phase == AddProgramTransactionPhase::Committed {
@@ -4129,7 +4249,7 @@ pub(crate) fn recover_add_program_transactions_on_startup(
             AddProgramTransactionPhase::AwaitingCanonical
                 if canonical_matches_add_program(&journal)? =>
             {
-                finalize_add_program_transaction(&root, &mut journal)?;
+                finalize_add_program_transaction(&root, &mut journal, false, None)?;
             }
             AddProgramTransactionPhase::Prepared
             | AddProgramTransactionPhase::NativeApplied
@@ -6312,13 +6432,13 @@ mod managed_program_setup_tests {
         mark_add_program_native_applied, preflight_add_program_plan_inner,
         preview_plain_program_package_in, read_add_program_journal,
         recover_planned_active_record_path, recycle_owned_add_panel_destination_with,
-        resolve_programs_root, stable_program_id, validate_available_program_package,
+        resolve_programs_root, reusable_prepared_program_setup, stable_program_id, validate_available_program_package,
         validate_available_program_package_at, validate_external_panel_source,
         validate_plain_program_package_tree_in, write_add_panel_marker, write_add_program_journal,
         AddPanelPreflight, AddPanelTransactionJournal, AddPanelTransactionPhase,
         AddProgramPlanRequest, AddProgramPreflight, AddProgramSourceSelection,
         AddProgramTransactionJournal, AddProgramTransactionPhase, PlannedProgramSourceOwner,
-        ProgramSetupSource, ADD_PANEL_TRANSACTION_SCHEMA_VERSION,
+        ProgramSetupResult, ProgramSetupSource, ProgramSetupState, ADD_PANEL_TRANSACTION_SCHEMA_VERSION,
         ADD_PROGRAM_TRANSACTION_SCHEMA_VERSION, PLAIN_PROGRAM_PACKAGE_MARKER_FILE_NAME,
     };
     use crate::program_sources::execute::ActiveSourceResolution;
@@ -6634,6 +6754,7 @@ mod managed_program_setup_tests {
             created_program_package_manifest: Some(manifest_body),
             planned_sources: Vec::new(),
             expected_button_ids: Vec::new(),
+            prepared_setup_result: None,
         };
         validate_plain_program_package_tree_in(&programs_root, &transaction_root, &journal, true)
             .expect("exact generated package must validate");
@@ -7101,6 +7222,7 @@ mod managed_program_setup_tests {
             created_program_package_manifest: None,
             planned_sources: planned_sources.clone(),
             expected_button_ids: Vec::new(),
+            prepared_setup_result: None,
         };
         write_add_program_journal(
             &transaction_root,
@@ -7117,6 +7239,7 @@ mod managed_program_setup_tests {
             &manifest,
             &program_root,
             &source_guard,
+            None,
         )
         .expect("selected source install returns while outer source guard is held");
         assert_eq!(descriptors.len(), 1);
@@ -7131,6 +7254,24 @@ mod managed_program_setup_tests {
                 .phase,
             AddProgramTransactionPhase::NativeApplied
         );
+        journal.phase = AddProgramTransactionPhase::AwaitingCanonical;
+        journal.prepared_setup_result = Some(ProgramSetupResult {
+            program_name: preflight.program_name.clone(),
+            status: ProgramSetupState::Ready,
+            message: "Connection installed before selected sources.".to_string(),
+            restart_notes: "Restart Blender once.".to_string(),
+        });
+        let mut legacy = serde_json::to_value(&journal).expect("serialize setup journal");
+        legacy.as_object_mut().unwrap().remove("preparedSetupResult");
+        let legacy: AddProgramTransactionJournal = serde_json::from_value(legacy).expect("old setup journal remains readable");
+        assert!(reusable_prepared_program_setup(&legacy, true).is_none());
+        assert!(reusable_prepared_program_setup(&journal, false).is_none(), "startup and rollback recovery must rerun setup");
+        assert!(reusable_prepared_program_setup(&journal, true).is_some());
+        journal.prepared_setup_result.as_mut().unwrap().status = ProgramSetupState::NeedsHostInitialization;
+        assert!(reusable_prepared_program_setup(&journal, true).is_none());
+        journal.prepared_setup_result.as_mut().unwrap().status = ProgramSetupState::Ready;
+        journal.prepared_setup_result.as_mut().unwrap().program_name = "Another program".to_string();
+        assert!(reusable_prepared_program_setup(&journal, true).is_none());
     }
 
     #[test]

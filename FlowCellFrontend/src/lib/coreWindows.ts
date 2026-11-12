@@ -299,7 +299,7 @@ export async function openMacroLabWindow(args: {
 export const openAddProgramWindow = () => openCoreWindow({
   label: "flowcell-add-program",
   context: { kind: "add-program" },
-  title: "FlowCell - Add Program",
+  title: "FlowCell - Installation",
   width: 1120,
   height: 820,
   minimumWidth: 820,
