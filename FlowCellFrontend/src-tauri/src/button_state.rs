@@ -2148,6 +2148,50 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn button_state_coordinates_survive_command_and_file_round_trips() {
+        // These Main header coordinates previously lost one floating-point bit
+        // during native parsing, making every editor open save them again.
+        let request: super::CommitButtonStateRequest = serde_json::from_str(r#"{
+            "document": {
+                "schemaVersion": 1,
+                "revision": 2,
+                "buttons": {
+                    "min": {"metadata": {"mainPageDefaultRect": {"x": 902.4640440000001}}},
+                    "max": {"metadata": {"mainPageDefaultRect": {"x": 1009.4640440000001}}}
+                },
+                "placements": {
+                    "min": {"x": 902.4640440000001},
+                    "max": {"x": 1009.4640440000001}
+                }
+            },
+            "expectedRevision": 1
+        }"#).unwrap();
+        let assert_coordinates = |document: &Value| {
+            for (id, expected) in [("min", 902.4640440000001_f64), ("max", 1009.4640440000001_f64)] {
+                for actual in [
+                    &document["buttons"][id]["metadata"]["mainPageDefaultRect"]["x"],
+                    &document["placements"][id]["x"],
+                ] {
+                    assert_eq!(actual.as_f64().unwrap().to_bits(), expected.to_bits(),
+                        "{id} must retain its exact coordinate across editor opens");
+                }
+            }
+        };
+        assert_coordinates(&request.document);
+
+        let root = button_placement_test_root("state-coordinate-round-trip");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("button-state.json");
+        let mut document = request.document;
+        for _ in 0..3 {
+            fs::write(&path, serde_json::to_string_pretty(&document).unwrap()).unwrap();
+            document = read_button_state_document(&path).unwrap();
+            assert_coordinates(&document);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn button_state_worker_yields_while_source_quarantine_is_locked() {
         use std::future::Future;
         use std::sync::mpsc;

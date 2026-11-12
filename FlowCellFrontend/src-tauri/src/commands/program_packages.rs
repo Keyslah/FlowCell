@@ -2,8 +2,11 @@
 use crate::program_sources::manifest::{self, ProgramManifest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
+    io::Read,
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -17,6 +20,22 @@ const EXTRACTOR: &str =
     include_str!("../../../../flowcellbackend/helpers/Expand-FlowCellProgramPackage.ps1");
 static IMPORT_LOCK: Mutex<()> = Mutex::new(());
 static IMPORT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const PACKAGE_INVENTORY_FILE: &str = "flowcell.package.json";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProgramPackageInventory {
+    schema_version: u32,
+    program_id: String,
+    files: BTreeMap<String, ProgramPackageFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProgramPackageFile {
+    sha256: String,
+    bytes: u64,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -258,6 +277,11 @@ fn validate_staged_package(root: &Path, name: &str) -> Result<(), String> {
         serde_json::from_value(read_json(&root.join("flowcell.program.json"))?)
             .map_err(|e| format!("Invalid program manifest: {e}"))?;
     manifest::validate_manifest(&mut manifest, name, root)?;
+    validate_package_inventory(root, &manifest)?;
+    // An invalid or unsupported default must fail while this is still a disposable
+    // staging folder. Committing first would strand a package that Add Program
+    // cannot use and that subsequent imports correctly refuse to overwrite.
+    super::theme_archive::read_program_default_theme(root, &manifest)?;
     let mutable = [&manifest.panels_folder, &manifest.local_scripts_folder];
     for relative in mutable {
         if manifest::resolve_manifest_folder(root, relative, "mutable folder")?.exists() {
@@ -307,6 +331,88 @@ fn validate_staged_package(root: &Path, name: &str) -> Result<(), String> {
         )?
         .ok_or("Bundled source path is empty.")?;
         validate_source_files(&manifest, &path, &source.import_kind)?;
+    }
+    Ok(())
+}
+
+fn validate_package_inventory(root: &Path, manifest: &ProgramManifest) -> Result<(), String> {
+    let path = root.join(PACKAGE_INVENTORY_FILE);
+    if !path.exists() {
+        return Ok(()); // Legacy releases predate the integrity inventory.
+    }
+    plain_path(&path)?;
+    if fs::metadata(&path).map_err(|error| error.to_string())?.len() > 16 * 1024 * 1024 {
+        return Err("Program package inventory exceeds 16 MiB.".into());
+    }
+    let inventory: ProgramPackageInventory = serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?)
+        .map_err(|error| format!("Invalid Program package inventory: {error}"))?;
+    if inventory.schema_version != 1 {
+        return Err(format!("Unsupported Program package inventory schemaVersion {}.", inventory.schema_version));
+    }
+    if inventory.program_id != manifest.program_id {
+        return Err("Program package inventory belongs to a different Program.".into());
+    }
+    if inventory.files.is_empty() || inventory.files.len() > 25000
+        || !inventory.files.contains_key("flowcell.program.json") {
+        return Err("Program package inventory must list 1 to 25000 files including flowcell.program.json.".into());
+    }
+    let mut folded = BTreeSet::new();
+    let mut expected_bytes = 0u64;
+    for (relative, file) in &inventory.files {
+        let normalized = manifest::normalize_relative_manifest_path(relative, "package inventory path", false)?;
+        if normalized.replace('\\', "/") != *relative || relative == PACKAGE_INVENTORY_FILE
+            || relative.encode_utf16().count() > 4096 || relative.contains('\\') || relative.split('/').any(|part| {
+                let stem = part.split('.').next().unwrap_or("").to_ascii_uppercase();
+                let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+                    || stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT"))
+                        .is_some_and(|suffix| matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
+                part.is_empty() || part == "." || part == ".." || part.encode_utf16().count() > 255
+                    || part.ends_with('.') || part.ends_with(' ') || reserved
+                    || part.chars().any(|character| character.is_control() || matches!(character, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
+            }) || !folded.insert(relative.to_ascii_lowercase()) {
+            return Err(format!("Program package inventory has an unsafe or duplicate path: {relative}"));
+        }
+        if file.sha256.len() != 64 || !file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
+            return Err(format!("Program package inventory has an invalid SHA-256 for '{relative}'."));
+        }
+        if file.bytes > 128 * 1024 * 1024 {
+            return Err(format!("Program package inventory file '{relative}' exceeds 128 MiB."));
+        }
+        expected_bytes = expected_bytes.checked_add(file.bytes).ok_or("Program package inventory size overflow.")?;
+        if expected_bytes > 1024 * 1024 * 1024 {
+            return Err("Program package inventory exceeds 1024 MiB.".into());
+        }
+    }
+    let mut seen = BTreeSet::new();
+    let mut buffer = [0u8; 65536];
+    for path in tree_paths(root)? {
+        if path.is_dir() { continue; }
+        let relative = path.strip_prefix(root).map_err(|error| error.to_string())?.to_string_lossy().replace('\\', "/");
+        if relative == PACKAGE_INVENTORY_FILE { continue; }
+        let expected = inventory.files.get(&relative)
+            .ok_or_else(|| format!("Program package contains an unlisted file: {relative}"))?;
+        if fs::metadata(&path).map_err(|error| error.to_string())?.len() != expected.bytes {
+            return Err(format!("Program package file '{relative}' failed size validation."));
+        }
+        let mut input = fs::File::open(&path).map_err(|error| error.to_string())?;
+        let mut digest = Sha256::new();
+        let mut bytes = 0u64;
+        loop {
+            let read = input.read(&mut buffer).map_err(|error| error.to_string())?;
+            if read == 0 { break; }
+            bytes += read as u64;
+            if bytes > expected.bytes {
+                return Err(format!("Program package file '{relative}' changed during validation."));
+            }
+            digest.update(&buffer[..read]);
+        }
+        if bytes != expected.bytes || format!("{:x}", digest.finalize()) != expected.sha256 {
+            return Err(format!("Program package file '{relative}' failed SHA-256 validation."));
+        }
+        seen.insert(relative);
+    }
+    if let Some(missing) = inventory.files.keys().find(|relative| !seen.contains(*relative)) {
+        return Err(format!("Program package is missing an inventoried file: {missing}"));
     }
     Ok(())
 }
@@ -592,6 +698,100 @@ mod tests {
         fs::write(bundle.join("flowcell.program.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
         fs::write(bundle.join("Catalog/action.ps1"), "throw 'catalog scripts must not execute at startup'").unwrap();
         bundle
+    }
+
+    fn write_inventory(root: &Path, program_id: &str) -> Value {
+        let mut files = serde_json::Map::new();
+        for path in tree_paths(root).unwrap().into_iter().filter(|path| path.is_file()) {
+            let relative = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+            if relative == PACKAGE_INVENTORY_FILE { continue; }
+            let bytes = fs::read(path).unwrap();
+            files.insert(relative, serde_json::json!({"bytes":bytes.len(),"sha256":format!("{:x}",Sha256::digest(&bytes))}));
+        }
+        let inventory = serde_json::json!({"schemaVersion":1,"programId":program_id,"files":files});
+        fs::write(root.join(PACKAGE_INVENTORY_FILE), serde_json::to_vec(&inventory).unwrap()).unwrap();
+        inventory
+    }
+
+    #[test]
+    fn package_inventory_detects_changed_missing_and_unlisted_files_before_commit() {
+        let root = temporary();
+        let bundle = windows_bundle(&root);
+        validate_staged_package(&bundle, "Windows").expect("legacy catalogs remain supported");
+        let source = bundle.join("Catalog/action.ps1");
+        fs::write(&source, b"original").unwrap();
+        write_inventory(&bundle, "windows");
+        validate_staged_package(&bundle, "Windows").unwrap();
+
+        fs::write(&source, b"modified").unwrap();
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("SHA-256"));
+        fs::write(&source, b"size changed").unwrap();
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("size validation"));
+        fs::write(&source, b"original").unwrap();
+        fs::write(bundle.join("Support/unlisted.txt"), b"untracked addition").unwrap();
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("unlisted file"));
+        fs::remove_file(bundle.join("Support/unlisted.txt")).unwrap();
+        fs::remove_file(source).unwrap();
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("missing an inventoried file"));
+        assert!(!root.join("Programs").exists());
+        fs::remove_dir_all(root).expect("remove only this task-created test fixture");
+    }
+
+    #[test]
+    fn package_inventory_rejects_future_schemas_wrong_programs_and_ambiguous_paths() {
+        let root = temporary();
+        let bundle = windows_bundle(&root);
+        let original = write_inventory(&bundle, "windows");
+        let write = |value: &Value| fs::write(bundle.join(PACKAGE_INVENTORY_FILE), serde_json::to_vec(value).unwrap()).unwrap();
+        let mut invalid = original.clone(); invalid["schemaVersion"] = 2.into(); write(&invalid);
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("schemaVersion 2"));
+        let mut invalid = original.clone(); invalid["programId"] = "different".into(); write(&invalid);
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("different Program"));
+        let mut invalid = original.clone(); invalid["newRequiredCapability"] = true.into(); write(&invalid);
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("unknown field"));
+        let mut invalid = original.clone(); invalid["files"]["Catalog/action.ps1"]["bytes"] = (-1).into(); write(&invalid);
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("Invalid Program package inventory"));
+        for path in ["../escape", "C:/escape", "Catalog\\action.ps1", "Catalog//action.ps1", "Catalog/./action.ps1",
+            "Catalog/NUL.txt", "Catalog/a:stream", "Catalog/CONIN$", "Catalog/COM¹.txt", "Catalog/trailing.", "Catalog/trailing ",
+            "catalog/action.ps1", "flowcell.package.json"] {
+            let mut invalid = original.clone();
+            invalid["files"][path] = original["files"]["Catalog/action.ps1"].clone(); write(&invalid);
+            assert!(validate_staged_package(&bundle, "Windows").is_err(), "accepted {path}");
+        }
+        let mut invalid = original; invalid["files"]["Catalog/action.ps1"]["sha256"] = "A".repeat(64).into(); write(&invalid);
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("invalid SHA-256"));
+        assert!(!root.join("Programs").exists());
+        fs::remove_dir_all(root).expect("remove only this task-created test fixture");
+    }
+
+    #[test]
+    fn packaged_appearance_versions_and_dependencies_are_checked_before_commit() {
+        let root = temporary();
+        let bundle = windows_bundle(&root);
+        let manifest_path = bundle.join("flowcell.program.json");
+        let mut manifest = read_json(&manifest_path).unwrap();
+        manifest["defaultTheme"] = "Support/appearance.json".into();
+        manifest["bundledSources"] = serde_json::json!([{"id":"windows.action","version":"1.0.0","panelName":"Tools", "sourcePath":"Catalog/action.ps1","importKind":"script"}]);
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let appearance_path = bundle.join("Support/appearance.json");
+        let valid = serde_json::json!({"kind":"FlowCellPortableTheme","version":1,
+            "target":{"kind":"program","programName":"Windows","panelName":null},"contributions":{},
+            "dependencies":[{"id":"source-0","programId":"windows","programName":"Windows","panelName":"Tools",
+                "sourceId":"windows.action","sourceVersion":"1.0.0","importKind":"script"}]});
+        fs::write(&appearance_path, serde_json::to_vec(&valid).unwrap()).unwrap();
+        validate_staged_package(&bundle, "Windows").unwrap();
+        let mut invalid = valid.clone(); invalid["version"] = 2.into();
+        fs::write(&appearance_path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("Unsupported portable theme"));
+        let mut invalid = valid; invalid["dependencies"][0]["sourceVersion"] = "2.0.0".into();
+        fs::write(&appearance_path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("matching packaged source"));
+        fs::write(&appearance_path, br#"{"kind":"FlowCellProgramAppearance","version":2}"#).unwrap();
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("Unsupported packaged Program appearance"));
+        fs::write(&appearance_path, b"not json").unwrap();
+        assert!(validate_staged_package(&bundle, "Windows").is_err());
+        assert!(!root.join("Programs").exists());
+        fs::remove_dir_all(root).expect("remove only this task-created test fixture");
     }
 
     #[test]

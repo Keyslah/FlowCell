@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "blender.snap-grid",
+  "label": "Grid",
+  "tooltip": "Toggle Grid snap between moving the selection to the grid and moving the cursor to the grid.",
+  "program": "Blender",
+  "source": "snap.py",
+  "bridgeData": {
+    "command": "grid"
+  }
+}

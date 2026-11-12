@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "blender.snap-offset",
+  "label": "Offset",
+  "tooltip": "Move the selection to the cursor while keeping the selection offset.",
+  "program": "Blender",
+  "source": "snap.py",
+  "bridgeData": {
+    "command": "offset"
+  }
+}

@@ -2,17 +2,10 @@
 
 
 
-
-
 import bpy
 
 
 INCHES_PER_METER = 39.37007874015748
-DIMENSION_COMMANDS = {
-    "dimension_x": ("x", "X"),
-    "dimension_y": ("y", "Y"),
-    "dimension_z": ("z", "Z"),
-}
 
 
 def _ctx(context=None):
@@ -52,34 +45,7 @@ def _format_inches(value):
     return text or "0"
 
 
-def _requested_command(data=None):
-    if not isinstance(data, dict):
-        return ""
-    value = data.get("command") or data.get("action") or ""
-    return str(value).strip().lower()
-
-
-def _unsupported_command_result(command):
-    expected = ", ".join(DIMENSION_COMMANDS)
-    if command:
-        message = f"Unknown dimensions command '{command}'. Expected {expected}."
-    else:
-        message = f"Missing dimensions command. Expected {expected}."
-    return _result(
-        "error",
-        message,
-        command=command,
-        supportedCommands=list(DIMENSION_COMMANDS),
-    )
-
-
-def _dimension_payload(context=None, data=None):
-    command = _requested_command(data)
-    axis_spec = DIMENSION_COMMANDS.get(command)
-    if axis_spec is None:
-        return _unsupported_command_result(command)
-
-    axis_key, axis_label = axis_spec
+def _dimension_payload(context=None):
     ctx = _ctx(context)
     try:
         ctx.view_layer.update()
@@ -87,68 +53,41 @@ def _dimension_payload(context=None, data=None):
         pass
 
     obj = _selected_object(ctx)
+    empty_display = {"x": "-- in", "y": "-- in", "z": "-- in"}
     if obj is None:
-        display = f"{axis_label} -- in"
-        response_data = {
-            "command": command,
-            "axis": axis_label,
-            "axisKey": axis_key,
-            "label": axis_label,
-            "dimensionInches": None,
-            "display": display,
-        }
         return _result(
             "ok",
-            f"Select an object to read its {axis_label} dimension.",
-            command=command,
-            axis=axis_label,
-            axisKey=axis_key,
-            label=axis_label,
+            "Select an object.",
             selected=False,
             objectName="",
-            dimensionInches=None,
-            dimensionsInches={axis_key: None},
-            display=display,
-            displayDimensions={axis_key: "-- in"},
-            fieldPatch={f"dimension_{axis_key}_display": display},
-            data=response_data,
+            dimensionsInches=None,
+            displayDimensions=empty_display,
         )
 
     unit_scale = _scene_unit_scale(ctx)
     scale_to_inches = unit_scale * INCHES_PER_METER
-    value = abs(float(getattr(obj.dimensions, axis_key))) * scale_to_inches
-    value_display = f"{_format_inches(value)} in"
-    display = f"{axis_label} {value_display}"
-    response_data = {
-        "command": command,
-        "axis": axis_label,
-        "axisKey": axis_key,
-        "label": axis_label,
-        "dimensionInches": value,
-        "display": display,
+    values = {
+        "x": abs(float(obj.dimensions.x)) * scale_to_inches,
+        "y": abs(float(obj.dimensions.y)) * scale_to_inches,
+        "z": abs(float(obj.dimensions.z)) * scale_to_inches,
     }
+    display = {axis: f"{_format_inches(value)} in" for axis, value in values.items()}
+    message = f"{obj.name}: X {display['x']}, Y {display['y']}, Z {display['z']}"
 
     return _result(
         "ok",
-        f"{obj.name}: {display}",
-        command=command,
-        axis=axis_label,
-        axisKey=axis_key,
-        label=axis_label,
+        message,
         selected=True,
         objectName=obj.name,
-        dimensionInches=value,
-        dimensionsInches={axis_key: value},
-        display=display,
-        displayDimensions={axis_key: value_display},
-        fieldPatch={f"dimension_{axis_key}_display": display},
+        dimensionsInches=values,
+        displayDimensions=display,
         unitScaleLength=unit_scale,
-        data=response_data,
     )
 
 
 def perform_dimensions_status(context=None, data=None):
-    return _dimension_payload(context, data)
+    del data
+    return _dimension_payload(context)
 
 
 def run_flowcell_action(context=None, data=None):

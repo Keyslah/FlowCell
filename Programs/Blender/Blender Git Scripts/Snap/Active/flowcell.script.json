@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "blender.snap-active",
+  "label": "Active",
+  "tooltip": "Toggle Active snap between moving the selection to active and moving the cursor to active.",
+  "program": "Blender",
+  "source": "snap.py",
+  "bridgeData": {
+    "command": "active"
+  }
+}

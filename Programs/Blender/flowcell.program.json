@@ -6,14 +6,16 @@
   "defaultPanels": [
     "Collections",
     "Files",
-    "Utility",
-    "toolset"
+    "Shapes",
+    "Snap",
+    "toolset",
+    "Utility"
   ],
   "panels": [
     {
       "id": "shapes",
       "label": "Shapes",
-      "defaultSelected": false
+      "defaultSelected": true
     },
     {
       "id": "collections",
@@ -23,6 +25,11 @@
     {
       "id": "files",
       "label": "Files",
+      "defaultSelected": true
+    },
+    {
+      "id": "snap",
+      "label": "Snap",
       "defaultSelected": true
     },
     {
@@ -523,7 +530,7 @@
       "installEffects": [
         "Downloads this program catalog only; preserves local edits and installed Buttons."
       ],
-      "installOnAdd": true
+      "installOnAdd": false
     },
     {
       "id": "blender.alignment-tools",
@@ -542,7 +549,7 @@
     },
     {
       "id": "blender.boolean",
-      "version": "1.1.5",
+      "version": "1.1.6",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/boolean/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -557,7 +564,7 @@
     },
     {
       "id": "blender.flatten-revolve",
-      "version": "1.1.3",
+      "version": "1.1.4",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/flatten-revolve/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -572,7 +579,7 @@
     },
     {
       "id": "blender.remesh",
-      "version": "1.1.3",
+      "version": "1.1.4",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/remesh/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -587,7 +594,7 @@
     },
     {
       "id": "blender.rotate",
-      "version": "1.1.3",
+      "version": "1.1.4",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/rotate/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -602,7 +609,7 @@
     },
     {
       "id": "blender.smart-axis",
-      "version": "1.1.4",
+      "version": "1.1.5",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/smart-axis/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -632,7 +639,7 @@
     },
     {
       "id": "blender.xyz-dimensions",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/xyz-dimensions/flowcell.toolset.json",
       "importKind": "tool-set",
@@ -644,6 +651,162 @@
         "Installs the xyz dimensions toolset into the Blender toolset panel."
       ],
       "installOnAdd": true
+    },
+    {
+      "id": "blender.save-png",
+      "version": "1.0.0",
+      "panelName": "Files",
+      "sourcePath": "Blender Git Scripts/Files/save png.py",
+      "importKind": "script",
+      "displayLabel": "save png",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.obj-import",
+      "version": "1.0.0",
+      "panelName": "Files",
+      "sourcePath": "Blender Git Scripts/Files/obj import.py",
+      "importKind": "script",
+      "displayLabel": "obj import",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.save-stl",
+      "version": "1.0.0",
+      "panelName": "Files",
+      "sourcePath": "Blender Git Scripts/Files/save stl.py",
+      "importKind": "script",
+      "displayLabel": "save stl",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.transform",
+      "version": "1.0.0",
+      "panelName": "Utility",
+      "sourcePath": "Blender Git Scripts/Utility/transform.py",
+      "importKind": "script",
+      "displayLabel": "Transform",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.origin-geo",
+      "version": "1.0.0",
+      "panelName": "Utility",
+      "sourcePath": "Blender Git Scripts/Utility/origin_geo.py",
+      "importKind": "script",
+      "displayLabel": "origin geo",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.split",
+      "version": "1.0.0",
+      "panelName": "Utility",
+      "sourcePath": "Blender Git Scripts/Utility/split.py",
+      "importKind": "script",
+      "displayLabel": "split",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.cursor-center-hole",
+      "version": "1.0.0",
+      "panelName": "Utility",
+      "sourcePath": "Blender Git Scripts/Utility/Cursor Center Hole.py",
+      "importKind": "script",
+      "displayLabel": "Center Hole",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.snap-active",
+      "version": "1.0.0",
+      "panelName": "Snap",
+      "sourcePath": "Blender Git Scripts/Snap/Active",
+      "importKind": "script",
+      "displayLabel": "Active",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.snap-cursor",
+      "version": "1.0.0",
+      "panelName": "Snap",
+      "sourcePath": "Blender Git Scripts/Snap/Cursor",
+      "importKind": "script",
+      "displayLabel": "Cursor",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.snap-grid",
+      "version": "1.0.0",
+      "panelName": "Snap",
+      "sourcePath": "Blender Git Scripts/Snap/Grid",
+      "importKind": "script",
+      "displayLabel": "Grid",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.snap-offset",
+      "version": "1.0.0",
+      "panelName": "Snap",
+      "sourcePath": "Blender Git Scripts/Snap/Offset",
+      "importKind": "script",
+      "displayLabel": "Offset",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.snap-worigin",
+      "version": "1.0.0",
+      "panelName": "Snap",
+      "sourcePath": "Blender Git Scripts/Snap/Worigin",
+      "importKind": "script",
+      "displayLabel": "Worigin",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [],
+      "installOnAdd": true
     }
   ],
   "runner": {
@@ -654,5 +817,6 @@
   },
   "addonReloadNotes": "Reload the FlowCell Blender add-on or restart Blender after bridge deployment changes.",
   "appRestartNotes": "Restart FlowCell after changing this program manifest.",
-  "themeLibrary": "themes/Blender"
+  "themeLibrary": "themes/Blender",
+  "defaultTheme": "SupportScripts/default-appearance.flowcell-theme.json"
 }

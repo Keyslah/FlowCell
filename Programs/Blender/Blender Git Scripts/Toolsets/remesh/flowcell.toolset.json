@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "blender.remesh",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "label": "remesh",
-  "tooltip": "Remesh with one cycling mode Button, inline-editable value Buttons, SS/RD toggles, Create, and Apply.",
+  "tooltip": "Create, update, and apply Blender Remesh modifiers from a compact FlowCell tool set.",
   "kind": "toolset",
   "program": "Blender",
   "source": "remesh.py",
@@ -21,7 +21,7 @@
     {
       "slot": "set_voxel_size_mm",
       "label": "0.10",
-      "tooltip": "Click this Button, then type the voxel size in millimeters."
+      "tooltip": " voxel size mm"
     },
     {
       "slot": "set_adaptivity",
@@ -392,7 +392,55 @@
         "allowLabelResize": false,
         "matchHitboxToSkin": false,
         "allowStretching": false,
-        "highlightOnHover": false
+        "highlightOnHover": false,
+        "activationCycle": {
+          "states": [
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-e94fcdbc-f02d-47dd-9556-d301df1f1026",
+              "label": "Voxel",
+              "resultMatches": [
+                {
+                  "mode": "VOXEL"
+                }
+              ],
+              "visualState": "base"
+            },
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-9b49d253-45cb-4a8a-af11-aeaf15435317",
+              "label": "Smooth",
+              "resultMatches": [
+                {
+                  "mode": "SMOOTH"
+                }
+              ],
+              "visualState": "base"
+            },
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-b455ef6f-a9fd-4fe3-82d4-4b119baf4158",
+              "label": "Sharp",
+              "resultMatches": [
+                {
+                  "mode": "SHARP"
+                }
+              ],
+              "visualState": "base"
+            },
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-3ea3cbc6-60e4-46de-ab1a-3e68bb537882",
+              "label": "Blocks",
+              "resultMatches": [
+                {
+                  "mode": "BLOCKS"
+                }
+              ],
+              "visualState": "base"
+            }
+          ]
+        }
       },
       "set_voxel_size_mm": {
         "textFitMode": "shrink",

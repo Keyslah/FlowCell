@@ -25,6 +25,7 @@ function Invoke-ReleasePreflight([string]$Driver, [string]$Scenario) {
     $process = New-Object Diagnostics.Process
     $process.StartInfo.FileName = 'powershell.exe'
     $process.StartInfo.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $driverPath + '" -OutputDirectory "' + $output + '"'
+    $process.StartInfo.Arguments += ' -ProgramLocalRoot "' + (Join-Path $fixtureRoot 'current-local') + '"'
     if ($Driver -eq 'package-portable.ps1') { $process.StartInfo.Arguments += ' -ProgramsOnly' }
     $process.StartInfo.UseShellExecute = $false
     $process.StartInfo.CreateNoWindow = $true
@@ -49,9 +50,12 @@ function Invoke-ReleasePreflight([string]$Driver, [string]$Scenario) {
 
 try {
     [IO.Directory]::CreateDirectory($fixtureRelease) | Out-Null
-    foreach ($name in @('build-installer.ps1', 'package-portable.ps1', 'program-package-safety.ps1', 'blender-theme-packages.ps1')) {
+    foreach ($name in @('build-installer.ps1', 'package-portable.ps1', 'program-package-safety.ps1', 'program-package-integrity.ps1', 'blender-theme-packages.ps1')) {
         Copy-Item -LiteralPath (Join-Path $releaseRoot $name) -Destination (Join-Path $fixtureRelease $name)
     }
+    Put (Join-Path $fixtureRelease 'prepare-program-profile.mjs') '// Inert profile-capture fixture.'
+    Put (Join-Path $repo 'FlowCellFrontend/node_modules/.bin/tsc.cmd') "@exit /b 0`r`n"
+    Put (Join-Path $fixtureRoot 'current-local/button-system/button-state.json') '{}'
     Put (Join-Path $fixtureRelease 'prepare-installer.ps1') @'
 param([string]$AutoHotkeyExe, [string]$AutoHotkeyLicenseFile)
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'prepare-reached.txt'), 'unexpected')

@@ -30,6 +30,8 @@ pub(crate) struct AvailableProgramPackage {
     pub(crate) install_effects: Vec<String>,
     pub(crate) addon_reload_notes: String,
     pub(crate) app_restart_notes: String,
+    pub(crate) has_default_theme: bool,
+    pub(crate) default_theme_sources: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -73,6 +75,8 @@ pub(crate) struct AddProgramPlanRequest {
     pub(crate) selected_panels: Vec<String>,
     #[serde(default)]
     pub(crate) selected_sources: Vec<AddProgramSourceSelection>,
+    #[serde(default)]
+    pub(crate) apply_default_theme: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -94,6 +98,10 @@ pub(crate) struct AppliedProgramSetup {
     pub(crate) panels: Vec<String>,
     pub(crate) descriptors: Vec<program_sources::install::InstallButtonSourceResponse>,
     pub(crate) install_effects: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) default_theme: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) default_theme_receipt: Option<String>,
 }
 
 const PROGRAM_SETUP_PROGRESS_EVENT: &str = "flowcell:program-setup-progress";
@@ -2029,6 +2037,7 @@ pub(super) fn validate_available_program_package_at(
     program_root: &Path,
     manifest: &program_sources::manifest::ProgramManifest,
 ) -> Result<AvailableProgramPackage, String> {
+    let default_theme = super::theme_archive::read_program_default_theme(program_root, manifest)?;
     let git_root = program_sources::manifest::resolve_manifest_folder(
         program_root,
         &manifest.git_scripts_folder,
@@ -2161,6 +2170,12 @@ pub(super) fn validate_available_program_package_at(
         install_effects,
         addon_reload_notes: manifest.addon_reload_notes.clone(),
         app_restart_notes: manifest.app_restart_notes.clone(),
+        has_default_theme: default_theme.is_some(),
+        default_theme_sources: default_theme.as_ref().and_then(|file| {
+            let theme = if file["kind"] == "FlowCellProgramAppearance" { &file["theme"] } else { file };
+            theme["dependencies"].as_array()
+        })
+            .into_iter().flatten().filter_map(|dependency| dependency["sourceId"].as_str().map(str::to_string)).collect(),
     })
 }
 
@@ -2213,6 +2228,9 @@ fn preflight_add_program_plan_inner(
         ));
     }
     if request.create_plain_program {
+        if request.apply_default_theme {
+            return Err("An application without a Program package has no packaged appearance.".into());
+        }
         if !request.selected_panels.is_empty() || !request.selected_sources.is_empty() {
             return Err(
                 "A plain Program registration cannot include packaged Panels or Button contributions."
@@ -2330,6 +2348,18 @@ fn preflight_add_program_plan_inner(
                 })
         })
         .collect::<Vec<_>>();
+    if request.apply_default_theme {
+        if !package.has_default_theme {
+            return Err("This Program package has no packaged appearance.".into());
+        }
+        for id in &package.default_theme_sources {
+            let source = package.sources.iter().find(|source| source.id == *id)
+                .ok_or_else(|| format!("Packaged appearance requires unavailable Button '{id}'."))?;
+            if source_destinations.get(&id.to_ascii_lowercase()) != Some(&source.panel_name) {
+                return Err(format!("Packaged appearance requires '{}' in the '{}' panel. Select it or turn off 'Use packaged appearance and layout'.", source.label, source.panel_name));
+            }
+        }
+    }
     if !selected_sources.is_empty() {
         let manifest = program_sources::manifest::load_program_manifest(&package.program_name)?;
         if manifest.runner.kind == "blender-bridge" {
@@ -2418,6 +2448,8 @@ struct AddProgramTransactionJournal {
     expected_button_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     prepared_setup_result: Option<ProgramSetupResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_default_theme_receipt: Option<String>,
 }
 
 fn add_program_transactions_root() -> Result<PathBuf, String> {
@@ -3364,6 +3396,21 @@ mod program_setup_status_tests {
     use super::*;
 
     #[test]
+    fn setup_recovery_requires_the_appearance_receipt_in_the_atomic_canonical_save() {
+        let receipt = "a".repeat(64);
+        let owners = vec!["source-owner".to_string(), "panel-owner".to_string()];
+        let mut document = json!({"buttons":{"source-owner":{"metadata":{}},"panel-owner":{"metadata":{}}}});
+        assert!(canonical_default_appearance_matches(&document, &owners, None));
+        assert!(!canonical_default_appearance_matches(&document, &owners, Some(&receipt)));
+        document["buttons"]["source-owner"]["metadata"]["programDefaultAppearanceReceipt"] = json!(receipt);
+        assert!(!canonical_default_appearance_matches(&document, &owners, Some(&receipt)));
+        document["buttons"]["panel-owner"]["metadata"]["programDefaultAppearanceReceipt"] = json!(receipt);
+        assert!(canonical_default_appearance_matches(&document, &owners, Some(&receipt)));
+        assert!(!canonical_default_appearance_matches(&document, &owners, Some(&"b".repeat(64))));
+        assert!(!canonical_default_appearance_matches(&document, &[], Some(&receipt)));
+    }
+
+    #[test]
     fn program_setup_missing_journal_recovers_only_matching_commit_and_current_executable() {
         let root = std::env::temp_dir().join(next_setup_transaction_token("flowcell-setup-receipt-test"));
         fs::create_dir_all(&root).unwrap();
@@ -3612,6 +3659,14 @@ fn apply_add_program_plan_inner(
             program_sources::manifest::load_program_manifest(&preflight.program_name)?,
         )
     };
+    let default_theme = if request.apply_default_theme {
+        Some(super::theme_archive::read_program_default_theme(&program_root, &manifest)?
+            .ok_or("This Program package has no packaged appearance.")?)
+    } else {
+        None
+    };
+    let default_theme_receipt = default_theme.as_ref()
+        .map(super::theme_archive::program_default_theme_receipt).transpose()?;
     let (_, bindings_before_document, bindings_path) = read_bindings_file_state()?;
     let bindings_before = serialize_bindings(&bindings_before_document);
     let mut bindings_after_document = bindings_before_document.clone();
@@ -3700,6 +3755,7 @@ fn apply_add_program_plan_inner(
         planned_sources,
         expected_button_ids: Vec::new(),
         prepared_setup_result: None,
+        expected_default_theme_receipt: default_theme_receipt.clone(),
     };
     write_add_program_journal(
         &transaction_root,
@@ -3763,6 +3819,8 @@ fn apply_add_program_plan_inner(
                 panels: preflight.panels,
                 descriptors,
                 install_effects: preflight.install_effects,
+                default_theme,
+                default_theme_receipt,
             })
         }
         Err(error) => {
@@ -4021,6 +4079,10 @@ fn canonical_matches_add_program(journal: &AddProgramTransactionJournal) -> Resu
     {
         return Ok(false);
     }
+    if !canonical_default_appearance_matches(&document, &journal.expected_button_ids,
+        journal.expected_default_theme_receipt.as_deref()) {
+        return Ok(false);
+    }
     for source in &journal.planned_sources {
         if !journal
             .expected_button_ids
@@ -4070,6 +4132,14 @@ fn canonical_matches_add_program(journal: &AddProgramTransactionJournal) -> Resu
         }
     }
     Ok(true)
+}
+
+fn canonical_default_appearance_matches(document: &Value, owner_ids: &[String], receipt: Option<&str>) -> bool {
+    let Some(receipt) = receipt else { return true; };
+    !owner_ids.is_empty() && owner_ids.iter().all(|id| {
+        canonical_button(document, id).and_then(|button| button.pointer("/metadata/programDefaultAppearanceReceipt"))
+            .and_then(Value::as_str) == Some(receipt)
+    })
 }
 
 fn normalize_expected_button_ids(values: Vec<String>) -> Result<Vec<String>, String> {
@@ -6678,6 +6748,7 @@ mod managed_program_setup_tests {
             program_name: program_name.clone(),
             executable_path: executable.to_string_lossy().to_string(),
             create_plain_program: true,
+            apply_default_theme: false,
             selected_panels: Vec::new(),
             selected_sources: Vec::new(),
         })
@@ -6732,6 +6803,7 @@ mod managed_program_setup_tests {
                 program_name: program_name.clone(),
                 executable_path: r"C:\Apps\Krita.exe".to_string(),
                 create_plain_program: true,
+                apply_default_theme: false,
                 selected_panels: Vec::new(),
                 selected_sources: Vec::new(),
             },
@@ -6755,6 +6827,7 @@ mod managed_program_setup_tests {
             planned_sources: Vec::new(),
             expected_button_ids: Vec::new(),
             prepared_setup_result: None,
+            expected_default_theme_receipt: None,
         };
         validate_plain_program_package_tree_in(&programs_root, &transaction_root, &journal, true)
             .expect("exact generated package must validate");
@@ -7204,6 +7277,7 @@ mod managed_program_setup_tests {
                 program_name: program_name.clone(),
                 executable_path: "explorer.exe".to_string(),
                 create_plain_program: false,
+                apply_default_theme: false,
                 selected_panels: vec!["Tools".to_string()],
                 selected_sources: vec![AddProgramSourceSelection {
                     source_id: source_id.clone(),
@@ -7223,6 +7297,7 @@ mod managed_program_setup_tests {
             planned_sources: planned_sources.clone(),
             expected_button_ids: Vec::new(),
             prepared_setup_result: None,
+            expected_default_theme_receipt: None,
         };
         write_add_program_journal(
             &transaction_root,

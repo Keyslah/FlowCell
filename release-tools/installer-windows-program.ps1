@@ -13,6 +13,7 @@ function Copy-InstallerWindowsProgram {
     $RepoRoot = [IO.Path]::GetFullPath($RepositoryRoot)
     function Stop-Package([string]$Message) { throw "[FlowCell installer Windows] $Message" }
     . (Join-Path $PSScriptRoot 'program-package-safety.ps1')
+    . (Join-Path $PSScriptRoot 'program-package-integrity.ps1')
     if (Test-Path -LiteralPath $DestinationRoot) { Stop-Package 'Windows staging destination already exists.' }
     $program = Get-Item -LiteralPath (Join-Path $RepoRoot 'Programs/Windows')
     $contract = Get-ProgramPackageContract $program
@@ -30,24 +31,10 @@ function Copy-InstallerWindowsProgram {
     [void](Assert-TrackedProgramReference $program $tracked $baselineRelative 'catalog baseline' -RequireFile)
     $destination = Join-Path $DestinationRoot 'Programs/Windows'
     Copy-TrackedProgramFolder $program $destination $tracked
-    $hashes = [ordered]@{}
-    $prefix = "Programs/Windows/$catalog/"
-    foreach ($path in $tracked) {
-        if ($path.StartsWith($prefix, [StringComparison]::Ordinal)) {
-            $relative = $path.Substring($prefix.Length)
-            $stream = [IO.File]::OpenRead((Join-Path $destination "$catalog/$relative"))
-            $hasher = [Security.Cryptography.SHA256]::Create()
-            try {
-                $hashes[$relative] = ([BitConverter]::ToString($hasher.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
-            } finally {
-                $stream.Dispose()
-                $hasher.Dispose()
-            }
-        }
-    }
-    if ($hashes.Count -eq 0) { Stop-Package 'Windows catalog is empty.' }
-    $baseline = @{schemaVersion=1; programId='windows'; files=$hashes}
+    $baseline = Get-ProgramCatalogBaseline (Join-Path $destination $catalog) 'windows'
     [IO.File]::WriteAllText((Join-Path $destination $baselineRelative), ($baseline | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
     Assert-ProgramStagingInvariant $DestinationRoot 'Windows' $contract.MutableFolders
-    [pscustomobject]@{Program='Windows'; Destination=$destination; Files=$tracked.Count; CatalogFiles=$hashes.Count}
+    $inventory = New-ProgramInventory $destination 'windows'
+    Assert-ProgramDirectoryInventory $destination 'windows' $inventory
+    [pscustomobject]@{Program='Windows'; Destination=$destination; Files=$tracked.Count; CatalogFiles=$baseline.files.Count}
 }

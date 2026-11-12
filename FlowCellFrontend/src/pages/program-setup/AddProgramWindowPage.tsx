@@ -51,7 +51,8 @@ function defaultSetup(program: AvailableProgramPackage): {
 } {
   const sources = sourceClosure(
     program,
-    program.sources.filter((source) => source.required || source.defaultSelected).map((source) => source.id)
+    program.sources.filter((source) => source.required || source.defaultSelected ||
+      program.defaultThemeSources?.includes(source.id)).map((source) => source.id)
   );
   const panels = new Set(
     program.panels.filter((panel) => panel.defaultSelected).map((panel) => panel.label)
@@ -81,6 +82,7 @@ export default function AddProgramWindowPage() {
   const [mode, setMode] = useState<SetupMode>("custom");
   const [selectedPanels, setSelectedPanels] = useState<Set<string>>(new Set());
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
+  const [useDefaultTheme, setUseDefaultTheme] = useState(false);
   const [busy, setBusyState] = useState(false);
   const busyRef = useRef(false);
   const setBusy = useCallback((next: boolean) => {
@@ -136,6 +138,7 @@ export default function AddProgramWindowPage() {
     setMode("custom");
     setSelectedPanels(setup.panels);
     setSelectedSources(setup.sources);
+    setUseDefaultTheme(Boolean(program.hasDefaultTheme));
     setStatus("Choose the panels and buttons you want to add.");
   };
 
@@ -267,6 +270,7 @@ export default function AddProgramWindowPage() {
     if (nextMode === "register") {
       setSelectedPanels(new Set());
       setSelectedSources(new Set());
+      setUseDefaultTheme(false);
     } else if (nextMode === "everything") {
       setSelectedPanels(new Set(selectedProgram.panels.map((panel) => panel.label)));
       setSelectedSources(new Set(selectedProgram.sources.map((source) => source.id)));
@@ -354,6 +358,7 @@ export default function AddProgramWindowPage() {
       programName: selectedProgram.programName,
       executablePath,
       createPlainProgram: false,
+      applyDefaultTheme: useDefaultTheme && Boolean(selectedProgram.hasDefaultTheme),
       selectedPanels: selectedProgram.panels
         .filter((panel) => selectedPanels.has(panel.label))
         .map((panel) => panel.label),
@@ -371,7 +376,8 @@ export default function AddProgramWindowPage() {
     selectedPanels,
     selectedProgram,
     selectedSources,
-    setupSource
+    setupSource,
+    useDefaultTheme
   ]);
 
   const installValidatedPlan = async (planRequest: AddProgramPlanRequest) => {
@@ -496,6 +502,11 @@ export default function AddProgramWindowPage() {
         <>
           <section className="program-setup__card program-setup__stack">
             <div className="program-setup__header"><h2 className="program-setup__program-heading">{selectedProgram.programName}</h2><button type="button" disabled={busy} onClick={() => { setSelectedProgramName(""); setStatus("Program removed from this installation."); }}>Remove from installation</button></div>
+            {selectedProgram.hasDefaultTheme ? <label className="program-setup__panel-choice">
+              <input type="checkbox" checked={useDefaultTheme} disabled={busy || mode === "register"}
+                onChange={(event) => { setUseDefaultTheme(event.target.checked); markSelectionChanged(); }} />
+              Use packaged appearance and layout
+            </label> : null}
             <div>
               <label htmlFor="program-executable">{selectedProgram.programName} .exe path <span className="program-setup__required">(required)</span></label>
               <div className="program-setup__inline">

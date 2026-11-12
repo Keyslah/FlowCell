@@ -13,37 +13,32 @@ import {
 
 const frontendRoot = join(import.meta.dirname, "..");
 
-test("XYZ responses update the declared Button label fields without losing other axis readings", async () => {
+test("XYZ keeps the original fixed axis labels and all-axis status without injected readout fields", async () => {
   const { executeButtonRecord, registerButtonCoreAction } = await import("./.compiled-button-system/button/runtime/ButtonRuntimeAdapter.js");
   const manifest = JSON.parse(readFileSync(join(frontendRoot, "..", "Programs", "Blender", "Blender Git Scripts", "Toolsets", "xyz-dimensions", "flowcell.toolset.json"), "utf8"));
   assert.doesNotThrow(() => validateInstalledButtonLayout(manifest.layout, manifest.children.map(child => child.slot)));
-  const fields = manifest.layout.fields;
-  let values = Object.fromEntries(fields.map(field => [field.id, field.defaultValue]));
-  let response;
+  const fields = manifest.layout.fields ?? [];
+  assert.deepEqual(fields, []);
+  assert.deepEqual(manifest.layout.childBehaviors ?? {}, {});
+  assert.deepEqual(manifest.children.map(child => child.label), ["X", "Y", "Z"]);
+  const response = {
+    status: "ok", message: "Cube: X 0.787 in, Y 0.394 in, Z 1 in", selected: true,
+    dimensionsInches: { x: 0.787, y: 0.394, z: 1 },
+    displayDimensions: { x: "0.787 in", y: "0.394 in", z: "1 in" }
+  };
   const unregister = registerButtonCoreAction("xyz-readout-test", async () => response);
   try {
-    for (const [axis, display] of [["x", "X 0.787 in"], ["y", "Y 0.394 in"], ["z", "Z -- in"]]) {
-      const slot = `dimension_${axis}`;
-      const behavior = manifest.layout.childBehaviors[slot];
-      const field = fields.find(field => field.id === behavior.labelField);
-      assert.ok(field, `${slot} must expose its response through an existing label field`);
-      assert.equal(field.kind, "display");
-      assert.equal(field.hidden, true);
-      const before = { ...values };
-      response = { status: "ok", display, fieldPatch: { [`${slot}_display`]: display } };
+    for (const child of manifest.children) {
       const result = await executeButtonRecord({
-        id: slot, label: axis.toUpperCase(), role: "tool-set-child", disabled: false,
+        id: child.slot, label: child.label, role: "tool-set-child", disabled: false,
         executionTarget: { kind: "core-action", actionId: "xyz-readout-test" },
-        toolSetBehavior: behavior
-      }, "click", { fields, fieldValues: values });
+        toolSetBehavior: null
+      }, "click", { fields, fieldValues: {} });
       assert.equal(result.executed, true);
-      values = result.fieldValues;
-      assert.equal(values[behavior.labelField], display);
-      for (const other of fields.filter(candidate => candidate.id !== field.id)) {
-        assert.equal(values[other.id], before[other.id]);
-      }
+      assert.deepEqual(result.response, response);
+      assert.deepEqual(result.fieldPatch, {});
+      assert.deepEqual(result.fieldValues, {});
     }
-    assert.deepEqual(values, { dimension_x_display: "X 0.787 in", dimension_y_display: "Y 0.394 in", dimension_z_display: "Z -- in" });
   } finally { unregister(); }
 });
 

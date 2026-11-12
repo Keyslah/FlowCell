@@ -1535,11 +1535,11 @@ test("package page is headerless and keeps Theme plus Place Picture compact", ()
   assert.match(pageCss, /body\s*\{[\s\S]*overflow:\s*hidden;/);
   assert.match(pageCss, /\.theme-page\s*\{[\s\S]*overflow-y:\s*auto;/);
   assert.match(pageCss, /\.theme-page\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/);
-  assert.match(pageCss, /\.theme-role-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(pageCss, /\.theme-role-grid\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;/);
   assert.equal((pageCss.match(/\.theme-role-grid\s*\{/g) || []).length, 1);
   assert.match(
     pageCss,
-    /\.theme-role\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 22px 36px;[\s\S]*min-height:\s*40px;/
+    /\.theme-role\s*\{[^}]*flex:\s*0 1 auto;[^}]*width:\s*max-content;[^}]*max-width:\s*100%;[^}]*min-height:\s*30px;/
   );
   assert.match(pageCss, /\.theme-role__label-row\s*\{[\s\S]*display:\s*flex;/);
   assert.match(pageCss, /\.theme-role__label\s*\{[\s\S]*word-break:\s*normal;/);
@@ -1558,7 +1558,7 @@ test("package page is headerless and keeps Theme plus Place Picture compact", ()
   assert.match(pageCss, /\.theme-profiles\s*\{\s*display:\s*contents;/);
   assert.match(
     pageCss,
-    /\.theme-grid-controls\s*\{[\s\S]*grid-column:\s*span 3;/
+    /\.theme-grid-controls\s*\{[^}]*flex:\s*0 1 auto;[^}]*flex-wrap:\s*wrap;[^}]*width:\s*max-content;/
   );
   assert.doesNotMatch(pageCss, /scrollbar-width:\s*none;/);
   assert.doesNotMatch(pageCss, /\.theme-page__header/);

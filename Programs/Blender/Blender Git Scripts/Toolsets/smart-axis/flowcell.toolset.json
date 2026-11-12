@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "blender.smart-axis",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "label": "smart axis",
   "tooltip": "Smart Axis Lock stores selected object bounds, cycles pinned axis sides, and can run live while scaling.",
   "kind": "toolset",
@@ -129,7 +129,62 @@
         "allowLabelResize": false,
         "matchHitboxToSkin": false,
         "allowStretching": false,
-        "highlightOnHover": true
+        "highlightOnHover": true,
+        "activationCycle": {
+          "states": [
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-a41805e8-a972-4260-8b93-0e49ccaa07f9",
+              "label": "X",
+              "resultMatches": [
+                {
+                  "axis": "X",
+                  "mode": "NONE"
+                },
+                {
+                  "modes": {
+                    "X": "NONE"
+                  }
+                }
+              ],
+              "visualState": "base"
+            },
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-7e80496b-5a1c-4b0f-bc09-17b7967bd2d0",
+              "label": "X-",
+              "resultMatches": [
+                {
+                  "axis": "X",
+                  "mode": "MIN"
+                },
+                {
+                  "modes": {
+                    "X": "MIN"
+                  }
+                }
+              ],
+              "visualState": "base"
+            },
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-e92f7cb9-b236-4bcc-acca-cb7c684aa043",
+              "label": "X+",
+              "resultMatches": [
+                {
+                  "axis": "X",
+                  "mode": "MAX"
+                },
+                {
+                  "modes": {
+                    "X": "MAX"
+                  }
+                }
+              ],
+              "visualState": "base"
+            }
+          ]
+        }
       },
       "cycle_y": {
         "textFitMode": "shrink",
@@ -141,7 +196,62 @@
         "allowLabelResize": false,
         "matchHitboxToSkin": false,
         "allowStretching": false,
-        "highlightOnHover": true
+        "highlightOnHover": true,
+        "activationCycle": {
+          "states": [
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-03696a19-01ab-494d-8a0f-47c2c1eda6d7",
+              "label": "Y",
+              "resultMatches": [
+                {
+                  "axis": "Y",
+                  "mode": "NONE"
+                },
+                {
+                  "modes": {
+                    "Y": "NONE"
+                  }
+                }
+              ],
+              "visualState": "base"
+            },
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-c574a18a-e4b8-4109-80c6-96416912dd0b",
+              "label": "Y-",
+              "resultMatches": [
+                {
+                  "axis": "Y",
+                  "mode": "MIN"
+                },
+                {
+                  "modes": {
+                    "Y": "MIN"
+                  }
+                }
+              ],
+              "visualState": "base"
+            },
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-71960a6f-583f-4ae4-8198-4e9714a5e7c2",
+              "label": "Y+",
+              "resultMatches": [
+                {
+                  "axis": "Y",
+                  "mode": "MAX"
+                },
+                {
+                  "modes": {
+                    "Y": "MAX"
+                  }
+                }
+              ],
+              "visualState": "base"
+            }
+          ]
+        }
       },
       "cycle_z": {
         "textFitMode": "shrink",
@@ -153,7 +263,62 @@
         "allowLabelResize": false,
         "matchHitboxToSkin": false,
         "allowStretching": false,
-        "highlightOnHover": true
+        "highlightOnHover": true,
+        "activationCycle": {
+          "states": [
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-999ee85f-c301-4bbb-8b45-bb70e067d847",
+              "label": "Z",
+              "resultMatches": [
+                {
+                  "axis": "Z",
+                  "mode": "NONE"
+                },
+                {
+                  "modes": {
+                    "Z": "NONE"
+                  }
+                }
+              ],
+              "visualState": "base"
+            },
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-284e2ae3-16e3-4b53-8289-63ad4d4aa5b4",
+              "label": "Z-",
+              "resultMatches": [
+                {
+                  "axis": "Z",
+                  "mode": "MIN"
+                },
+                {
+                  "modes": {
+                    "Z": "MIN"
+                  }
+                }
+              ],
+              "visualState": "base"
+            },
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-db9fa40a-8d1f-4110-967f-7194cf7219cf",
+              "label": "Z+",
+              "resultMatches": [
+                {
+                  "axis": "Z",
+                  "mode": "MAX"
+                },
+                {
+                  "modes": {
+                    "Z": "MAX"
+                  }
+                }
+              ],
+              "visualState": "base"
+            }
+          ]
+        }
       },
       "toggle_live": {
         "textFitMode": "shrink",

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "blender.flatten-revolve",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "label": "flat",
   "tooltip": "Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place.",
   "kind": "toolset",
@@ -17,7 +17,7 @@
     {
       "slot": "flatten_profile",
       "label": "Flatten",
-      "tooltip": "Flatten the active mesh into a centered profile using the current pivot and flatten axis.",
+      "tooltip": "Flatten the active mesh into a centered profile using the current field values.",
       "payload": {
         "command": "flatten_profile",
         "action": "flatten_profile"
@@ -31,7 +31,7 @@
     {
       "slot": "generate_revolve",
       "label": "Revolve",
-      "tooltip": "Generate revolve geometry using the current pivot, axis, angle, steps, and merge distance.",
+      "tooltip": "Generate revolve geometry from the current flattened profile and field values.",
       "payload": {
         "command": "generate_revolve",
         "action": "generate_revolve"

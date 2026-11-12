@@ -4288,6 +4288,7 @@ mod tests {
             },
             addon_reload_notes: String::new(),
             theme_library: None,
+            default_theme: None,
             bind_actions_file: None,
             app_restart_notes: String::new(),
         }

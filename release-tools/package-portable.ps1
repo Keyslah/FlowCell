@@ -5,6 +5,8 @@ param(
   [string]$AutoHotkeyLicenseFile,
   [string]$OutputDirectory,
   [string]$BlenderThemeLibrary,
+  [string]$ProgramLocalRoot,
+  [string]$ProgramOwnerMap,
   [switch]$ProgramsOnly,
   [string[]]$ProgramNames
 )
@@ -34,6 +36,7 @@ if (-not (Test-Path -LiteralPath $programPackageSafetyScript -PathType Leaf)) {
   Stop-Package "Required release helper missing: $programPackageSafetyScript"
 }
 . $programPackageSafetyScript
+. (Join-Path $PSScriptRoot 'program-package-integrity.ps1')
 . (Join-Path $PSScriptRoot 'blender-theme-packages.ps1')
 
 function Resolve-BuiltExe([string]$RequestedPath) {
@@ -233,7 +236,11 @@ function New-FlowCellProgramPackage([System.IO.DirectoryInfo]$ProgramDirectory) 
   $temporaryZipPath = New-TemporaryZipPath "FlowCell-$assetName"
   $contract = Get-ProgramPackageContract $ProgramDirectory
   $trackedFiles = @(Get-TrackedProgramFiles $ProgramDirectory)
-  Assert-ProgramManifestReferencesTracked $ProgramDirectory $contract.Manifest $trackedFiles
+  # The current saved profile replaces any previously captured appearance. Its
+  # stale dependency versions must not prevent a fresh capture of valid sources.
+  $sourceManifest = $contract.Manifest | ConvertTo-Json -Depth 100 | ConvertFrom-Json
+  $sourceManifest.PSObject.Properties.Remove('defaultTheme')
+  Assert-ProgramManifestReferencesTracked $ProgramDirectory $sourceManifest $trackedFiles
 
   New-Item -ItemType Directory -Path $programsPackageRoot -Force | Out-Null
   $programFiles = $trackedFiles
@@ -245,25 +252,26 @@ function New-FlowCellProgramPackage([System.IO.DirectoryInfo]$ProgramDirectory) 
     $programFiles = @($trackedFiles | Where-Object { -not $_.StartsWith($themePrefix, [StringComparison]::OrdinalIgnoreCase) -and -not $_.StartsWith($legacyThemePrefix, [StringComparison]::OrdinalIgnoreCase) })
   }
   Copy-TrackedProgramFolder $ProgramDirectory $destination $programFiles
+  Assert-ProgramCopiedFiles $ProgramDirectory.FullName $destination $programFiles $ProgramDirectory.Name
   if ($contract.Manifest.programId -eq 'blender') {
     $themes = Copy-BlenderThemePackages -SourceLibrary $resolvedBlenderThemeLibrary -Destination (Join-Path $destination 'themes/Blender')
     Write-Host "Blender themes: $($themes.PackageCount) packages, $($themes.AssetCount) assets from $resolvedBlenderThemeLibrary"
   }
+  $profileArguments = @((Join-Path $PSScriptRoot 'prepare-program-profile.mjs'), '--program-root', $ProgramDirectory.FullName,
+    '--local-root', $resolvedProgramLocalRoot, '--output-root', $destination)
+  if ($resolvedProgramOwnerMap) { $profileArguments += @('--owner-map', $resolvedProgramOwnerMap) }
+  & node @profileArguments
+  if ($LASTEXITCODE -ne 0) { Stop-Package "Current saved profile could not be packaged for '$($ProgramDirectory.Name)'." }
   $catalogRelative = Convert-ToSafeRelativeFolder ([string]$contract.Manifest.gitScriptsFolder) 'gitScriptsFolder' $ProgramDirectory.Name
   $baselineRelative = "$($contract.Manifest.supportScriptsFolder)/catalog-baseline.json"
   [void](Assert-TrackedProgramReference $ProgramDirectory $trackedFiles $baselineRelative 'catalog baseline' -RequireFile)
-  $hashes = [ordered]@{}
-  $catalogPrefix = "Programs/$($ProgramDirectory.Name)/$catalogRelative/"
-  foreach ($tracked in $trackedFiles) {
-    if ($tracked.StartsWith($catalogPrefix, [StringComparison]::Ordinal)) {
-      $relative = $tracked.Substring($catalogPrefix.Length)
-      $hashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $destination "$catalogRelative/$relative") -Algorithm SHA256).Hash.ToLowerInvariant()
-    }
-  }
-  if ($hashes.Count -eq 0) { Stop-Package "Empty catalog: $($ProgramDirectory.Name)" }
-  $baseline = @{schemaVersion=1; programId=$contract.Manifest.programId; files=$hashes}
+  # Fresh profile preparation can add exact installed-source wrappers. Inventory
+  # the finished catalog, including those files, instead of the Git input list.
+  $baseline = Get-ProgramCatalogBaseline (Join-Path $destination $catalogRelative) ([string]$contract.Manifest.programId)
   [IO.File]::WriteAllText((Join-Path $destination $baselineRelative), ($baseline | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
   Assert-ProgramStagingInvariant $packageRoot $ProgramDirectory.Name $contract.MutableFolders
+  $inventory = New-ProgramInventory $destination ([string]$contract.Manifest.programId)
+  Assert-ProgramDirectoryInventory $destination ([string]$contract.Manifest.programId) $inventory
 
   try {
     [System.IO.Compression.ZipFile]::CreateFromDirectory(
@@ -273,6 +281,7 @@ function New-FlowCellProgramPackage([System.IO.DirectoryInfo]$ProgramDirectory) 
       $false
     )
     Assert-ProgramZipInvariant $temporaryZipPath $ProgramDirectory.Name $contract.MutableFolders
+    Assert-ProgramZipInventory $temporaryZipPath $ProgramDirectory.Name ([string]$contract.Manifest.programId) $inventory
     Publish-ZipAtomically $temporaryZipPath $zipPath
     Write-Host "Created: $zipPath"
   } finally {
@@ -309,11 +318,39 @@ if (-not (Test-Path -LiteralPath $ProgramsRoot -PathType Container)) {
 }
 
 $programDirs = @(Get-ReleaseProgramDirectories -ProgramNames $ProgramNames)
+$resolvedProgramLocalRoot = $null
+$resolvedProgramOwnerMap = $null
+if ($programDirs.Count -gt 0) {
+  $resolvedProgramLocalRoot = Resolve-ProgramProfileLocalRoot $ProgramLocalRoot
+  if (-not [string]::IsNullOrWhiteSpace($ProgramOwnerMap)) {
+    if (-not (Test-Path -LiteralPath $ProgramOwnerMap -PathType Leaf)) { Stop-Package 'The explicit legacy Program owner map is missing.' }
+    $resolvedProgramOwnerMap = (Resolve-Path -LiteralPath $ProgramOwnerMap).Path
+  }
+  $profileHelper = Join-Path $PSScriptRoot 'prepare-program-profile.mjs'
+  if (-not (Test-Path -LiteralPath $profileHelper -PathType Leaf)) { Stop-Package 'Required current-profile preparation helper is missing.' }
+  $typescript = Join-Path $RepoRoot 'FlowCellFrontend/node_modules/.bin/tsc.cmd'
+  if (-not (Test-Path -LiteralPath $typescript -PathType Leaf)) { Stop-Package 'Install the locked frontend dependencies before preparing Program profiles.' }
+}
 $resolvedBlenderThemeLibrary = $null
 foreach ($programDir in $programDirs) {
   $contract = Get-ProgramPackageContract $programDir
   if ($contract.Manifest.programId -eq 'blender') {
     $resolvedBlenderThemeLibrary = Resolve-BlenderThemePackageLibrary -LibraryPath $BlenderThemeLibrary
+  }
+}
+if ($programDirs.Count -gt 0) {
+  Push-Location (Join-Path $RepoRoot 'FlowCellFrontend')
+  try {
+    & $typescript -p tsconfig.button-tests.json --pretty false
+    if ($LASTEXITCODE -ne 0) { Stop-Package 'Current Program profile validation modules did not compile.' }
+  } finally { Pop-Location }
+  # Validate every selected current profile before creating Core or Program
+  # artifacts. A late program failure must not leave a partial release set.
+  foreach ($programDir in $programDirs) {
+    $profileArguments = @($profileHelper, '--program-root', $programDir.FullName, '--local-root', $resolvedProgramLocalRoot)
+    if ($resolvedProgramOwnerMap) { $profileArguments += @('--owner-map', $resolvedProgramOwnerMap) }
+    & node @profileArguments
+    if ($LASTEXITCODE -ne 0) { Stop-Package "Current saved profile preflight failed for '$($programDir.Name)'; no release artifacts were created." }
   }
 }
 

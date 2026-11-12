@@ -6,7 +6,7 @@ Writes: Ignored dist and Tauri build output. Prior installer ZIP is recycled bef
 Constraints: No portable ZIP, user state, registration, publication, or source mutation.
 #>
 [CmdletBinding()]
-param([string]$AutoHotkeyExe='C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe', [string]$AutoHotkeyLicenseFile='C:\Program Files\AutoHotkey\license.txt', [string]$OutputDirectory, [string]$BlenderThemeLibrary, [string[]]$ProgramNames)
+param([string]$AutoHotkeyExe='C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe', [string]$AutoHotkeyLicenseFile='C:\Program Files\AutoHotkey\license.txt', [string]$OutputDirectory, [string]$BlenderThemeLibrary, [string[]]$ProgramNames, [string]$ProgramLocalRoot, [string]$ProgramOwnerMap)
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $output=if($OutputDirectory){[IO.Path]::GetFullPath($OutputDirectory)}else{Join-Path $repo 'dist/release'}
@@ -15,8 +15,21 @@ function Stop-Package([string]$Message) { throw "[FlowCell package] $Message" }
 . (Join-Path $PSScriptRoot 'program-package-safety.ps1')
 . (Join-Path $PSScriptRoot 'blender-theme-packages.ps1')
 $programDirs=@(Get-ReleaseProgramDirectories -ProgramNames $ProgramNames)
+$ProgramLocalRoot=Resolve-ProgramProfileLocalRoot -RequestedRoot $ProgramLocalRoot
 if (@($programDirs | Where-Object { (Get-ProgramPackageContract $_).Manifest.programId -eq 'blender' }).Count -gt 0) {
     $BlenderThemeLibrary=Resolve-BlenderThemePackageLibrary -LibraryPath $BlenderThemeLibrary
+}
+# Verify all selected saved profiles before building or replacing any release asset.
+Push-Location (Join-Path $repo 'FlowCellFrontend')
+try {
+    & (Join-Path $repo 'FlowCellFrontend/node_modules/.bin/tsc.cmd') -p tsconfig.button-tests.json --pretty false
+    if ($LASTEXITCODE -ne 0) { throw 'Program profile validation modules did not compile.' }
+} finally { Pop-Location }
+foreach ($programDir in $programDirs) {
+    $profileArgs=@((Join-Path $PSScriptRoot 'prepare-program-profile.mjs'),'--program-root',$programDir.FullName,'--local-root',$ProgramLocalRoot)
+    if ($ProgramOwnerMap) { $profileArgs+=@('--owner-map',$ProgramOwnerMap) }
+    & node @profileArgs
+    if ($LASTEXITCODE -ne 0) { throw "Current saved profile preflight failed for '$($programDir.Name)'." }
 }
 & (Join-Path $PSScriptRoot 'prepare-installer.ps1') -AutoHotkeyExe $AutoHotkeyExe -AutoHotkeyLicenseFile $AutoHotkeyLicenseFile
 Push-Location (Join-Path $repo 'FlowCellFrontend')
@@ -27,6 +40,6 @@ if($installers.Count -ne 1){throw "Expected exactly one installer; found $($inst
 $zip=Join-Path $output 'flowcellwindowsinstaller.zip'
 if(Test-Path -LiteralPath $zip){Add-Type -AssemblyName Microsoft.VisualBasic;[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($zip,'OnlyErrorDialogs','SendToRecycleBin')}
 Compress-Archive -LiteralPath $installers[0].FullName -DestinationPath $zip
-& (Join-Path $PSScriptRoot 'package-portable.ps1') -ProgramsOnly -OutputDirectory $output -BlenderThemeLibrary $BlenderThemeLibrary -ProgramNames $ProgramNames
+& (Join-Path $PSScriptRoot 'package-portable.ps1') -ProgramsOnly -OutputDirectory $output -BlenderThemeLibrary $BlenderThemeLibrary -ProgramNames $ProgramNames -ProgramLocalRoot $ProgramLocalRoot -ProgramOwnerMap $ProgramOwnerMap
 & (Join-Path $PSScriptRoot 'verify-release.ps1') -Directory $output -ProgramNames $ProgramNames
 Write-Output "Installer and program source revision: $((& git -C $repo rev-parse HEAD).Trim()); programs: $(($programDirs | ForEach-Object Name) -join ', '). Output: $output"

@@ -6,6 +6,7 @@ import {
   mergeLegacyInstallsIntoDocument, uninstallButtonSource, type InstallButtonSourceResult
 } from "../button/state/ButtonStateRepository.js";
 import { ensureFanSetup, ensureRegularPopout } from "../button/state/buttonDocumentOperations.js";
+import { setButtonPopoutFanMode } from "../button/state/buttonPopoutInteractionOperations.js";
 import { reconcileProgramPanelOwners } from "../button/state/panelOwnerButtonOperations.js";
 import {
   applyPortableTheme, planPortableThemeImport, portableThemeForScope, type PortableTheme,
@@ -59,7 +60,7 @@ export async function previewPortableThemeImport(theme: PortableTheme, target: T
 }
 
 /** Create only missing canonical arrangements, through the same Button operations used by Pop/Fan. */
-function prepareThemeSurfaces(document: ButtonStateDocument, theme: PortableTheme, plan: PortableThemeImportPlan): void {
+export function prepareThemeSurfaces(document: ButtonStateDocument, theme: PortableTheme, plan: PortableThemeImportPlan): void {
   theme = portableThemeForScope(theme, plan.selectedTarget);
   for (const appearance of theme.theme.buttons) {
     const reference = theme.references[appearance.buttonId];
@@ -77,7 +78,17 @@ function prepareThemeSurfaces(document: ButtonStateDocument, theme: PortableThem
     const buttons = [...new Set(appearances.map((appearance) => plan.buttonIds[appearance.buttonId]))]
       .flatMap((id) => id && document.buttons[id] ? [document.buttons[id]] : []);
     if (surface.kind === "regular-popout" && buttons.length === appearances.length) {
-      ensureRegularPopout(document, buttons);
+      const unit = ensureRegularPopout(document, buttons.filter((button) => button.role === "single-script"),
+        { ownerless: !surface.ownerButtonId });
+      const owner = surface.ownerButtonId ? theme.references[surface.ownerButtonId] : null;
+      if (owner?.kind === "panel") {
+        setButtonPopoutFanMode({ document, surfaceId: unit.surfaceId, enabled: true,
+          programName: owner.programName, panelName: owner.panelName });
+        if (surface.popout?.interactionMode !== "fan") {
+          setButtonPopoutFanMode({ document, surfaceId: unit.surfaceId, enabled: false,
+            programName: owner.programName, panelName: owner.panelName });
+        }
+      }
     } else if (surface.kind === "fan" && surface.ownerButtonId) {
       const owner = theme.references[surface.ownerButtonId];
       if (owner?.kind === "panel") ensureFanSetup({
@@ -106,6 +117,8 @@ export interface PreparedPortableThemeImport {
 export async function preparePortableThemeImport(args: {
   theme: PortableTheme; target: ThemeTarget; document?: ButtonStateDocument;
   descriptors?: readonly ThemeToolDescriptor[]; extraDescriptors?: readonly ThemeToolDescriptor[];
+  /** Program setup already installed exactly the selected sources in its own transaction. */
+  allowSourceInstallation?: boolean;
 }): Promise<PreparedPortableThemeImport> {
   const original = args.document ?? await loadButtonStateDocument();
   let descriptors = [...(args.descriptors ?? await getThemeToolDescriptors(args.target)), ...(args.extraDescriptors ?? [])];
@@ -114,6 +127,10 @@ export async function preparePortableThemeImport(args: {
   // Missing arrangements may be created after dependency installation; identity/version errors may not.
   const blocking = plan.issues.filter((issue) => !issue.startsWith("Arrangement '") && !issue.includes("has 0 compatible identities."));
   if (blocking.length) throw new Error(blocking.join("\n"));
+  if (args.allowSourceInstallation === false && plan.missingDependencies.length) {
+    throw new Error(`Packaged appearance requires installed Buttons: ${plan.missingDependencies.map((dependency) =>
+      `${dependency.sourceName} (${dependency.sourceVersion})`).join(", ")}.`);
+  }
   const sources = plan.missingDependencies.map((dependency) => {
     const matches = installationCandidates(dependency, descriptors);
     if (matches.length !== 1) throw new Error(`${dependency.sourceName} (${dependency.sourceVersion}) has ${matches.length} compatible installation sources.`);

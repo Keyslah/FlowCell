@@ -52,6 +52,67 @@ Existing configured Windows programs are preserved on upgrade. Other programs
 retain the separate import and registration steps in Add Program. Neither upgrade
 nor normal uninstall removes this user data.
 
+### Current Program profiles and package verification
+
+Every Program ZIP is prepared from the current canonical saved setup. Release
+resolves its donor from `-ProgramLocalRoot`, then `FLOWCELL_PROGRAM_LOCAL_ROOT`,
+then the installed `%LOCALAPPDATA%/Programs/FlowCell/flowcell.runtime.json`
+`localRoot`. Missing or invalid selected roots stop release; there is no fallback
+to a development profile. A program without saved configuration in that root
+cannot be released as a matching profile. Hosted CI must provision that root and
+set `FLOWCELL_PROGRAM_LOCAL_ROOT` before the workflow starts; a path string alone
+does not transfer the profile to a hosted runner.
+
+The shared `prepare-program-profile.mjs` reads the current saved revision,
+installed source records, scripts and companion files, and local skin families.
+It matches stable source identities or unique exact execution matches, never
+visible labels. Uncataloged controls, altered scripts, missing helpers, ambiguous
+legacy identities, command/field mismatches, and missing skin families stop the
+release with the affected source identified. An optional `-ProgramOwnerMap` can
+resolve audited legacy identities; it cannot bypass content comparison.
+The producer captures a fresh preset and source selections into staging for
+each release, so a later saved label, state cycle, skin, color or arrangement is
+included without manually updating a Blender-specific snapshot. Original saved
+data and repository catalogs are not rewritten by this preparation.
+
+The staged manifest declares `defaultTheme` as a package-relative immutable JSON
+file under its support directory, outside the saved theme-library replacement directory. Add
+Program selects its source dependencies and offers **Use packaged appearance and
+layout**, checked by default. The preset restores the captured Button skins and
+numbered variants, labels, state cycles, text settings, colors, highlights, glow,
+panel ordering, and Pop/Fan arrangements through the existing portable-theme
+importer in the same canonical setup commit. Execution still comes only from the
+normal declared source installer. Missing source versions or moved dependencies
+fail before installation; existing saved settings for that Program require
+turning the preset off instead of being overwritten.
+
+`FlowCellProgramAppearance` version 1 stores repeated skin sections and variants
+once in literal JSON dictionaries; it does not alter their source.
+`default-appearance-provenance.json` records the donor revision/hash, captured
+counts and checked source hashes. Every captured occurrence is imported into a
+fresh recipient model using production installation, surface preparation and
+theme application logic, then compared for exact presentation, skin variants,
+field geometry and arrangements. Command targets and field definitions must
+survive unchanged. Inputs are checked again before preparation succeeds.
+
+For a read-only check, first compile the production test modules from
+`FlowCellFrontend` with `node_modules/.bin/tsc -p tsconfig.button-tests.json`, then
+run `node release-tools/prepare-program-profile.mjs --program-root Programs/<name>
+--local-root <saved-local-root>` from the repository root. The release driver
+performs this compilation itself and supplies a separate staging output folder.
+The older Blender-only capture helper remains an explicit catalog-maintenance
+utility; release does not use its frozen preset as the donor.
+
+After staging substitutions, `flowcell.package.json` inventories every immutable
+file by relative path, exact byte count and SHA-256. Release compares the archive
+to that exact inventory before publishing; the separate release verifier repeats
+the check. Native import validates the complete inventory and default appearance
+before committing the incoming directory. Missing, added, truncated or changed
+files fail. Older ZIPs without an inventory remain importable for compatibility;
+they do not receive this new byte-integrity guarantee. This proves the selected
+profile and packaged contents, not execution inside every host version or target
+computer; host runtime and live UI verification remain separate checks.
+
 The required Windows Startup panel uses the usual Button ownership,
 scripts and bindings. Setup preserves existing panel choices and settings.
 Sign-in registration passes `--logon` to the installed background launcher,

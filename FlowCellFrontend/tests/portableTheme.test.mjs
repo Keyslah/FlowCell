@@ -6,6 +6,7 @@ import { cloneButtonDocument, createButtonStateDocument } from "./.compiled-butt
 import { mergeLegacyInstallsIntoDocument } from "./.compiled-button-system/button/state/ButtonStateRepository.js";
 import { createButtonSourceIdentity } from "./.compiled-button-system/button/state/sourceIdentity.js";
 import { ensureRegularPopout, ensureFanSetup, hideThemeContributionOwner } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
+import { setButtonPopoutFanMode } from "./.compiled-button-system/button/state/buttonPopoutInteractionOperations.js";
 import { captureThemeFile, applyThemeFile, listThemePlacements } from "./.compiled-button-system/theme/themeModel.js";
 import { capturePortableTheme, planPortableThemeImport, applyPortableTheme, isPortableTheme, portableThemeForScope } from "./.compiled-button-system/theme/portableTheme.js";
 import { applyCommonProgramThemeEdit, applyLegacyProgramAppearance } from "./.compiled-button-system/theme/commonProgramTheme.js";
@@ -18,6 +19,7 @@ import { assignInstalledToolSetSkins } from "./.compiled-button-system/button/st
 import { serializeButtonSkinSections } from "./.compiled-button-system/button/skins/buttonSkinFormat.js";
 import { getEmbeddedButtonSkinFamilySources, resolveEmbeddedButtonSkinFamilySource } from "./.compiled-button-system/button/skins/buttonSkinFamily.js";
 import { reconcileProgramPanelOwners } from "./.compiled-button-system/button/state/panelOwnerButtonOperations.js";
+import { validateButtonStateDocument } from "./.compiled-button-system/button/state/buttonStateValidation.js";
 
 const target = { kind: "program", programName: "Blender", panelName: null };
 function fixture(owner = "donor", version = "1.0.0") {
@@ -332,6 +334,83 @@ function singleFixture(owner) {
   return { document, descriptor, unit };
 }
 
+test("portable themes retain installed page source identity when its execution uses a core action", () => {
+  const donor = singleFixture("installed-page");
+  donor.document.buttons["installed-page"].executionTarget = { kind: "core-action", actionId: "open-installed-page" };
+  const archive = capturePortableTheme({ document: donor.document, descriptors: [donor.descriptor], target, name: "Installed page" });
+  const reference = archive.references[archive.theme.buttons.find((entry) => entry.surfaceKind === "panel").buttonId];
+  assert.deepEqual(reference, { kind: "source", dependencyId: archive.dependencies[0].id, slot: null });
+  assert.equal(archive.dependencies[0].sourceId, donor.descriptor.sourceId);
+  assert.equal(isPortableTheme(archive), true);
+});
+
+test("popouts-only portable Tool Sets validate owner references without exporting the panel appearance", () => {
+  const donor = fixture();
+  const scope = { ...target, area: "popouts" };
+  const archive = capturePortableTheme({ document: donor.document, descriptors: [donor.descriptor], target: scope, name: "Tool popouts" });
+  assert.equal(isPortableTheme(archive), true);
+  assert.equal(archive.theme.buttons.every((appearance) => appearance.surfaceKind === "tool-set-popout"), true);
+  const ownerReference = Object.entries(archive.references).find(([, reference]) => reference.kind === "source" && reference.slot === null);
+  assert.ok(ownerReference);
+  assert.equal(archive.theme.buttons.some((appearance) => appearance.buttonId === ownerReference[0]), false);
+  const recipient = fixture("recipient");
+  const plan = planPortableThemeImport(recipient.document, archive, scope, [recipient.descriptor]);
+  assert.deepEqual(plan.issues, []);
+  const result = applyPortableTheme(recipient.document, archive, plan);
+  assert.equal(result.buttons.recipient.label, recipient.document.buttons.recipient.label);
+});
+
+test("portable validation preserves exact Pop and Fan owner anchors while rejecting invalid content geometry", () => {
+  const donor = singleFixture("donor");
+  const secondIdentity = createButtonSourceIdentity("Blender", "Tools", "second.flowcell-source.json");
+  donor.document = mergeLegacyInstallsIntoDocument(donor.document, [{ ownerButtonId: "second", sourceIdentity: secondIdentity,
+    label: "Second", tooltip: "", children: [], executionTarget: { kind: "panel-script", programName: "Blender",
+      panelName: "Tools", fileName: secondIdentity.displayFileName } }]);
+  const descriptors = [donor.descriptor, { ...donor.descriptor, ownerButtonId: "second", sourceId: "blender.second" }];
+  const buttons = [donor.document.buttons.donor, donor.document.buttons.second];
+  const fan = ensureFanSetup({ document: donor.document, programName: "Blender", panelName: "Tools", buttons });
+  const regular = ensureRegularPopout(donor.document, buttons);
+  const fanSurface = donor.document.surfaces[fan.fanSurfaceId];
+  const fanOwner = fanSurface.placementIds.map((id) => donor.document.placements[id])
+    .find((placement) => placement.buttonId === fan.panelOwnerButtonId);
+  const fanMember = donor.document.placements[fan.fanMemberPlacementIds[0]];
+  fanSurface.uniformButtonSize = { width: fanMember.width, height: fanMember.height };
+  for (const id of fan.fanMemberPlacementIds) Object.assign(donor.document.placements[id],
+    { width: fanMember.width, height: fanMember.height, matchHitboxToSkin: false, allowLabelResize: false });
+  Object.assign(fanOwner, { x: -1, y: fanMember.y, width: fanMember.width / 2, height: fanMember.height / 2 });
+  const regularSurface = donor.document.surfaces[regular.surfaceId];
+  const regularMember = donor.document.placements[regular.memberPlacementIds[0]];
+  const regularOwner = { ...structuredClone(fanOwner), id: "regular-owner-anchor", surfaceId: regular.surfaceId,
+    y: regularMember.y, width: regularMember.width / 2, height: regularMember.height / 2 };
+  donor.document.placements[regularOwner.id] = regularOwner;
+  regularSurface.placementIds.push(regularOwner.id);
+  regularSurface.uniformButtonSize = { width: regularMember.width, height: regularMember.height };
+  for (const id of regular.memberPlacementIds) Object.assign(donor.document.placements[id],
+    { width: regularMember.width, height: regularMember.height, matchHitboxToSkin: false, allowLabelResize: false });
+  regular.ownerButtonId = fan.panelOwnerButtonId;
+  regular.ownerPlacementId = regularOwner.id;
+  assert.deepEqual(validateButtonStateDocument(donor.document).issues, []);
+  const archive = capturePortableTheme({ document: donor.document, descriptors, target, name: "Exact anchors" });
+  assert.equal(isPortableTheme(archive), true);
+  assert.deepEqual(planPortableThemeImport(donor.document, archive, target, descriptors).issues, [],
+    "a complete single-Button Pop must resolve to itself rather than its larger overlapping member group");
+  const savedSurface = archive.surfaces.find((surface) => surface.kind === "fan");
+  const savedOwner = archive.theme.buttons.find((appearance) => appearance.surfaceId === savedSurface.id &&
+    appearance.buttonId === savedSurface.ownerButtonId);
+  assert.equal(archive.presentation[savedOwner.placementId].placement.x, -1);
+  const contents = archive.theme.buttons.filter((appearance) => appearance.surfaceId === savedSurface.id &&
+    appearance.buttonId !== savedSurface.ownerButtonId);
+  const overlapping = structuredClone(archive);
+  Object.assign(overlapping.presentation[contents[1].placementId].placement, {
+    x: archive.presentation[contents[0].placementId].placement.x,
+    y: archive.presentation[contents[0].placementId].placement.y
+  });
+  assert.equal(isPortableTheme(overlapping), false, "the owner exemption must not permit overlapping content Buttons");
+  const outside = structuredClone(archive);
+  outside.presentation[contents[0].placementId].placement.x = -1;
+  assert.equal(isPortableTheme(outside), false, "content still has to fit its exact surface bounds");
+});
+
 test("portable dependency installation forwards exact catalog identity and leaves archived source identity local", async () => {
   const source = readFileSync(new URL("../src/theme/portableThemeService.ts", import.meta.url), "utf8");
   const parsed = ts.createSourceFile("portableThemeService.ts", source, ts.ScriptTarget.Latest, true);
@@ -350,7 +429,7 @@ test("portable dependency installation forwards exact catalog identity and leave
       executionTarget: { kind: "panel-script", programName: "Blender", panelName: "Tools", fileName: identity.displayFileName } };
     const runtime = {
       cloneButtonDocument, mergeLegacyInstallsIntoDocument, planPortableThemeImport, portableThemeForScope, applyPortableTheme,
-      ensureRegularPopout, ensureFanSetup, reconcileProgramPanelOwners,
+      ensureRegularPopout, ensureFanSetup, reconcileProgramPanelOwners, setButtonPopoutFanMode,
       createStableButtonId: () => "recipient",
       getThemeToolDescriptors: async () => [available, ...(request ? [{ ...available, ownerButtonId: "recipient",
         sourceId: catalogPath ? request.bundledSourceId : available.sourceId,

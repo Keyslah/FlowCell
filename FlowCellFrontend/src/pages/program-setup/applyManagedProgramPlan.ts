@@ -17,6 +17,7 @@ import {
 import { publishButtonCommit } from "../../button/state/ButtonDraftBus.js";
 import { reconcileProgramPanelOwners } from "../../button/state/panelOwnerButtonOperations.js";
 import { buildPanelRailOwnerEntries, panelRailOwnerSurfaceBounds } from "../main/mainLayout.js";
+import { applyProgramDefaultTheme, requireNewProgramAppearance, stampProgramAppearanceReceipt } from "./programDefaultTheme.js";
 
 const defaultOperations = {
   apply: applyAddProgramPlan,
@@ -27,7 +28,8 @@ const defaultOperations = {
   rollback: rollbackAddProgramPlan,
   statuses: listProgramSetupStatuses,
   publish: publishButtonCommit,
-  notify: emitProgramSetupCommitted
+  notify: emitProgramSetupCommitted,
+  theme: applyProgramDefaultTheme
 };
 
 function message(error: unknown): string {
@@ -45,20 +47,29 @@ export async function applyManagedProgramPlan(
   try {
     const applied = await operations.apply(request);
     token = applied.transactionToken;
+    if (request.applyDefaultTheme && !applied.defaultTheme) {
+      throw new Error("The Program installer did not return its requested packaged appearance.");
+    }
     onProgress("Saving installed buttons and panel choices…");
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const base = await operations.load();
-      const next = reconcileBundledProgramSources(base, applied.descriptors);
+      if (applied.defaultTheme) requireNewProgramAppearance(base, applied.programName);
+      let next = reconcileBundledProgramSources(base, applied.descriptors);
       const panels = reconcileProgramPanelOwners(next, {
         programName: applied.programName,
         panels: buildPanelRailOwnerEntries(applied.panels),
         surfaceBounds: panelRailOwnerSurfaceBounds,
         removeStaleOwners: false
       });
+      if (applied.defaultTheme) {
+        onProgress("Applying the packaged appearance and layout…");
+        next = await operations.theme(next, applied.programName, applied.defaultTheme);
+      }
       const expectedIds = [
         ...applied.descriptors.map((descriptor) => String(descriptor.ownerButtonId ?? "")),
         ...panels.owners.map((owner) => owner.buttonId)
       ].filter(Boolean);
+      if (applied.defaultTheme) stampProgramAppearanceReceipt(next, expectedIds, applied.defaultThemeReceipt);
       await operations.prepare(token, expectedIds);
       try {
         if (!buttonStateDocumentsEqual(next, base)) await operations.commit(next, base.revision);

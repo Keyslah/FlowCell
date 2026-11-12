@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "blender.boolean",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "label": "boolean",
-  "tooltip": "Quick Boolean with I/U/D operation buttons, one cycling solver button, SI/HT/HC/S toggles, and Run.",
+  "tooltip": "Quick Boolean with I/U/D operation buttons, solver fanout, SI/HT/HC/S toggles, and Run.",
   "kind": "toolset",
   "program": "Blender",
   "source": "boolean.py",
@@ -19,7 +19,7 @@
     {
       "slot": "operation_intersect",
       "label": "I",
-      "tooltip": "Set the boolean operation to Intersect.",
+      "tooltip": "Intersect",
       "payload": {
         "command": "operation_intersect",
         "action": "operation_intersect"
@@ -28,7 +28,7 @@
     {
       "slot": "operation_union",
       "label": "U",
-      "tooltip": "Set the boolean operation to Union.",
+      "tooltip": "Union",
       "payload": {
         "command": "operation_union",
         "action": "operation_union"
@@ -37,7 +37,7 @@
     {
       "slot": "operation_difference",
       "label": "D",
-      "tooltip": "Set the boolean operation to Difference.",
+      "tooltip": "Difference",
       "payload": {
         "command": "operation_difference",
         "action": "operation_difference"
@@ -46,7 +46,7 @@
     {
       "slot": "solver_cycle",
       "label": "Exact",
-      "tooltip": "Cycle the boolean solver between Exact, Float, and Manifold.",
+      "tooltip": "Cycle Exact, Float, and Manifold.",
       "payload": {
         "command": "cycle_solver",
         "action": "cycle_solver"
@@ -55,7 +55,7 @@
     {
       "slot": "toggle_self_intersection",
       "label": "SI",
-      "tooltip": "Toggle self-intersection support.",
+      "tooltip": "self-intersection",
       "payload": {
         "command": "toggle_self_intersection",
         "action": "toggle_self_intersection"
@@ -64,7 +64,7 @@
     {
       "slot": "toggle_hole_tolerant",
       "label": "HT",
-      "tooltip": "Toggle hole-tolerant solving.",
+      "tooltip": "hole-tolerant ",
       "payload": {
         "command": "toggle_hole_tolerant",
         "action": "toggle_hole_tolerant"
@@ -73,7 +73,7 @@
     {
       "slot": "toggle_hide_cutter",
       "label": "HC",
-      "tooltip": "Toggle hiding the cutter after running.",
+      "tooltip": "Hide Cutter ",
       "payload": {
         "command": "toggle_hide_cutter",
         "action": "toggle_hide_cutter"
@@ -82,7 +82,7 @@
     {
       "slot": "toggle_backup_active",
       "label": "S",
-      "tooltip": "Toggle taking a FlowCell snapshot before running.",
+      "tooltip": "snapshot ",
       "payload": {
         "command": "toggle_backup_active",
         "action": "toggle_backup_active"
@@ -91,7 +91,7 @@
     {
       "slot": "run_boolean",
       "label": "Run",
-      "tooltip": "Run the quick boolean operation.",
+      "tooltip": "Run ",
       "payload": {
         "command": "run_boolean",
         "action": "run_boolean"
@@ -345,7 +345,44 @@
         "allowLabelResize": false,
         "matchHitboxToSkin": false,
         "allowStretching": false,
-        "highlightOnHover": false
+        "highlightOnHover": false,
+        "activationCycle": {
+          "states": [
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-8cefd46a-a366-4e9f-bb69-4eedc6dfde01",
+              "label": "Exact",
+              "resultMatches": [
+                {
+                  "solver": "EXACT"
+                }
+              ],
+              "visualState": "base"
+            },
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-c9830d96-89bc-426e-ae92-623b6aa4d461",
+              "label": "Float",
+              "resultMatches": [
+                {
+                  "solver": "FAST"
+                }
+              ],
+              "visualState": "base"
+            },
+            {
+              "advanceTrigger": "press",
+              "id": "button-state-b63018ad-991e-42e6-b1f5-696c789b8715",
+              "label": "Manifold",
+              "resultMatches": [
+                {
+                  "solver": "MANIFOLD"
+                }
+              ],
+              "visualState": "base"
+            }
+          ]
+        }
       },
       "toggle_self_intersection": {
         "textFitMode": "shrink",

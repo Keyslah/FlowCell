@@ -10,6 +10,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $RepoRoot=Split-Path -Parent $PSScriptRoot
 function Stop-Package([string]$message){throw $message}
 . (Join-Path $PSScriptRoot 'program-package-safety.ps1')
+. (Join-Path $PSScriptRoot 'program-package-integrity.ps1')
 $programDirs=@(Get-ReleaseProgramDirectories -ProgramNames $ProgramNames)
 $expected=@('flowcellwindowsinstaller.zip')
 foreach($programDir in $programDirs){
@@ -19,6 +20,7 @@ foreach($programDir in $programDirs){
     $expected+=$asset
     $zipPath=Join-Path $Directory $asset
     Assert-ProgramZipInvariant $zipPath $name @($manifest.localScriptsFolder,$manifest.panelsFolder)
+    Assert-ProgramZipInventory $zipPath $name ([string]$manifest.programId)
     $archive=[IO.Compression.ZipFile]::OpenRead($zipPath)
     try{
         $prefix="Programs/$name/"

@@ -7792,7 +7792,7 @@ test("Blender Flatten/Revolve ships one clean-import toolset with skinned select
 
   assert.equal(manifest.kind, "toolset");
   assert.equal(manifest.program, "Blender");
-  assert.equal(manifest.version, "1.1.3");
+  assert.equal(manifest.version, "1.1.4");
   assert.equal(manifest.source, "flatten revolve.py");
   assert.deepEqual(childSlots, [
     "pivot_select",
@@ -8050,7 +8050,7 @@ test("Blender Rotate shares one inline-value Button between Transform and Distri
     "flowcell.toolset.json"
   );
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  assert.equal(manifest.version, "1.1.3");
+  assert.equal(manifest.version, "1.1.4");
   assert.deepEqual(
     manifest.children.map((child) => child.slot),
     [

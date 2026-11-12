@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "blender.snap-cursor",
+  "label": "Cursor",
+  "tooltip": "Toggle Cursor snap between moving the selection to the cursor and moving the cursor to the selection.",
+  "program": "Blender",
+  "source": "snap.py",
+  "bridgeData": {
+    "command": "cursor"
+  }
+}

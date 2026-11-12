@@ -11,16 +11,19 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
-      - name: Require the saved Blender themes folder
+      - name: Require authoritative saved Program profiles and Blender themes
         shell: powershell
         env:
           FLOWCELL_BLENDER_THEME_LIBRARY: ${{ vars.FLOWCELL_BLENDER_THEME_LIBRARY }}
+          FLOWCELL_PROGRAM_LOCAL_ROOT: ${{ vars.FLOWCELL_PROGRAM_LOCAL_ROOT }}
         run: |
           $ErrorActionPreference = 'Stop'
           $RepoRoot = $PWD.Path
           function Stop-Package([string]$Message) { throw "[FlowCell package] $Message" }
           . release-tools/program-package-safety.ps1
           . release-tools/blender-theme-packages.ps1
+          $profiles = Resolve-ProgramProfileLocalRoot -RequestedRoot $env:FLOWCELL_PROGRAM_LOCAL_ROOT
+          "FLOWCELL_PROGRAM_LOCAL_ROOT=$profiles" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $library = Resolve-BlenderThemePackageLibrary -LibraryPath $env:FLOWCELL_BLENDER_THEME_LIBRARY
           "FLOWCELL_BLENDER_THEME_LIBRARY=$library" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - uses: actions/setup-node@v4
@@ -54,6 +57,10 @@ jobs:
           & release-tools/tests/Test-BackendStartup.ps1
           & release-tools/tests/Test-BlenderThemePackages.ps1
           & release-tools/tests/Test-BlenderThemeReleasePreflight.ps1
+          & release-tools/tests/Test-ProgramPackageIntegrity.ps1
+          & release-tools/tests/Test-ProgramProfileRoot.ps1
+          & release-tools/tests/Test-ProgramProfileReleasePreflight.ps1
+          & release-tools/tests/Test-ProgramDefaultAppearancePreflight.ps1
           & flowcellbackend/helpers/tests/Test-FlowCellPreflightManifestPaths.ps1
       - name: Program package regression tests
         shell: pwsh
@@ -76,7 +83,7 @@ jobs:
       - name: Build installer and all program ZIPs
         shell: powershell
         run: |
-          & release-tools/build-installer.ps1 -AutoHotkeyExe "$PWD/dist/dependencies/ahk/AutoHotkey64.exe" -AutoHotkeyLicenseFile "$PWD/dist/dependencies/ahk/license.txt" -BlenderThemeLibrary $env:FLOWCELL_BLENDER_THEME_LIBRARY
+          & release-tools/build-installer.ps1 -AutoHotkeyExe "$PWD/dist/dependencies/ahk/AutoHotkey64.exe" -AutoHotkeyLicenseFile "$PWD/dist/dependencies/ahk/license.txt" -BlenderThemeLibrary $env:FLOWCELL_BLENDER_THEME_LIBRARY -ProgramLocalRoot $env:FLOWCELL_PROGRAM_LOCAL_ROOT
       - name: Install, launch, upgrade, and uninstall smoke test
         shell: powershell
         run: |

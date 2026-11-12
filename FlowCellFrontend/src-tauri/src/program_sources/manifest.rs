@@ -43,6 +43,8 @@ pub(crate) struct ProgramManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme_library: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_theme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bind_actions_file: Option<String>,
 }
 
@@ -396,6 +398,14 @@ pub(crate) fn validate_manifest(
     }
     if let Some(library) = manifest.theme_library.as_mut() {
         *library = normalize_relative_manifest_path(library, "themeLibrary", false)?;
+    }
+    if let Some(theme) = manifest.default_theme.as_mut() {
+        *theme = normalize_relative_manifest_path(theme, "defaultTheme", false)?;
+        let path = resolve_relative_manifest_path(program_root, theme, "defaultTheme", false)?
+            .ok_or("Program defaultTheme path is empty.")?;
+        if !path.is_file() || path.extension().is_none_or(|extension| !extension.eq_ignore_ascii_case("json")) {
+            return Err(format!("Program defaultTheme requires an existing JSON file: {}.", path.display()));
+        }
     }
     if let Some(file) = &manifest.bind_actions_file {
         super::bind_actions::validate_relative_file(file)?;

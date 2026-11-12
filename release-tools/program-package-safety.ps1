@@ -3,6 +3,35 @@ Set-StrictMode -Version Latest
 # This helper is dot-sourced by package-portable.ps1. Stop-Package and
 # $RepoRoot are supplied by that release driver.
 
+function Resolve-ProgramProfileLocalRoot([string]$RequestedRoot) {
+  $localRoot = $RequestedRoot
+  if ([string]::IsNullOrWhiteSpace($localRoot)) { $localRoot = $env:FLOWCELL_PROGRAM_LOCAL_ROOT }
+  if ([string]::IsNullOrWhiteSpace($localRoot)) {
+    if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+      Stop-Package 'Program ZIPs require -ProgramLocalRoot or FLOWCELL_PROGRAM_LOCAL_ROOT; the installed FlowCell runtime location is unavailable.'
+    }
+    $runtimePath = Join-Path $env:LOCALAPPDATA 'Programs/FlowCell/flowcell.runtime.json'
+    if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
+      Stop-Package 'Program ZIPs require -ProgramLocalRoot or FLOWCELL_PROGRAM_LOCAL_ROOT; no installed FlowCell runtime configuration identifies the current saved profile.'
+    }
+    if ((Get-Item -LiteralPath $runtimePath).Length -gt 65536) { Stop-Package 'Installed FlowCell runtime configuration exceeds 65536 bytes.' }
+    try { $runtime = [IO.File]::ReadAllText($runtimePath) | ConvertFrom-Json }
+    catch { Stop-Package "Installed FlowCell runtime configuration is invalid JSON: $runtimePath" }
+    if ($null -eq $runtime -or -not $runtime.PSObject.Properties['localRoot'] -or $runtime.localRoot -isnot [string]) {
+      Stop-Package "Installed FlowCell runtime configuration does not declare localRoot: $runtimePath"
+    }
+    $localRoot = $runtime.localRoot
+  }
+  if ([string]::IsNullOrWhiteSpace($localRoot) -or -not [IO.Path]::IsPathRooted($localRoot)) {
+    Stop-Package 'ProgramLocalRoot must be an absolute path to the current saved FlowCell local root.'
+  }
+  $localRoot = [IO.Path]::GetFullPath($localRoot)
+  if (-not (Test-Path -LiteralPath (Join-Path $localRoot 'button-system/button-state.json') -PathType Leaf)) {
+    Stop-Package "ProgramLocalRoot has no canonical button-system/button-state.json: $localRoot. Catalog-only packaging cannot preserve the working configuration."
+  }
+  return (Resolve-Path -LiteralPath $localRoot).Path
+}
+
 function Get-ReleaseProgramDirectories([string[]]$ProgramNames) {
   $manifestPaths = @(& git -C $RepoRoot -c core.quotePath=false ls-files -- 'Programs/*/flowcell.program.json')
   if ($LASTEXITCODE -ne 0) { Stop-Package 'Could not discover tracked program manifests.' }
@@ -141,11 +170,124 @@ function Assert-TrackedProgramReference(
   return $candidate
 }
 
+function Assert-PortableAppearanceData($Value, [string]$Location) {
+  if ($null -eq $Value) { return }
+  if ($Value -is [string]) {
+    if ($Value -match '^(?:[A-Za-z]:[\\/]|\\\\|file://|//)') {
+      Stop-Package "Program defaultTheme contains an absolute local path at $Location."
+    }
+    return
+  }
+  if ($Value -is [System.Array]) {
+    foreach ($item in $Value) { Assert-PortableAppearanceData $item "$Location[]" }
+    return
+  }
+  if ($Value -isnot [pscustomobject]) { return }
+  foreach ($property in $Value.PSObject.Properties) {
+    if ($null -ne $property.Value -and @(
+      'executionTarget', 'execution', 'sourceIdentity', 'sourcePath', 'catalogPath',
+      'localPackagePath', 'bridgeAction', 'bridgeData', 'runner', 'events', 'inlineScript'
+    ) -contains $property.Name) {
+      Stop-Package "Program defaultTheme cannot embed executable or local source data at $Location.$($property.Name)."
+    }
+    Assert-PortableAppearanceData $property.Value "$Location.$($property.Name)"
+  }
+}
+
+function Assert-ProgramDefaultThemeReferences(
+  [System.IO.DirectoryInfo]$ProgramDirectory,
+  $Manifest,
+  [string[]]$TrackedFiles
+) {
+  if (-not $Manifest.PSObject.Properties['defaultTheme'] -or $null -eq $Manifest.defaultTheme) { return }
+  $path = Assert-TrackedProgramReference $ProgramDirectory $TrackedFiles ([string]$Manifest.defaultTheme) 'defaultTheme' -RequireFile
+  if ([IO.Path]::GetExtension($path) -ine '.json') { Stop-Package 'Program defaultTheme must name a JSON file.' }
+  try { $file = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json }
+  catch { Stop-Package "Program defaultTheme is invalid JSON: $path ($($_.Exception.Message))" }
+  if (-not $file.PSObject.Properties['kind'] -or -not $file.PSObject.Properties['version'] -or $file.version -ne 1) {
+    Stop-Package 'Program defaultTheme has an unsupported format.'
+  }
+  $compact = $file.kind -ceq 'FlowCellProgramAppearance'
+  if ($compact) {
+    foreach ($property in $file.PSObject.Properties) {
+      if (@('kind', 'version', 'theme', 'skins', 'skinSources') -notcontains $property.Name) {
+        Stop-Package "Program defaultTheme contains unsupported embedded data: $($property.Name)."
+      }
+    }
+  }
+  $theme = if ($compact -and $file.PSObject.Properties['theme']) { $file.theme } else { $file }
+  if ($theme.kind -cne 'FlowCellPortableTheme' -or $theme.version -ne 1 -or
+      $theme.target.kind -cne 'program' -or $theme.target.programName -ine $Manifest.label -or
+      $null -ne $theme.target.panelName -or $theme.target.PSObject.Properties['area']) {
+    Stop-Package 'Program defaultTheme must target this whole Program.'
+  }
+  Assert-PortableAppearanceData $theme 'defaultTheme.theme'
+  $sources = @{}
+  foreach ($source in @($Manifest.bundledSources)) { $sources[[string]$source.id] = $source }
+  $dependencies = @{}
+  if ($theme.dependencies -isnot [System.Array]) { Stop-Package 'Program defaultTheme dependencies must be an array.' }
+  foreach ($dependency in $theme.dependencies) {
+    foreach ($field in @('id', 'programName', 'programId', 'panelName', 'sourceId', 'sourceVersion')) {
+      if (-not $dependency.PSObject.Properties[$field] -or [string]::IsNullOrWhiteSpace([string]$dependency.$field)) {
+        Stop-Package "Program defaultTheme dependency requires $field."
+      }
+    }
+    if ($dependencies.ContainsKey([string]$dependency.id)) { Stop-Package 'Program defaultTheme duplicates a dependency id.' }
+    if (-not $sources.ContainsKey([string]$dependency.sourceId)) {
+      Stop-Package "Program defaultTheme dependency '$($dependency.sourceId)' is not a bundled source."
+    }
+    $source = $sources[[string]$dependency.sourceId]
+    if ($dependency.sourceVersion -cne $source.version -or $dependency.panelName -ine $source.panelName -or
+        $dependency.programName -ine $Manifest.label -or $dependency.programId -ine $Manifest.programId) {
+      Stop-Package "Program defaultTheme dependency '$($dependency.sourceId)' does not match its bundled source version, panel or Program."
+    }
+    $dependencies[[string]$dependency.id] = $dependency
+  }
+  foreach ($reference in $theme.references.PSObject.Properties) {
+    if ($reference.Value.kind -eq 'source' -and -not $dependencies.ContainsKey([string]$reference.Value.dependencyId)) {
+      Stop-Package "Program defaultTheme reference '$($reference.Name)' has no dependency."
+    }
+  }
+  if (-not $compact) { return }
+  if (-not $file.PSObject.Properties['skins'] -or $file.skins -isnot [pscustomobject] -or
+      -not $file.PSObject.Properties['skinSources'] -or $file.skinSources -isnot [pscustomobject]) {
+    Stop-Package 'Program defaultTheme requires compact skins and skinSources dictionaries.'
+  }
+  # Literal markup/CSS is kept in skinSources. Validate references without
+  # scanning, expanding, rewriting or executing those potentially large strings.
+  Assert-PortableAppearanceData $file.skins 'defaultTheme.skins'
+  foreach ($entry in $file.skinSources.PSObject.Properties) {
+    if ($entry.Value -isnot [string]) { Stop-Package 'Program defaultTheme skinSources values must be strings.' }
+  }
+  foreach ($entry in $file.skins.PSObject.Properties) {
+    foreach ($section in @('structure', 'base', 'hover', 'pressed', 'held', 'release', 'play', 'disabled', 'error', 'keyframes')) {
+      if (-not $entry.Value.PSObject.Properties[$section] -or
+          -not $file.skinSources.PSObject.Properties[[string]$entry.Value.$section]) {
+        Stop-Package "Program defaultTheme skin '$($entry.Name)' references a missing $section source."
+      }
+    }
+    if ($entry.Value.PSObject.Properties['metadata'] -and
+        $entry.Value.metadata.PSObject.Properties['buttonSkinEmbeddedVariants']) {
+      foreach ($variant in $entry.Value.metadata.buttonSkinEmbeddedVariants.PSObject.Properties) {
+        if (-not $file.skinSources.PSObject.Properties[[string]$variant.Value]) {
+          Stop-Package "Program defaultTheme skin '$($entry.Name)' references a missing variant source."
+        }
+      }
+    }
+  }
+  foreach ($button in @($theme.theme.buttons)) {
+    if ($button.skin -isnot [string] -or -not $file.skins.PSObject.Properties[$button.skin]) {
+      Stop-Package 'Program defaultTheme references a missing skin.'
+    }
+  }
+}
+
 function Assert-ProgramManifestReferencesTracked(
   [System.IO.DirectoryInfo]$ProgramDirectory,
   $Manifest,
   [string[]]$TrackedFiles
 ) {
+  Assert-ProgramDefaultThemeReferences $ProgramDirectory $Manifest $TrackedFiles
   $supportScriptsFolder = Convert-ToSafeRelativeFolder ([string]$Manifest.supportScriptsFolder) 'supportScriptsFolder' $ProgramDirectory.Name
   if ($Manifest.PSObject.Properties['bindActionsFile'] -and $null -ne $Manifest.bindActionsFile) {
     $actionsPath = Assert-TrackedProgramReference $ProgramDirectory $TrackedFiles ([string]$Manifest.bindActionsFile) 'bindActionsFile' -RequireFile

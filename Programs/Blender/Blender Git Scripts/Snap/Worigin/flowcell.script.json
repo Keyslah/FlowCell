@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "blender.snap-worigin",
+  "label": "Worigin",
+  "tooltip": "Move the 3D cursor to the world origin.",
+  "program": "Blender",
+  "source": "snap.py",
+  "bridgeData": {
+    "command": "worigin"
+  }
+}

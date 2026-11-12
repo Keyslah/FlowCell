@@ -315,6 +315,106 @@ fn validate_archive(theme: &Value, program_name: Option<&str>) -> Result<Vec<(St
     Ok(assets.into_iter().collect())
 }
 
+/// Package defaults reuse the portable presentation format; executable sources
+/// remain exclusively owned by the normal Program installer.
+pub(crate) fn read_program_default_theme(
+    program_root: &Path,
+    manifest: &manifest::ProgramManifest,
+) -> Result<Option<Value>, String> {
+    let Some(relative) = manifest.default_theme.as_deref() else { return Ok(None); };
+    let path = manifest::resolve_relative_manifest_path(program_root, relative, "defaultTheme", false)?
+        .ok_or("Program defaultTheme path is empty.")?;
+    if fs::metadata(&path).map_err(|error| error.to_string())?.len() > 16 * 1024 * 1024 {
+        return Err("Program defaultTheme exceeds 16 MiB.".into());
+    }
+    let file = read_json(&path)?;
+    let theme = program_appearance_theme(&file)?;
+    validate_program_default_theme(theme, manifest)?;
+    Ok(Some(file))
+}
+
+pub(crate) fn program_default_theme_receipt(theme: &Value) -> Result<String, String> {
+    Ok(digest(&serde_json::to_vec(theme).map_err(|error| error.to_string())?))
+}
+
+fn program_appearance_theme(file: &Value) -> Result<&Value, String> {
+    if file["kind"] != "FlowCellProgramAppearance" { return Ok(file); }
+    if file["version"] != 1 { return Err("Unsupported packaged Program appearance format.".into()); }
+    let sources = file["skinSources"].as_object().ok_or("Packaged Program skin sources are missing.")?;
+    let skins = file["skins"].as_object().ok_or("Packaged Program skins are missing.")?;
+    if sources.len() > 4096 || skins.len() > 4096 {
+        return Err("Packaged Program appearance exceeds 4096 skins or sources.".into());
+    }
+    let mut bytes = 0usize;
+    for source in sources.values() {
+        let source = source.as_str().ok_or("Packaged Program skin source must be a string.")?;
+        bytes += source.len();
+        if source.len() > crate::button_state::BUTTON_SKIN_FILE_MAX_BYTES || bytes > 16 * 1024 * 1024 {
+            return Err("Packaged Program skin sources exceed 2 MiB each or 16 MiB total.".into());
+        }
+        if source.contains("theme-asset:") {
+            return Err("Program defaultTheme cannot require embedded theme assets.".into());
+        }
+    }
+    let read_source = |key: &Value| -> Result<&str, String> {
+        key.as_str().and_then(|key| sources.get(key)).and_then(Value::as_str)
+            .ok_or_else(|| "Packaged Program appearance references a missing skin source.".to_string())
+    };
+    let mut validated_variants = std::collections::BTreeSet::new();
+    for packed in skins.values() {
+        if !packed.is_object() { return Err("Packaged Program skin must be an object.".into()); }
+        let mut source = String::new();
+        for section in ["structure", "keyframes", "base", "hover", "play", "pressed", "held", "release", "disabled", "error"] {
+            source.push_str(&format!("=== {section} ===\n{}\n", read_source(&packed[section])?));
+        }
+        crate::button_state::validate_button_skin_source(&source)?;
+        if let Some(variants) = packed["metadata"].get("buttonSkinEmbeddedVariants") {
+            let variants = variants.as_object().ok_or("Packaged Program skin variants must be an object.")?;
+            for key in variants.values() {
+                let identity = key.as_str().ok_or("Packaged Program skin variant reference must be a string.")?;
+                if validated_variants.insert(identity) { crate::button_state::validate_button_skin_source(read_source(key)?)?; }
+            }
+        }
+    }
+    for appearance in file["theme"]["theme"]["buttons"].as_array().ok_or("Packaged Program Buttons are missing.")? {
+        let key = appearance["skin"].as_str().ok_or("Packaged Program skin reference must be a string.")?;
+        if !skins.contains_key(key) { return Err("Packaged Program appearance references a missing skin.".into()); }
+    }
+    // Validate the compact header/dependencies. Repeating each full skin for
+    // every Button would turn a small package into hundreds of MiB here.
+    Ok(&file["theme"])
+}
+
+fn validate_program_default_theme(theme: &Value, manifest: &manifest::ProgramManifest) -> Result<(), String> {
+    validate_archive(theme, Some(&manifest.label))?;
+    let target = &theme["target"];
+    if !target["panelName"].is_null() || !target["area"].is_null() {
+        return Err("Program defaultTheme must cover the whole Program.".into());
+    }
+    for field in ["sources", "assets"] {
+        if theme.get(field).is_some_and(|value| value.as_array().is_none_or(|entries| !entries.is_empty())) {
+            return Err(format!("Program defaultTheme cannot contain embedded {field}; use package-owned files."));
+        }
+    }
+    if theme.get("contributions").is_some_and(|value| value.as_object().is_none_or(|entries| !entries.is_empty())) {
+        return Err("Program defaultTheme can contain presentation only, without application contributions.".into());
+    }
+    for dependency in theme["dependencies"].as_array().ok_or("Program defaultTheme dependencies are missing.")? {
+        let source = manifest.bundled_sources.iter().find(|source| {
+            dependency["programId"].as_str() == Some(manifest.program_id.as_str())
+                && dependency["sourceId"].as_str() == Some(source.id.as_str())
+                && dependency["sourceVersion"].as_str() == Some(source.version.as_str())
+                && dependency["panelName"].as_str() == Some(source.panel_name.as_str())
+                && dependency["importKind"].as_str() == Some(source.import_kind.as_str())
+        });
+        if source.is_none() {
+            return Err(format!("Program defaultTheme requires a matching packaged source: {} @ {} in {}.",
+                dependency["sourceId"], dependency["sourceVersion"], dependency["panelName"]));
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) fn get_theme_tool_descriptors(program_name: Option<String>) -> Result<Vec<Value>, String> {
     let programs = match program_name { Some(name) => vec![crate::require_registered_program_name(&name)?], None => return Ok(Vec::new()) };
@@ -505,6 +605,47 @@ pub(crate) fn finish_theme_archive_sources(token: String) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn program_appearance_validates_shared_sections_and_variants_without_expanding_buttons() {
+        let mut skin = json!({"id":"literal-id", "name":"Literal skin", "metadata":{"buttonSkinEmbeddedVariants":{"3":"variant"}}});
+        let mut variant = String::new();
+        for section in ["structure", "keyframes", "base", "hover", "play", "pressed", "held", "release", "disabled", "error"] {
+            skin[section] = json!("source-0");
+            variant.push_str(&format!("=== {section} ===\nunchanged literal source\n"));
+        }
+        let file = json!({"kind":"FlowCellProgramAppearance", "version":1,
+            "skinSources":{"source-0":"unchanged literal source", "variant":variant}, "skins":{"skin-0":skin},
+            "theme":{"theme":{"buttons":[{"skin":"skin-0"},{"skin":"skin-0"}]}}});
+        let validated = program_appearance_theme(&file).unwrap();
+        assert!(std::ptr::eq(validated, &file["theme"]));
+        assert_eq!(validated["theme"]["buttons"][0]["skin"], "skin-0");
+        let mut invalid = file.clone(); invalid["theme"]["theme"]["buttons"][0]["skin"] = json!("missing");
+        assert!(program_appearance_theme(&invalid).unwrap_err().contains("missing skin"));
+        let mut invalid = file; invalid["skinSources"] = json!({});
+        assert!(program_appearance_theme(&invalid).unwrap_err().contains("missing skin source"));
+    }
+
+    #[test]
+    fn program_default_theme_requires_the_exact_packaged_dependency_and_no_host_changes() {
+        let manifest: manifest::ProgramManifest = serde_json::from_value(json!({
+            "schemaVersion":1,"programId":"example","label":"Example","programType":"plain",
+            "processNames":[],"gitScriptsFolder":"Scripts","panelsFolder":"Panels","localScriptsFolder":"Local Scripts",
+            "supportScriptsFolder":"SupportScripts","runner":{"kind":"plain","programKey":"example","installScript":"","deleteScript":""},
+            "bundledSources":[{"id":"example.tool","version":"1.0.0","panelName":"Tools","sourcePath":"Scripts/tool.py","importKind":"script"}]
+        })).unwrap();
+        let theme = json!({"kind":"FlowCellPortableTheme","version":1,
+            "target":{"kind":"program","programName":"Example","panelName":null},"contributions":{},
+            "dependencies":[{"id":"source-0","programId":"example","programName":"Example","panelName":"Tools",
+                "sourceId":"example.tool","sourceVersion":"1.0.0","importKind":"script"}]});
+        assert!(validate_program_default_theme(&theme, &manifest).is_ok());
+        let mut invalid = theme.clone(); invalid["dependencies"][0]["sourceVersion"] = json!("2.0.0");
+        assert!(validate_program_default_theme(&invalid, &manifest).unwrap_err().contains("matching packaged source"));
+        let mut invalid = theme.clone(); invalid["contributions"] = json!({"host":{"state":{}}});
+        assert!(validate_program_default_theme(&invalid, &manifest).unwrap_err().contains("presentation only"));
+        let mut invalid = theme; invalid["target"]["panelName"] = json!("Tools");
+        assert!(validate_program_default_theme(&invalid, &manifest).unwrap_err().contains("whole Program"));
+    }
     fn source_file(path: &str, bytes: &[u8]) -> Value {
         json!({"path":path, "sha256":digest(bytes), "base64":encode(bytes)})
     }

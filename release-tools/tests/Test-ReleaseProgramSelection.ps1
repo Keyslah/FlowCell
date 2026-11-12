@@ -35,7 +35,7 @@ function Add-InstallerFixture([string]$Output) {
 
 try {
   [IO.Directory]::CreateDirectory($fixtureRelease) | Out-Null
-  foreach ($name in @('build-installer.ps1', 'package-portable.ps1', 'verify-release.ps1', 'program-package-safety.ps1', 'blender-theme-packages.ps1')) {
+  foreach ($name in @('build-installer.ps1', 'package-portable.ps1', 'verify-release.ps1', 'program-package-safety.ps1', 'program-package-integrity.ps1', 'blender-theme-packages.ps1')) {
     Copy-Item -LiteralPath (Join-Path $releaseRoot $name) -Destination (Join-Path $fixtureRelease $name)
   }
   Put (Join-Path $fixtureRelease 'prepare-installer.ps1') @'
@@ -45,6 +45,12 @@ throw 'This fixture must never prepare or build an installer.'
 '@
   # Updater content validation has separate regression coverage. Keep this fixture's catalogs inert.
   Put (Join-Path $fixtureRelease 'add-catalog-updaters.mjs') '// Inert catalog-validation fixture.'
+  # Profile capture and compilation have their own real-production tests. This
+  # fixture isolates release selection and exact archive verification.
+  Put (Join-Path $fixtureRelease 'prepare-program-profile.mjs') '// Inert profile-capture fixture.'
+  Put (Join-Path $repo 'FlowCellFrontend/node_modules/.bin/tsc.cmd') "@exit /b 0`r`n"
+  $localRoot = Join-Path $fixtureRoot 'current-local'
+  Put (Join-Path $localRoot 'button-system/button-state.json') '{}'
   foreach ($name in @('Blender', 'Windows')) {
     $program = Join-Path $repo "Programs/$name"
     $manifest = @{
@@ -79,7 +85,7 @@ throw 'This fixture must never prepare or build an installer.'
   }
 
   $selected = Join-Path $fixtureRoot 'selected'
-  & (Join-Path $fixtureRelease 'package-portable.ps1') -ProgramsOnly -OutputDirectory $selected -ProgramNames @('blender', 'Blender') | Out-Null
+  & (Join-Path $fixtureRelease 'package-portable.ps1') -ProgramsOnly -OutputDirectory $selected -ProgramNames @('blender', 'Blender') -ProgramLocalRoot $localRoot | Out-Null
   $selectedZips = @(Get-ChildItem -LiteralPath $selected -File -Filter '*.zip')
   Assert ($selectedZips.Count -eq 1 -and $selectedZips[0].Name -ceq 'FlowCell-Blender.zip') 'case-insensitive duplicate selection creates one canonical Blender ZIP'
   Add-InstallerFixture $selected
@@ -92,7 +98,7 @@ throw 'This fixture must never prepare or build an installer.'
   }
 
   $all = Join-Path $fixtureRoot 'all'
-  & (Join-Path $fixtureRelease 'package-portable.ps1') -ProgramsOnly -OutputDirectory $all | Out-Null
+  & (Join-Path $fixtureRelease 'package-portable.ps1') -ProgramsOnly -OutputDirectory $all -ProgramLocalRoot $localRoot | Out-Null
   Assert (@(Get-ChildItem -LiteralPath $all -File -Filter '*.zip').Count -eq 2) 'omitting selection builds both tracked programs'
   Add-InstallerFixture $all
   & (Join-Path $fixtureRelease 'verify-release.ps1') -Directory $all | Out-Null
@@ -108,7 +114,7 @@ throw 'This fixture must never prepare or build an installer.'
     $writer = [IO.StreamWriter]::new($entry.Open())
     try { $writer.Write('tampered fixture catalog') } finally { $writer.Dispose() }
   } finally { $archive.Dispose() }
-  Assert-Rejected { & (Join-Path $fixtureRelease 'verify-release.ps1') -Directory $selected -ProgramNames Blender } '*Packaged baseline hash mismatch*'
+  Assert-Rejected { & (Join-Path $fixtureRelease 'verify-release.ps1') -Directory $selected -ProgramNames Blender } '*Package inventory payload mismatch*'
   Write-Output "PASS: $($script:checks) release-selection assertions; no application build or installation."
 } finally {
   $cleanupRoot = [IO.Path]::GetFullPath($fixtureRoot).TrimEnd('\', '/')

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "blender.xyz-dimensions",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "label": "xyz",
   "tooltip": "Show live X, Y, and Z dimensions for the active selected object in inches.",
   "kind": "toolset",
@@ -44,58 +44,6 @@
     "padding": 8,
     "width": 464,
     "height": 120,
-    "fields": [
-      {
-        "id": "dimension_x_display",
-        "kind": "display",
-        "label": "X dimension",
-        "payloadKey": "dimensionReadouts.x",
-        "defaultValue": "X -- in",
-        "x": 8,
-        "y": 8,
-        "width": 144,
-        "height": 42,
-        "zIndex": 1,
-        "hidden": true
-      },
-      {
-        "id": "dimension_y_display",
-        "kind": "display",
-        "label": "Y dimension",
-        "payloadKey": "dimensionReadouts.y",
-        "defaultValue": "Y -- in",
-        "x": 160,
-        "y": 8,
-        "width": 144,
-        "height": 42,
-        "zIndex": 1,
-        "hidden": true
-      },
-      {
-        "id": "dimension_z_display",
-        "kind": "display",
-        "label": "Z dimension",
-        "payloadKey": "dimensionReadouts.z",
-        "defaultValue": "Z -- in",
-        "x": 312,
-        "y": 8,
-        "width": 144,
-        "height": 42,
-        "zIndex": 1,
-        "hidden": true
-      }
-    ],
-    "childBehaviors": {
-      "dimension_x": {
-        "labelField": "dimension_x_display"
-      },
-      "dimension_y": {
-        "labelField": "dimension_y_display"
-      },
-      "dimension_z": {
-        "labelField": "dimension_z_display"
-      }
-    },
     "placements": {
       "dimension_x": {
         "x": 8,
@@ -199,7 +147,42 @@
         }
       },
       "skin-2-Default-Gray": {
-        "file": "skins/skin-2-Default-Gray.flowcell-button-skin.txt"
+        "file": "skins/skin-2-Default-Gray.flowcell-button-skin.txt",
+        "variants": {
+          "0": "skins/skin-2-Default-Gray/0.flowcell-button-skin.txt",
+          "1": "skins/skin-2-Default-Gray/1.flowcell-button-skin.txt",
+          "2": "skins/skin-2-Default-Gray/2.flowcell-button-skin.txt",
+          "3": "skins/skin-2-Default-Gray/3.flowcell-button-skin.txt",
+          "4": "skins/skin-2-Default-Gray/4.flowcell-button-skin.txt",
+          "5": "skins/skin-2-Default-Gray/5.flowcell-button-skin.txt",
+          "6": "skins/skin-2-Default-Gray/6.flowcell-button-skin.txt",
+          "7": "skins/skin-2-Default-Gray/7.flowcell-button-skin.txt",
+          "8": "skins/skin-2-Default-Gray/8.flowcell-button-skin.txt",
+          "9": "skins/skin-2-Default-Gray/9.flowcell-button-skin.txt",
+          "10": "skins/skin-2-Default-Gray/10.flowcell-button-skin.txt",
+          "11": "skins/skin-2-Default-Gray/11.flowcell-button-skin.txt",
+          "12": "skins/skin-2-Default-Gray/12.flowcell-button-skin.txt",
+          "13": "skins/skin-2-Default-Gray/13.flowcell-button-skin.txt",
+          "14": "skins/skin-2-Default-Gray/14.flowcell-button-skin.txt",
+          "15": "skins/skin-2-Default-Gray/15.flowcell-button-skin.txt",
+          "16": "skins/skin-2-Default-Gray/16.flowcell-button-skin.txt",
+          "17": "skins/skin-2-Default-Gray/17.flowcell-button-skin.txt",
+          "18": "skins/skin-2-Default-Gray/18.flowcell-button-skin.txt",
+          "19": "skins/skin-2-Default-Gray/19.flowcell-button-skin.txt",
+          "20": "skins/skin-2-Default-Gray/20.flowcell-button-skin.txt",
+          "21": "skins/skin-2-Default-Gray/21.flowcell-button-skin.txt",
+          "22": "skins/skin-2-Default-Gray/22.flowcell-button-skin.txt",
+          "23": "skins/skin-2-Default-Gray/23.flowcell-button-skin.txt",
+          "24": "skins/skin-2-Default-Gray/24.flowcell-button-skin.txt",
+          "25": "skins/skin-2-Default-Gray/25.flowcell-button-skin.txt",
+          "26": "skins/skin-2-Default-Gray/26.flowcell-button-skin.txt",
+          "27": "skins/skin-2-Default-Gray/27.flowcell-button-skin.txt",
+          "28": "skins/skin-2-Default-Gray/28.flowcell-button-skin.txt",
+          "29": "skins/skin-2-Default-Gray/29.flowcell-button-skin.txt",
+          "30": "skins/skin-2-Default-Gray/30.flowcell-button-skin.txt",
+          "31": "skins/skin-2-Default-Gray/31.flowcell-button-skin.txt",
+          "32": "skins/skin-2-Default-Gray/32.flowcell-button-skin.txt"
+        }
       }
     },
     "owner": "skin-1-Chipped-Concrete-Key-100",

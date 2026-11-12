@@ -12,6 +12,8 @@ import { applyInstalledSourceUpdate } from "./.compiled-button-system/button/sta
 import { validateInstalledButtonLayout } from "./.compiled-button-system/button/state/installedButtonLayoutValidation.js";
 import { resolveInstalledToolFields } from "./.compiled-button-system/button/state/installedToolFields.js";
 import { assignInstalledToolSetSkins, parseInstalledToolSetSkin } from "./.compiled-button-system/button/state/installedToolSetSkins.js";
+import { resolveButtonActivationResultAssignments } from "./.compiled-button-system/button/runtime/buttonActivationResultSync.js";
+import { resolveButtonAppearance } from "./.compiled-button-system/button/runtime/buttonActivationState.js";
 import { BUTTON_SKIN_SECTION_ORDER, serializeButtonSkinSections } from "./.compiled-button-system/button/skins/buttonSkinFormat.js";
 import { getEmbeddedButtonSkinFamilySources, resolveEmbeddedButtonSkinFamilySource } from "./.compiled-button-system/button/skins/buttonSkinFamily.js";
 import { defaultPanelButtonSize, arrangeDefaultPanelButtons } from "./.compiled-button-system/button/state/buttonPanelDefaults.js";
@@ -82,8 +84,54 @@ test("Smart Axis packages the exact working Final Skull Live skin release", () =
       held: "pressed", pressed: "pressed", release: "pressed"
     }
   });
-  assert.equal(manifest.version, "1.1.4");
+  assert.equal(manifest.version, "1.1.5");
   assert.equal(program.bundledSources.find((entry) => entry.id === manifest.id).version, manifest.version);
+});
+
+test("fresh Blender imports preserve the real package's result-mapped display states", () => {
+  const cases = [
+    ...["X", "Y", "Z"].map((axis) => ({ toolset: "smart-axis", slot: `cycle_${axis.toLowerCase()}`,
+      labels: [axis, `${axis}-`, `${axis}+`],
+      responses: ["NONE", "MIN", "MAX"].map((mode) => [{ axis, mode }, { modes: { [axis]: mode } }]) })),
+    { toolset: "smart-axis", slot: "toggle_live", labels: ["Live", "Live"],
+      responses: [[{ live_enabled: false }], [{ live_enabled: true }]] },
+    { toolset: "boolean", slot: "solver_cycle", labels: ["Exact", "Float", "Manifold"],
+      responses: ["EXACT", "FAST", "MANIFOLD"].map((solver) => [{ solver }]) },
+    { toolset: "remesh", slot: "mode_cycle", labels: ["Voxel", "Smooth", "Sharp", "Blocks"],
+      responses: ["VOXEL", "SMOOTH", "SHARP", "BLOCKS"].map((mode) => [{ mode }]) }
+  ];
+  for (const { toolset, slot, labels, responses } of cases) {
+    const manifest = JSON.parse(readFileSync(join(import.meta.dirname,
+      `../../Programs/Blender/Blender Git Scripts/Toolsets/${toolset}/flowcell.toolset.json`), "utf8"));
+    const install = { ownerButtonId: `owner-${toolset}`,
+      sourceIdentity: createButtonSourceIdentity("Blender", "toolset", `${toolset}.flowcell-source.json`),
+      executionTarget: null, label: manifest.label, tooltip: manifest.tooltip, layout: structuredClone(manifest.layout),
+      children: manifest.children.map((child) => ({ slot: child.slot, label: child.label, tooltip: child.tooltip,
+        executionTarget: { kind: "tool-set-action", programName: "Blender", panelName: "toolset",
+          ownerFileName: `${toolset}.flowcell-source.json`, command: child.slot, payload: child.payload } })) };
+    for (const manual of [false, true]) {
+      const document = manual ? createButtonStateDocument()
+        : mergeLegacyInstallsIntoDocument(createButtonStateDocument(), [install]);
+      if (manual) addInstalledToolSet(document, install, Object.keys(document.surfaces)[0]);
+      const unit = Object.values(document.popoutUnits).find((candidate) => candidate.ownerButtonId === install.ownerButtonId);
+      const placement = unit.childPlacementIds.map((id) => document.placements[id])
+        .find((candidate) => document.buttons[candidate.buttonId].metadata.toolSetSlot === slot);
+      assert.deepEqual(placement.activationCycle?.states.map((state) => state.label), labels,
+        `${toolset}/${slot} must ship the complete cycle for a fresh ${manual ? "manual" : "Program"} import`);
+      for (const [index, alternatives] of responses.entries()) {
+        for (const response of alternatives) {
+          assert.deepEqual(resolveButtonActivationResultAssignments(document, unit.childPlacementIds, response),
+            [{ activationKey: placement.id, stateCount: labels.length, index }]);
+          const appearance = resolveButtonAppearance({ activationBehavior: null,
+            buttonLabel: document.buttons[placement.buttonId].label, activeStateIndex: index,
+            activationCycle: placement.activationCycle, visualStateMap: placement.visualStateMap,
+            appearance: { hovered: false, pressed: false, held: false, play: false, release: false,
+              selected: false, disabled: false, error: false } });
+          assert.equal(appearance.label, labels[index]);
+        }
+      }
+    }
+  }
 });
 
 test("fresh panel grids use visible family widths and the same 8 CSS px Main gap", () => {

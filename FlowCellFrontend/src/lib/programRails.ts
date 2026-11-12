@@ -149,6 +149,8 @@ export interface AvailableProgramPackage {
   installEffects: string[];
   addonReloadNotes: string;
   appRestartNotes: string;
+  hasDefaultTheme?: boolean;
+  defaultThemeSources?: string[];
 }
 
 export interface AvailableProgramPackagesResponse {
@@ -169,6 +171,7 @@ export interface AddProgramPlanRequest {
   createPlainProgram: boolean;
   selectedPanels: string[];
   selectedSources: Array<{ sourceId: string; destinationPanel: string }>;
+  applyDefaultTheme?: boolean;
 }
 
 export interface AddProgramPreflight {
@@ -186,6 +189,8 @@ export interface AppliedProgramSetup {
   panels: string[];
   descriptors: Record<string, unknown>[];
   installEffects: string[];
+  defaultTheme?: unknown;
+  defaultThemeReceipt?: string;
 }
 
 export interface AddPanelPlanRequest {

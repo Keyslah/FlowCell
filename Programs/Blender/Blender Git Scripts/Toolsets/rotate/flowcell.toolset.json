@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "blender.rotate",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "label": "rotate",
   "tooltip": "rotate objects with, transform, and distribute(evenly spaced copies around pivot)",
   "kind": "toolset",
@@ -12,7 +12,7 @@
     {
       "slot": "axis_z",
       "label": "Z",
-      "tooltip": "Set the quick-rotate axis to Z.",
+      "tooltip": "rotate axis ",
       "payload": {
         "command": "axis_z",
         "action": "axis_z"
@@ -21,7 +21,7 @@
     {
       "slot": "axis_y",
       "label": "Y",
-      "tooltip": "Set the quick-rotate axis to Y.",
+      "tooltip": "rotate axis ",
       "payload": {
         "command": "axis_y",
         "action": "axis_y"
@@ -30,7 +30,7 @@
     {
       "slot": "axis_x",
       "label": "X",
-      "tooltip": "Set the quick-rotate axis to X.",
+      "tooltip": "rotate axis ",
       "payload": {
         "command": "axis_x",
         "action": "axis_x"
@@ -39,7 +39,7 @@
     {
       "slot": "preset_30",
       "label": "30",
-      "tooltip": "Apply a 30 degree positive quick-rotate immediately and stage the angle.",
+      "tooltip": "30 degree positive",
       "payload": {
         "command": "preset_30",
         "action": "preset_30"
@@ -48,7 +48,7 @@
     {
       "slot": "preset_45",
       "label": "45",
-      "tooltip": "Apply a 45 degree positive quick-rotate immediately and stage the angle.",
+      "tooltip": "45 degree positive ",
       "payload": {
         "command": "preset_45",
         "action": "preset_45"
@@ -57,7 +57,7 @@
     {
       "slot": "preset_90",
       "label": "90",
-      "tooltip": "Apply a 90 degree positive quick-rotate immediately and stage the angle.",
+      "tooltip": "90 degree positive ",
       "payload": {
         "command": "preset_90",
         "action": "preset_90"
@@ -66,7 +66,7 @@
     {
       "slot": "preset_180",
       "label": "180",
-      "tooltip": "Apply a 180 degree positive quick-rotate immediately and stage the angle.",
+      "tooltip": "180 degree positive ",
       "payload": {
         "command": "preset_180",
         "action": "preset_180"
@@ -75,7 +75,7 @@
     {
       "slot": "preset_270",
       "label": "270",
-      "tooltip": "Apply a 270 degree positive quick-rotate immediately and stage the angle.",
+      "tooltip": " 270 degree positive ",
       "payload": {
         "command": "preset_270",
         "action": "preset_270"
@@ -84,7 +84,7 @@
     {
       "slot": "center_geometry",
       "label": "Geometry",
-      "tooltip": "Use geometry center as the quick-rotate pivot.",
+      "tooltip": "geometry center pivot",
       "payload": {
         "command": "center_geometry",
         "action": "center_geometry"
@@ -93,7 +93,7 @@
     {
       "slot": "center_origin",
       "label": "Origin",
-      "tooltip": "Use object origin as the quick-rotate pivot.",
+      "tooltip": "object origin pivot",
       "payload": {
         "command": "center_origin",
         "action": "center_origin"
@@ -102,7 +102,7 @@
     {
       "slot": "center_world",
       "label": "World",
-      "tooltip": "Use world origin as the quick-rotate pivot.",
+      "tooltip": "world origin pivot",
       "payload": {
         "command": "center_world",
         "action": "center_world"
@@ -111,7 +111,7 @@
     {
       "slot": "center_cursor",
       "label": "Cursor",
-      "tooltip": "Use 3D cursor as the quick-rotate pivot.",
+      "tooltip": "3D cursor pivot.",
       "payload": {
         "command": "center_cursor",
         "action": "center_cursor"
@@ -120,7 +120,7 @@
     {
       "slot": "center_object",
       "label": "Object",
-      "tooltip": "Use the active object as the quick-rotate pivot.",
+      "tooltip": " active object pivot Point",
       "payload": {
         "command": "center_object",
         "action": "center_object"
@@ -129,7 +129,7 @@
     {
       "slot": "mode_transform",
       "label": "Transform",
-      "tooltip": "Use quick rotate in transform mode.",
+      "tooltip": "transform mode",
       "payload": {
         "command": "mode_transform",
         "action": "mode_transform"
@@ -138,7 +138,7 @@
     {
       "slot": "mode_distribute",
       "label": "Distribute",
-      "tooltip": "Use quick rotate in distribute mode.",
+      "tooltip": "Distribute a number of objects evenly spaced around the pivot.",
       "payload": {
         "command": "mode_distribute",
         "action": "mode_distribute"
@@ -147,7 +147,7 @@
     {
       "slot": "apply_negative",
       "label": "Negative",
-      "tooltip": "Apply the staged quick-rotate values in the negative direction.",
+      "tooltip": "",
       "payload": {
         "command": "apply_negative",
         "action": "apply_negative"
@@ -156,7 +156,7 @@
     {
       "slot": "apply_positive",
       "label": "Positive",
-      "tooltip": "Apply the staged quick-rotate values in the positive direction.",
+      "tooltip": "",
       "payload": {
         "command": "apply_positive",
         "action": "apply_positive"
@@ -165,7 +165,7 @@
     {
       "slot": "value_input",
       "label": "Value",
-      "tooltip": "Click anywhere on this Button, then type the transform angle or distribution count."
+      "tooltip": "type the transform angle or distribution count."
     }
   ],
   "layout": {

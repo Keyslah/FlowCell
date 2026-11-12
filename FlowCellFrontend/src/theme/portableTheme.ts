@@ -6,6 +6,7 @@ import type {
 import { createButtonStateDocument } from "../button/state/buttonDefaults.js";
 import { validateButtonStateDocument } from "../button/state/buttonStateValidation.js";
 import { resolveButtonPlacementPresentation } from "../button/state/buttonPresentation.js";
+import { createButtonSourceIdentity, deriveRegularPopoutSelectionKey } from "../button/state/sourceIdentity.js";
 import { parseInstalledToolSetSkin } from "../button/state/installedToolSetSkins.js";
 import {
   getEmbeddedButtonSkinFamilySources,
@@ -264,7 +265,7 @@ export function capturePortableTheme(args: {
     else if (button.metadata.mainPageControl === true && typeof button.metadata.mainPageControlKey === "string" && button.metadata.mainPageControlKey.trim()) {
       references[id] = { kind: "core", actionId: "flowcell.main-control", controlKey: button.metadata.mainPageControlKey };
     }
-    else if (button.executionTarget?.kind === "core-action") {
+    else if (button.executionTarget?.kind === "core-action" && !button.sourceIdentity && !button.toolSetParentId) {
       references[id] = { kind: "core", actionId: button.executionTarget.actionId,
         controlKey: typeof button.metadata.mainPageControlKey === "string" ? button.metadata.mainPageControlKey : "" };
     } else {
@@ -518,20 +519,78 @@ export function isPortableTheme(value: unknown): value is PortableTheme {
     visualOverflowAllowance: surface.visualOverflowAllowance, uniformButtonSize: surface.uniformButtonSize,
     placementIds: []
   };
+  const references = value.references as PortableTheme["references"];
+  const sourceOwners = new Map(Object.entries(references).flatMap(([id, reference]) =>
+    reference.kind === "source" && reference.slot === null ? [[reference.dependencyId, id] as const] : []));
+  for (const [buttonId, reference] of Object.entries(references)) {
+    const dependency = reference.kind === "source"
+      ? value.dependencies.find((entry: PortableThemeDependency) => entry.id === reference.dependencyId) as PortableThemeDependency
+      : null;
+    const role = reference.kind === "panel" ? "panel-owner"
+      : dependency?.importKind === "tool-set" ? reference.kind === "source" && reference.slot === null
+        ? "tool-set-owner" : "tool-set-child" : "single-script";
+    // A scoped theme can reference an owner without exporting its out-of-scope
+    // panel appearance. Its identity still participates in topology validation.
+    validationDocument.buttons[buttonId] = {
+      id: buttonId, role, label: buttonId, tooltip: "", defaultTextFitMode: "shrink",
+      activationAnimation: null, activationBehavior: null,
+      sourceIdentity: dependency && role !== "tool-set-child"
+        ? createButtonSourceIdentity(dependency.programName, dependency.panelName, `${dependency.id}.flowcell-source.json`) : null,
+      executionTarget: role === "panel-owner" || role === "tool-set-owner" ? null
+        : { kind: "core-action", actionId: "theme-validation" }, defaultSkinId: validationDocument.settings.defaultSkinId,
+      disabled: false, toolSetParentId: role === "tool-set-child" && reference.kind === "source"
+        ? sourceOwners.get(reference.dependencyId) ?? null : null,
+      toolSetBehavior: null, metadata: reference.kind === "panel"
+        ? { programName: reference.programName, panelName: reference.panelName } : {}
+    };
+  }
   for (const appearance of value.theme.buttons) {
     const presentation = value.presentation[appearance.placementId];
     validationDocument.skins[appearance.skin.id] = structuredClone(appearance.skin);
-    validationDocument.buttons[appearance.buttonId] = {
-      id: appearance.buttonId, role: "single-script", sourceIdentity: null,
-      executionTarget: { kind: "core-action", actionId: "theme-validation" }, defaultSkinId: appearance.skin.id,
-      disabled: false, toolSetParentId: null, toolSetBehavior: null, metadata: {}, ...structuredClone(presentation.button)
-    };
+    Object.assign(validationDocument.buttons[appearance.buttonId], structuredClone(presentation.button), { defaultSkinId: appearance.skin.id });
     validationDocument.placements[appearance.placementId] = {
       ...structuredClone(presentation.placement), id: appearance.placementId,
       buttonId: appearance.buttonId, surfaceId: appearance.surfaceId, skinOverrideId: appearance.skin.id,
       presentationOverride: structuredClone(presentation.button)
     };
     validationDocument.surfaces[appearance.surfaceId].placementIds.push(appearance.placementId);
+  }
+  // Owners anchor Pop/Fan content and may overlap it, sit outside its bounds,
+  // or differ from its uniform size. Keep that topology in the validation
+  // document so the authoritative validator applies its existing exemption.
+  for (const surface of value.surfaces as PortableThemeSurface[]) {
+    const ownerPlacements = surface.placementIds.filter((id) =>
+      validationDocument.placements[id].buttonId === surface.ownerButtonId);
+    if (ownerPlacements.length > 1) return false;
+    const ownerPlacementId = ownerPlacements[0] ?? null;
+    const members = surface.placementIds.filter((id) => id !== ownerPlacementId);
+    if (surface.popout) {
+      const { fieldGeometry: _fields, ...popout } = surface.popout;
+      const base = { ...structuredClone(popout), id: surface.id, name: surface.name,
+        surfaceId: surface.id, desktopBounds: null, ownerPlacementId };
+      if (popout.kind === "regular") {
+        const identities = members.map((id) => validationDocument.buttons[validationDocument.placements[id].buttonId].sourceIdentity);
+        if (identities.some((identity) => !identity)) return false;
+        validationDocument.popoutUnits[surface.id] = { ...base, kind: "regular",
+          ownerButtonId: ownerPlacementId ? surface.ownerButtonId : null,
+          memberPlacementIds: members, memberSourceIdentities: identities as NonNullable<typeof identities[number]>[],
+          selectionKey: deriveRegularPopoutSelectionKey(identities as NonNullable<typeof identities[number]>[]) };
+      } else {
+        if (!surface.ownerButtonId) return false;
+        validationDocument.popoutUnits[surface.id] = { ...base, kind: "tool-set", ownerButtonId: surface.ownerButtonId,
+          childPlacementIds: members, childButtonIds: members.map((id) => validationDocument.placements[id].buttonId), fields: [] };
+      }
+    }
+    if (surface.fan) {
+      const owner = surface.ownerButtonId ? references[surface.ownerButtonId] : null;
+      if (owner?.kind !== "panel" || !surface.ownerButtonId) return false;
+      validationDocument.fanSetups[surface.id] = { ...structuredClone(surface.fan), id: surface.id, name: surface.id,
+        programName: owner.programName, panelName: owner.panelName, panelOwnerButtonId: surface.ownerButtonId,
+        fanSurfaceId: surface.id, fanMemberPlacementIds: members,
+        fanMemberButtonIds: members.map((id) => validationDocument.placements[id].buttonId),
+        toolSetOwnerAnchors: Object.fromEntries(surface.fan.selectedToolSetOwnerButtonIds.map((id) =>
+          [id, { left: 0, top: 0, width: 1, height: 1 }])) };
+    }
   }
   return validateButtonStateDocument(validationDocument).valid;
 }
@@ -600,6 +659,10 @@ export function planPortableThemeImport(
         const buttonId = plan.buttonIds[appearance.buttonId];
         return !buttonId || candidate.placementIds.some((key) => document.placements[key]?.buttonId === buttonId);
       }));
+    if (surface.complete && candidates.length > 1) {
+      const exact = candidates.filter((candidate) => candidate.placementIds.length === appearances.length);
+      if (exact.length > 0) candidates = exact;
+    }
     if (surface.fan && candidates.length > 1) {
       const selectedOwners = surface.fan.selectedToolSetOwnerButtonIds.map((id) => plan.buttonIds[id]).filter(Boolean).sort();
       const exact = candidates.filter((candidate) => Object.values(document.fanSetups).some((fan) =>
