@@ -641,7 +641,7 @@ mod tests {
         assert!(validate_program_default_theme(&theme, &manifest).is_ok());
         let mut invalid = theme.clone(); invalid["dependencies"][0]["sourceVersion"] = json!("2.0.0");
         assert!(validate_program_default_theme(&invalid, &manifest).unwrap_err().contains("matching packaged source"));
-        let mut invalid = theme.clone(); invalid["contributions"] = json!({"host":{"state":{}}});
+        let mut invalid = theme.clone(); invalid["contributions"] = json!({"host":{"state":{},"assetFields":[]}});
         assert!(validate_program_default_theme(&invalid, &manifest).unwrap_err().contains("presentation only"));
         let mut invalid = theme; invalid["target"]["panelName"] = json!("Tools");
         assert!(validate_program_default_theme(&invalid, &manifest).unwrap_err().contains("whole Program"));

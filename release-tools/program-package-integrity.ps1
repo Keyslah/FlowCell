@@ -181,7 +181,9 @@ function Assert-ProgramArchiveInventory($Entries, [string]$ProgramName, [string]
   if (@($Entries).Count -lt 1 -or @($Entries).Count -gt 25000) { Stop-Package 'Program ZIP must contain 1 to 25000 entries.' }
   $expandedBytes = 0L
   foreach ($entry in $Entries) {
-    $name = [string]$entry.FullName
+    # Windows PowerShell's .NET Framework ZIP writer uses backslash separators.
+    # Match the package boundary/import checks while retaining exact path casing.
+    $name = ([string]$entry.FullName).Replace('\', '/')
     if ($entry.Length -lt 0 -or $entry.Length -gt 134217728) { Stop-Package 'Program ZIP entry exceeds 128 MiB.' }
     $expandedBytes += $entry.Length
     if ($expandedBytes -gt 1073741824) { Stop-Package 'Expanded Program ZIP exceeds 1024 MiB.' }

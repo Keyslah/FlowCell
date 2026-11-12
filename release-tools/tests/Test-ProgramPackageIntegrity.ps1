@@ -84,6 +84,11 @@ try {
   })
   Assert-ProgramArchiveInventory $entries 'Sample' 'sample' $inventory
   $script:checks++
+  $windowsEntries = @($entries | ForEach-Object { MemoryEntry ($_.FullName.Replace('/', '\')) $_.Data })
+  Assert-ProgramArchiveInventory $windowsEntries 'Sample' 'sample' $inventory
+  $script:checks++
+  Rejected { Assert-ProgramArchiveInventory ($entries + $windowsEntries[0]) 'Sample' 'sample' } '*duplicate ZIP entry*'
+  Rejected { Assert-ProgramArchiveInventory ($entries + (MemoryEntry 'Programs\Sample\..\outside.txt' ([byte[]]@(1)))) 'Sample' 'sample' } '*Unsafe package inventory path*'
   Rejected { Assert-ProgramArchiveInventory @($entries | Where-Object { $_.FullName -notlike '*flowcell.package.json' }) 'Sample' 'sample' } '*missing flowcell.package.json*'
   Rejected { Assert-ProgramArchiveInventory @($entries | Where-Object { $_.FullName -notlike '*skin.txt' }) 'Sample' 'sample' } '*file count*'
   Rejected { Assert-ProgramArchiveInventory ($entries + (MemoryEntry 'Programs/Sample/unlisted.txt' ([byte[]]@(1)))) 'Sample' 'sample' } '*file count*'

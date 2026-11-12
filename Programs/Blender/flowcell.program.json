@@ -8,6 +8,7 @@
     "Files",
     "Shapes",
     "Snap",
+    "tools",
     "toolset",
     "Utility"
   ],
@@ -35,6 +36,11 @@
     {
       "id": "utility",
       "label": "Utility",
+      "defaultSelected": true
+    },
+    {
+      "id": "tools",
+      "label": "tools",
       "defaultSelected": true
     },
     {

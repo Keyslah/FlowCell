@@ -54,8 +54,8 @@ test("each standalone Snap control carries its original command and exact execut
   }
 });
 
-test("all six original Blender panels are selected by default", () => {
-  const panels = ["Collections", "Files", "Shapes", "Snap", "toolset", "Utility"];
+test("all seven saved Blender panels, including the empty tools panel, are selected by default", () => {
+  const panels = ["Collections", "Files", "Shapes", "Snap", "tools", "toolset", "Utility"];
   assert.deepEqual([...manifest.defaultPanels].sort(), [...panels].sort());
   for (const label of panels) {
     const panel = manifest.panels.find(panel => panel.label === label);

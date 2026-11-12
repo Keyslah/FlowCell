@@ -782,7 +782,7 @@ mod tests {
         validate_staged_package(&bundle, "Windows").unwrap();
         let mut invalid = valid.clone(); invalid["version"] = 2.into();
         fs::write(&appearance_path, serde_json::to_vec(&invalid).unwrap()).unwrap();
-        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("Unsupported portable theme"));
+        assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("unsupported format version"));
         let mut invalid = valid; invalid["dependencies"][0]["sourceVersion"] = "2.0.0".into();
         fs::write(&appearance_path, serde_json::to_vec(&invalid).unwrap()).unwrap();
         assert!(validate_staged_package(&bundle, "Windows").unwrap_err().contains("matching packaged source"));
