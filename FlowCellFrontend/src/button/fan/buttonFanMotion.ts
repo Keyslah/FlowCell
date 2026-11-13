@@ -6,6 +6,22 @@ import type {
 export type ButtonFanMotionStyle = "spin";
 export type ButtonFanMotionDirection = "opening" | "closing";
 
+export interface ButtonFanStyleDefinition {
+  id: string;
+  name: string;
+  animation: Partial<ButtonFanAnimationSettings> & Pick<ButtonFanAnimationSettings, "spinEnabled">;
+}
+
+/** Named Fan styles offered by the motion system; the chooser renders the entire catalog. */
+export const BUTTON_FAN_STYLE_CATALOG: readonly ButtonFanStyleDefinition[] = [
+  { id: "default", name: "Default", animation: { spinEnabled: false } },
+  { id: "spin", name: "Spin", animation: { spinEnabled: true } }
+];
+
+export function resolveButtonFanStyle(id: unknown): ButtonFanStyleDefinition | null {
+  return BUTTON_FAN_STYLE_CATALOG.find((style) => style.id === id) ?? null;
+}
+
 export const BUTTON_FAN_MAX_STAGGER_WINDOW_MS = 240;
 
 export interface ButtonFanMotionItem {

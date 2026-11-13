@@ -17,10 +17,12 @@ import {
 import {
   showOpenFileDialog,
   showOpenFolderDialog,
-  showSaveFileDialog
+  showSaveFileDialog,
+  setHostWindowTopmost
 } from "../../lib/tauri";
 import {
   hideButtonActivationAnimationEditorWindow,
+  listenForButtonAnimationWindowShown,
   openButtonActivationAnimationEditor,
   saveButtonActivationAnimationEditorBounds
 } from "../animations/buttonAnimationWindows";
@@ -88,7 +90,17 @@ import {
 import { arrangeDefaultPanelButtons, defaultPanelButtonSize } from "../state/buttonPanelDefaults";
 import { applyPanelPopoutPreset, availablePanelPopoutPresets, type PanelPopoutPresetId } from "../state/buttonPanelPopoutPresets";
 import { CHIPPED_CONCRETE_BUTTON_SKIN_ID } from "../skins/chippedConcreteButtonSkin";
+import { DEFAULT_BUTTON_SKIN, getDefaultButtonSize } from "../skins/defaultButtonSkin";
 import { setButtonPopoutFanMode } from "../state/buttonPopoutInteractionOperations";
+import {
+  buttonDefaultPopoutChoicesEqual,
+  createButtonDefaultPopoutChoice,
+  getButtonDefaultPopoutChoice,
+  getButtonSavedPopoutChoice,
+  resolveButtonDefaultPopoutOwnerId,
+  setButtonDefaultPopoutChoice,
+  setButtonSavedPopoutChoice
+} from "../state/buttonDefaultPopout";
 import {
   FLOWCELL_MAIN_PAGE_SECTIONS,
   isFlowCellMainPageProgram
@@ -468,7 +480,11 @@ function addInstalledToolSet(
   if (new Set(slots).size !== slots.length) {
     throw new Error("The installed tool set contains duplicate child placement slots.");
   }
-  const childItems = result.children.map((child) => ({ id: child.slot, width: 144, height: 42 }));
+  const childItems = result.children.map((child) => ({ id: child.slot,
+    ...(document.skins[document.settings.defaultSkinId]?.structure === DEFAULT_BUTTON_SKIN.structure &&
+      !layout?.appearance?.children?.[child.slot]
+      ? getDefaultButtonSize(child.label, 42, 144, layout?.placementPresentation?.[child.slot]?.textSizeOverride ?? undefined)
+      : { width: 144, height: 42 }) }));
   const starter = createStarterButtonLayout(childItems, {
     padding: document.settings.defaultSurfacePadding,
     gap: buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm),
@@ -662,6 +678,12 @@ function ButtonEditorContent({
   );
   const [busy, setBusyState] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [settingsFilePaths, setSettingsFilePaths] = useState<Record<string, string | null>>({});
+  const [pendingDefaultPopout, setPendingDefaultPopout] = useState<{
+    ownerId: string;
+    surfaceId: string;
+    checked: boolean;
+  } | null>(null);
   const [activeAnimationEditorButtonId, setActiveAnimationEditorButtonId] = useState<string | null>(null);
   const [workingSizingModeOverride, setWorkingSizingModeOverride] = useState<{
     placementId: string;
@@ -724,6 +746,25 @@ function ButtonEditorContent({
   const selectedSurfaceUnit = Object.values(store.draft.popoutUnits).find(
     (candidate) => candidate.surfaceId === selectedSurfaceId
   );
+  const defaultPopoutOwnerId = resolveButtonDefaultPopoutOwnerId(
+    store.draft, selectedSurfaceId, { programName, panelName }
+  );
+  const assignedDefaultPopout = defaultPopoutOwnerId
+    ? getButtonDefaultPopoutChoice(store.committed, defaultPopoutOwnerId) : null;
+  const savedPopoutFile = defaultPopoutOwnerId
+    ? getButtonSavedPopoutChoice(store.committed, defaultPopoutOwnerId, selectedSurfaceId) : null;
+  const selectedSettingsFilePath = Object.hasOwn(settingsFilePaths, selectedSurfaceId)
+    ? settingsFilePaths[selectedSurfaceId]
+    : savedPopoutFile?.path ?? (assignedDefaultPopout?.surfaceId === selectedSurfaceId ? assignedDefaultPopout.path : null);
+  const selectedPopoutFileChoice = defaultPopoutOwnerId && selectedSettingsFilePath
+    ? createButtonDefaultPopoutChoice(defaultPopoutOwnerId, selectedSurfaceId, selectedSettingsFilePath) : null;
+  const selectedDefaultPopoutPending = pendingDefaultPopout?.ownerId === defaultPopoutOwnerId &&
+    pendingDefaultPopout.surfaceId === selectedSurfaceId ? pendingDefaultPopout : null;
+  const selectedFileIsDefaultPopout = selectedDefaultPopoutPending?.checked ?? Boolean(selectedPopoutFileChoice &&
+    buttonDefaultPopoutChoicesEqual(assignedDefaultPopout, selectedPopoutFileChoice));
+  const defaultPopoutScopeLabel = selectedSurfaceUnit?.kind === "tool-set"
+    ? `${store.draft.buttons[selectedSurfaceUnit.ownerButtonId]?.label ?? selectedSurfaceUnit.name} toolset`
+    : `${panelName || selectedSurface?.name || "Selected"} Pop-out setup`;
   const usesLogicalGridDefault = selectedSurface?.kind === "panel" || selectedSurfaceUnit?.kind === "regular";
   const panelPopoutPresets = selectedSurfaceUnit?.kind === "regular"
     ? availablePanelPopoutPresets(store.draft, selectedSurfaceUnit) : [];
@@ -1015,6 +1056,33 @@ function ButtonEditorContent({
     return () => { disposed = true; unlisten?.(); };
   }, []);
   useEffect(() => {
+    if (activePage !== "animation") return;
+    const currentWindow = getCurrentWindow();
+    const windowLabel = currentWindow.label;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let unlistenFocus: (() => void) | undefined;
+    // Keep the controls above both positioning and runtime playback, without taking focus.
+    const keepAnimationPageOnTop = () => {
+      if (!disposed) void setHostWindowTopmost(windowLabel, true).catch(() => {});
+    };
+    keepAnimationPageOnTop();
+    void listenForButtonAnimationWindowShown(keepAnimationPageOnTop).then((next) => {
+      if (disposed) next(); else unlisten = next;
+    }).catch(() => {});
+    void currentWindow.onFocusChanged(({ payload: focused }) => {
+      if (focused) keepAnimationPageOnTop();
+    }).then((next) => {
+      if (disposed) next(); else unlistenFocus = next;
+    }).catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+      unlistenFocus?.();
+      void setHostWindowTopmost(windowLabel, false).catch(() => {});
+    };
+  }, [activePage]);
+  useEffect(() => {
     if (!activeAnimationEditorButtonId) return;
     if (
       selectedButton?.id === activeAnimationEditorButtonId &&
@@ -1245,12 +1313,49 @@ function ButtonEditorContent({
     }
   };
 
-  const saveSettings = async () => {
+  const setSelectedFileAsDefaultPopout = async (enabled: boolean) => {
+    if (busyRef.current || !defaultPopoutOwnerId) return;
+    const ownerId = defaultPopoutOwnerId;
+    const choice = selectedPopoutFileChoice;
+    setPendingDefaultPopout({ ownerId, surfaceId: selectedSurfaceId, checked: enabled });
+    setMessage(enabled ? `Making the whole ${defaultPopoutScopeLabel} the default…`
+      : `Clearing the default for the whole ${defaultPopoutScopeLabel}…`);
+    try {
+      if (!choice) {
+        if (enabled) await saveSettings(true);
+        return;
+      }
+      const fileName = choice.path.split(/[\\/]/).at(-1) ?? choice.path;
+      await commitScopedDocument((committed) => {
+        const next = cloneButtonDocument(committed);
+        setButtonSavedPopoutChoice(next, ownerId, choice);
+        if (enabled) setButtonDefaultPopoutChoice(next, ownerId, choice);
+        else if (buttonDefaultPopoutChoicesEqual(getButtonDefaultPopoutChoice(next, ownerId), choice)) {
+          setButtonDefaultPopoutChoice(next, ownerId, null);
+        }
+        return next;
+      }, (draft, saved) => {
+        if (draft.buttons[ownerId]) {
+          const remembered = getButtonSavedPopoutChoice(saved, ownerId, choice.surfaceId);
+          if (remembered) setButtonSavedPopoutChoice(draft, ownerId, remembered);
+          setButtonDefaultPopoutChoice(draft, ownerId, getButtonDefaultPopoutChoice(saved, ownerId));
+        }
+      }, enabled ? `${fileName} is now the default for the whole ${defaultPopoutScopeLabel}.`
+        : `Default selection cleared for the whole ${defaultPopoutScopeLabel}.`,
+      "The default Pop-out selection could not be saved.",
+      "The default Pop-out selection was saved, but other windows could not be synchronized.");
+    } finally {
+      setPendingDefaultPopout(null);
+    }
+  };
+
+  const saveSettings = async (makeDefaultPopout = false) => {
     if (busyRef.current) return;
     setBusy(true);
     let targetPath: string | null = null;
     let writtenPath: string | null = null;
     let canonicalSaved = false;
+    let fileAssociationSaved = false;
     try {
       const settingsDraft = cloneButtonDocument(store.current());
       const editorBaseline = cloneButtonDocument(store.committed);
@@ -1281,7 +1386,9 @@ function ButtonEditorContent({
       });
       if (!targetPath) {
         // Say so explicitly; a silent return reads as a dead Save action.
-        setMessage(`${placementLabel} settings were not saved because no file was chosen.`);
+        setMessage(makeDefaultPopout
+          ? `Default selection canceled for the whole ${defaultPopoutScopeLabel}; no file was chosen.`
+          : `${placementLabel} settings were not saved because no file was chosen.`);
         return;
       }
 
@@ -1337,16 +1444,51 @@ function ButtonEditorContent({
         panelName
       });
       writtenPath = await saveButtonSettingsFile(targetPath, committedSettingsFile);
+      setSettingsFilePaths((current) => ({ ...current, [selectedSurfaceId]: writtenPath }));
+      if (defaultPopoutOwnerId) {
+        const ownerId = defaultPopoutOwnerId;
+        const choice = createButtonDefaultPopoutChoice(ownerId, selectedSurfaceId, writtenPath);
+        let metadataBase = saved;
+        let metadataSaved: ButtonStateDocument | null = null;
+        // Save owns busy until both writes finish. Only a successfully written file
+        // becomes a remembered setup or default; retry touches owner metadata only.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const next = cloneButtonDocument(metadataBase);
+          setButtonSavedPopoutChoice(next, ownerId, choice);
+          if (makeDefaultPopout) setButtonDefaultPopoutChoice(next, ownerId, choice);
+          try {
+            metadataSaved = await saveButtonStateDocument(next, metadataBase.revision);
+            break;
+          } catch (error) {
+            const details = error instanceof Error ? error.message : String(error);
+            if (attempt === 2 || !details.includes("Button state changed before Save.")) throw error;
+            metadataBase = await loadButtonStateDocument();
+          }
+        }
+        if (!metadataSaved) throw new Error("FlowCell could not remember the saved Pop-out file.");
+        saved = metadataSaved;
+        store.acceptScopedSaved(saved, (draft, canonical) => {
+          if (!draft.buttons[ownerId]) return;
+          const remembered = getButtonSavedPopoutChoice(canonical, ownerId, selectedSurfaceId);
+          if (remembered) setButtonSavedPopoutChoice(draft, ownerId, remembered);
+          setButtonDefaultPopoutChoice(draft, ownerId, getButtonDefaultPopoutChoice(canonical, ownerId));
+        });
+      }
+      fileAssociationSaved = true;
       await publishButtonCommit(saved);
       const writtenFileName = writtenPath.split(/[\\/]/).at(-1) ?? writtenPath;
-      setMessage(`${placementLabel} settings saved to ${writtenFileName}.`);
+      setMessage(makeDefaultPopout
+        ? `${writtenFileName} is now the default for the whole ${defaultPopoutScopeLabel}.`
+        : `${placementLabel} settings saved to ${writtenFileName}.`);
     } catch (error) {
       const failure = error instanceof Error ? error.message : String(error);
       setMessage(
         canonicalSaved && !writtenPath && targetPath
           ? `The Button settings were committed, but FlowCell could not write the settings file to ${targetPath}:\n${failure}`
           : canonicalSaved && writtenPath
-            ? `The Button settings and file were saved, but FlowCell could not finish synchronizing other windows:\n${failure}`
+            ? !fileAssociationSaved
+              ? `The settings file was saved, but ${makeDefaultPopout ? "the default selection" : "its setup association"} could not be saved:\n${failure}`
+              : `The Button settings and file were saved, but FlowCell could not finish synchronizing other windows:\n${failure}`
             : failure
       );
     } finally {
@@ -1356,7 +1498,8 @@ function ButtonEditorContent({
 
   const stageSettingsFile = (
     settingsFile: Parameters<typeof applyButtonSettingsFile>[2],
-    sourceLabel: string
+    sourceLabel: string,
+    sourcePath: string | null = null
   ) => {
     const loadedDocument = applyButtonSettingsFile(
       store.current(),
@@ -1365,6 +1508,7 @@ function ButtonEditorContent({
       { programName, panelName }
     );
     store.transact(() => loadedDocument, { label: `Load ${settingsPlacementLabel} settings` });
+    setSettingsFilePaths((current) => ({ ...current, [selectedSurfaceId]: sourcePath }));
     const firstPlacementId = loadedDocument.surfaces[selectedSurfaceId]?.placementIds[0] ?? null;
     setSelectedSurfaceId(selectedSurfaceId);
     setFocusedPlacementId(firstPlacementId);
@@ -1403,7 +1547,7 @@ function ButtonEditorContent({
       if (!selectedPath) return;
 
       const settingsFile = await loadButtonSettingsFile(selectedPath);
-      stageSettingsFile(settingsFile, selectedPath.split(/[\\/]/).at(-1) ?? selectedPath);
+      stageSettingsFile(settingsFile, selectedPath.split(/[\\/]/).at(-1) ?? selectedPath, selectedPath);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1431,6 +1575,7 @@ function ButtonEditorContent({
           arrangeDefaultPanelButtons(next, surfaceId);
         }
         store.transact(() => next, { label: `Load ${settingsPlacementLabel} grid default` });
+        setSettingsFilePaths((current) => ({ ...current, [surfaceId]: null }));
         const firstPlacementId = next.surfaces[surfaceId].placementIds[0] ?? null;
         setSelectedSurfaceId(surfaceId);
         setFocusedPlacementId(firstPlacementId);
@@ -1480,6 +1625,7 @@ function ButtonEditorContent({
         throw new Error("This Pop-out no longer has the complete Collections preset's Buttons.");
       }
       store.transact(() => next, { label: "Load Collections Pop-out preset" });
+      setSettingsFilePaths((current) => ({ ...current, [selectedSurfaceId]: null }));
       const first = unit.memberPlacementIds[0] ?? null;
       setFocusedPlacementId(first);
       setSelectedPlacementIds(new Set(first ? [first] : []));
@@ -2624,6 +2770,21 @@ function ButtonEditorContent({
       setMessage("This animation is already applied and its position-and-size setup is open.");
       return;
     }
+    const animation = button.activationAnimation;
+    if (
+      animation?.presetId === presetId &&
+      Math.round((1 - (animation.opacity ?? 1)) * 100) === Math.round((1 - opacity) * 100) &&
+      JSON.stringify(getButtonAnimationFadeCurve(animation)) === JSON.stringify(fadeCurve)
+    ) {
+      // Timing changes save in place without reopening or restarting the setup preview.
+      const nextDraft = cloneButtonDocument(store.current());
+      editEditorButtonPresentation(nextDraft, button.id, { activationAnimation: {
+        ...structuredClone(animation),
+        frequency: structuredClone(frequency)
+      } });
+      await persistButtonAnimation(nextDraft, button.id, "Animation frequency applied.");
+      return;
+    }
     await configureButtonAnimation(button, presetId, undefined, opacity, frequency, fadeCurve);
   };
 
@@ -3041,6 +3202,27 @@ function ButtonEditorContent({
             }}
           />
           <div className="button-editor-sidebar__actions">
+            {settingsPlacementKind === "pop-out" && selectedSurfaceUnit ? (
+              <>
+                <label className="button-editor-check" title={`Applies to the whole ${defaultPopoutScopeLabel}.`}>
+                  <input
+                    type="checkbox"
+                    checked={selectedFileIsDefaultPopout}
+                    disabled={busy || !defaultPopoutOwnerId}
+                    onChange={(event) => void setSelectedFileAsDefaultPopout(event.currentTarget.checked)}
+                  />
+                  <span>Make this default pop out.</span>
+                </label>
+                <small role="status" aria-live="polite">{selectedDefaultPopoutPending
+                  ? `Saving default selection for the whole ${defaultPopoutScopeLabel}…`
+                  : selectedFileIsDefaultPopout
+                    ? `Default: whole ${defaultPopoutScopeLabel}.`
+                    : `Applies to the whole ${defaultPopoutScopeLabel}.`}</small>
+                <small>{selectedSettingsFilePath
+                  ? `Selected file: ${selectedSettingsFilePath.split(/[\\/]/).at(-1)}`
+                  : "Checking this opens Save for the whole setup."}</small>
+              </>
+            ) : null}
             {settingsPlacementKind === "pop-out" && selectedSurfaceUnit ? (
               <label className="button-editor-check button-editor-sidebar__fan">
                 <input

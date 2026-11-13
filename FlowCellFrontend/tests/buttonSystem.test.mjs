@@ -13,6 +13,26 @@ import {
   mountChippedConcreteKeyTravel,
   readChippedConcreteKeyTravel
 } from "./.compiled-button-system/button/skins/chippedConcreteKeyTravel.js";
+import {
+  CHIPPED_CONCRETE_BUTTON_SKIN,
+  isBundledMainPageConcreteSkin
+} from "./.compiled-button-system/button/skins/chippedConcreteButtonSkin.js";
+import {
+  applyButtonSettingsFile,
+  buildButtonSettingsFile,
+  buildTransientButtonPopoutSettingsDocument,
+  normalizeButtonSettingsFile
+} from "./.compiled-button-system/button/state/buttonSettingsFile.js";
+import {
+  buttonDefaultPopoutChoicesEqual,
+  createButtonDefaultPopoutChoice,
+  getButtonDefaultPopoutChoice,
+  getButtonSavedPopoutChoice,
+  resolveButtonDefaultPopoutOwnerId,
+  setButtonDefaultPopoutChoice,
+  setButtonSavedPopoutChoice
+} from "./.compiled-button-system/button/state/buttonDefaultPopout.js";
+import { buildButtonSettingsScopedDocument } from "./.compiled-button-system/button/editor/buttonEditorSaveScopes.js";
 
 test("Chipped Concrete keys use equal travel speed and preserve the flush release during fast clicks", async () => {
   const profile = readChippedConcreteKeyTravel("--cc-travel-profile: 2 4 0,0 2,1 5,2.5 8,4 9,4.5 10,5;");
@@ -283,6 +303,7 @@ import {
   resolveUninstallOwnerButtonIds
 } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
 import {
+  createButtonPopoutOwnerPlacement,
   expandedButtonPopoutPlacementIds,
   setButtonPopoutFanMode
 } from "./.compiled-button-system/button/state/buttonPopoutInteractionOperations.js";
@@ -3762,9 +3783,9 @@ test("default panel Pop-out includes every current script and preserves custom s
   assert.equal(members[0].width, 160);
   assert.equal(members[0].height, 44);
   assert.equal(members[0].textOffsetX, 0, "Main placement presentation is not a Pop-out default");
-  assert.equal(members[1].x - (members[0].x + members[0].width), 8);
+  assert.equal(members[1].x - (members[0].x + members[0].width), 0);
   assert.equal(members[4].x, document.settings.defaultSurfacePadding);
-  assert.equal(members[4].y - (members[0].y + members[0].height), 8);
+  assert.equal(members[4].y - (members[0].y + members[0].height), 0);
   assert.deepEqual(document.surfaces[subset.surfaceId], subsetBefore);
   assert.equal(ensureDefaultPanelPopout(document, "orca").id, unit.id);
   assert.equal(buildButtonEditorPlacementOptions(document, "cura", "files").find((option) => option.label === "Pop-out")?.surfaceId, unit.surfaceId);
@@ -7367,6 +7388,259 @@ test("Pop-out Fan mode authors and retains exact regular and Tool Set owner plac
   assert.equal(reenabled.createdOwnerPlacement, false);
   assert.equal(reenabled.ownerPlacementId, retainedOwnerId);
   assertValidScopeFixture(document);
+});
+
+test("new Pop-out Fan owners use their content appearance without copying Main or member behavior", () => {
+  for (const kind of ["regular", "tool-set"]) {
+    const { document, ids } = buildButtonDocumentScopeFixture();
+    const unit = document.popoutUnits[kind === "regular" ? ids.regular : ids.toolUnit];
+    document.surfaces[unit.surfaceId].uniformButtonSize = null;
+    for (const placement of Object.values(document.placements)) {
+      if (["main", "panel"].includes(document.surfaces[placement.surfaceId]?.kind)) {
+        placement.skinOverrideId = "skin-chipped-concrete-family-default";
+        placement.textOffsetX = 17;
+        placement.presentationOverride = { label: "Main-only label" };
+      }
+    }
+    const mainBefore = structuredClone(Object.values(document.placements).filter((placement) =>
+      ["main", "panel"].includes(document.surfaces[placement.surfaceId]?.kind)
+    ));
+    const member = document.placements[(kind === "regular" ? unit.memberPlacementIds : unit.childPlacementIds)[0]];
+    const skinId = "skin-popout-cyan";
+    document.skins[skinId] = { ...structuredClone(DEFAULT_BUTTON_SKIN), id: skinId, name: "Pop-out Cyan" };
+    Object.assign(member, {
+      skinOverrideId: skinId, width: 110, height: 40, textOffsetX: 3, textOffsetY: 2,
+      textSizeOverride: 14, allowStretching: true, highlightOnHover: true,
+      presentationOverride: { label: "Member-only symbol" }
+    });
+    // An inherited content skin must still be explicitly bound to the new owner.
+    if (kind === "tool-set") {
+      member.skinOverrideId = null;
+      document.buttons[member.buttonId].defaultSkinId = skinId;
+    }
+    document.themeOverrides[member.id] = {
+      colors: { surface: "#56BED5", text: "#111111" }, hoverEnabled: true,
+      activeEnabled: null, hoverColor: "#72DAF1", activeColor: null
+    };
+    const memberBefore = structuredClone(member);
+    const recordsBefore = structuredClone(document.buttons);
+    const context = { document, surfaceId: unit.surfaceId, programName: "Blender", panelName: "Tools" };
+    if (kind === "tool-set") {
+      const beforeLegacyPreview = structuredClone(document);
+      const legacyPreview = createButtonPopoutOwnerPlacement(document, unit, unit.ownerButtonId, "legacy-preview");
+      assert.equal(legacyPreview.placement.skinOverrideId, skinId);
+      assert.equal(legacyPreview.placement.width, member.width);
+      assert.equal(legacyPreview.placement.presentationOverride, undefined);
+      assert.deepEqual(legacyPreview.themeOverride, document.themeOverrides[member.id]);
+      assert.deepEqual(document, beforeLegacyPreview, "synthetic legacy owners must not alter Main or persisted placements");
+      const fieldsOnly = createButtonPopoutOwnerPlacement(document, { ...unit, childPlacementIds: [] }, unit.ownerButtonId, "fields-only-preview");
+      assert.equal(fieldsOnly.placement.skinOverrideId, "skin-default-neutral");
+      assert.equal(fieldsOnly.placement.width, 160);
+      assert.equal(fieldsOnly.placement.height, 44);
+      assert.equal(fieldsOnly.themeOverride, undefined);
+    }
+    const result = setButtonPopoutFanMode({ ...context, enabled: true });
+    const owner = document.placements[result.ownerPlacementId];
+    assert.equal(owner.skinOverrideId, skinId);
+    for (const key of ["width", "height", "textOffsetX", "textOffsetY", "textSizeOverride", "allowStretching", "highlightOnHover"]) {
+      assert.equal(owner[key], member[key], `${kind} owner must use its Pop-out's ${key}`);
+    }
+    assert.equal(owner.presentationOverride, undefined, "owner keeps its own label and behavior");
+    assert.equal(owner.activationCycle, null);
+    assert.equal(owner.visualStateMap, null);
+    assert.deepEqual(document.themeOverrides[owner.id], document.themeOverrides[member.id]);
+    assert.notEqual(document.themeOverrides[owner.id], document.themeOverrides[member.id]);
+    assert.notEqual(document.themeOverrides[owner.id].colors, document.themeOverrides[member.id].colors);
+    assert.deepEqual(document.buttons, recordsBefore);
+    assert.deepEqual(member, memberBefore);
+    assert.deepEqual(mainBefore.map((placement) => document.placements[placement.id]), mainBefore);
+    owner.skinOverrideId = "skin-chipped-concrete-family-default";
+    owner.width = 99;
+    owner.presentationOverride = { label: "Authored owner" };
+    const authoredOwner = structuredClone(owner);
+    setButtonPopoutFanMode({ ...context, enabled: false });
+    setButtonPopoutFanMode({ ...context, enabled: true });
+    assert.deepEqual(owner, authoredOwner, "existing explicitly authored owners must survive mode changes");
+    assertValidScopeFixture(document);
+  }
+});
+
+test("loading old Concrete Fan owners repairs every owner path without changing Main, content or geometry", () => {
+  for (const kind of ["regular", "tool-set", "legacy-fan"]) {
+    const { document, ids } = buildButtonDocumentScopeFixture();
+    const unit = kind === "legacy-fan" ? document.fanSetups[ids.fan]
+      : document.popoutUnits[kind === "regular" ? ids.regular : ids.toolUnit];
+    const surfaceId = unit.surfaceId ?? unit.fanSurfaceId;
+    const context = { programName: "Blender", panelName: "Tools" };
+    const ownerId = kind === "legacy-fan" ? resolvePanelOwnerFanPlacement(document, unit.id).id
+      : setButtonPopoutFanMode({ document, surfaceId, enabled: true, ...context }).ownerPlacementId;
+    const owner = document.placements[ownerId];
+    const alias = "settings-skin-settings-skin-skin-chipped-concrete-family-default-2";
+    document.skins[alias] = { ...structuredClone(CHIPPED_CONCRETE_BUTTON_SKIN), id: alias };
+    owner.skinOverrideId = alias;
+    const before = structuredClone(document);
+    const loaded = normalizeLoadedButtonStateDocument(document);
+    assert.deepEqual(document, before, "canonical repair must not mutate the loaded snapshot");
+    assert.deepEqual(loaded.placements[ownerId], { ...owner, skinOverrideId: "skin-default-neutral" });
+    for (const [id, placement] of Object.entries(before.placements)) {
+      if (id !== ownerId) assert.deepEqual(loaded.placements[id], placement, `${kind}: preserve ${id}`);
+    }
+    assert.equal(normalizeLoadedButtonStateDocument(loaded), loaded, "canonical repair is idempotent");
+    assertValidScopeFixture(loaded);
+    const file = buildButtonSettingsFile(document, surfaceId, context);
+    const fileBefore = structuredClone(file);
+    const normalizedFile = normalizeButtonSettingsFile(file);
+    assert.deepEqual(file, fileBefore, "normalizing an old save must not mutate it");
+    const savedOwner = file.entries.find((entry) => entry.placementId === ownerId);
+    const repairedOwner = normalizedFile.entries.find((entry) => entry.placementId === ownerId);
+    assert.deepEqual(repairedOwner, { ...savedOwner, skin: loaded.skins["skin-default-neutral"] });
+    assert.equal(normalizeButtonSettingsFile(normalizedFile), normalizedFile);
+    const applied = applyButtonSettingsFile(document, surfaceId, file, context);
+    assert.equal(applied.placements[ownerId].skinOverrideId, "skin-default-neutral");
+    if (kind !== "legacy-fan") {
+      const transient = buildTransientButtonPopoutSettingsDocument(document, file, context, `old-${kind}`);
+      const transientUnit = transient.document.popoutUnits[transient.popoutUnitId];
+      const transientOwner = transient.document.placements[transientUnit.ownerPlacementId];
+      assert.equal(transientOwner.skinOverrideId, "skin-default-neutral", "Open Pop must not resurrect the saved Main skin");
+      for (const field of ["x", "y", "width", "height"]) assert.equal(transientOwner[field], owner[field]);
+    }
+    // A named custom skin, edited source, or changed embedded variant is authored data.
+    for (const skin of [
+      { ...structuredClone(CHIPPED_CONCRETE_BUTTON_SKIN), id: "my-custom-concrete" },
+      { ...structuredClone(CHIPPED_CONCRETE_BUTTON_SKIN), base: `${CHIPPED_CONCRETE_BUTTON_SKIN.base}\n--custom:1;` },
+      { ...structuredClone(CHIPPED_CONCRETE_BUTTON_SKIN), metadata: { bundled: true, buttonSkinEmbeddedVariants: {} } }
+    ]) {
+      assert.equal(isBundledMainPageConcreteSkin(skin), false);
+      const custom = structuredClone(document);
+      custom.skins[skin.id] = skin;
+      custom.placements[ownerId].skinOverrideId = skin.id;
+      assert.equal(normalizeLoadedButtonStateDocument(custom).placements[ownerId].skinOverrideId, skin.id);
+      const customFile = structuredClone(file);
+      customFile.entries.find((entry) => entry.placementId === ownerId).skin = skin;
+      assert.deepEqual(normalizeButtonSettingsFile(customFile).entries.find((entry) => entry.placementId === ownerId).skin, skin);
+    }
+  }
+});
+
+test("new neutral Fan owners measure their own label and cannot inherit Main's default from content", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  const unit = document.popoutUnits[ids.regular];
+  const member = document.placements[unit.memberPlacementIds[0]];
+  member.width = 70;
+  member.height = 44;
+  member.skinOverrideId = CHIPPED_CONCRETE_BUTTON_SKIN.id;
+  const priorDocument = globalThis.document;
+  const measuredLabels = [];
+  globalThis.document = {
+    body: { append() {} },
+    createElement() {
+      const carrier = { style: {}, textContent: "" };
+      const core = { querySelector: () => carrier, getBoundingClientRect() {
+        measuredLabels.push(carrier.textContent);
+        return { width: 48 + carrier.textContent.length * 8, height: 52 };
+      } };
+      return { style: {}, attachShadow: () => ({ querySelector: () => core }), remove() {} };
+    }
+  };
+  try {
+    const result = createButtonPopoutOwnerPlacement(document, unit, ids.toolsPanelOwner, "sized-owner");
+    const label = document.buttons[ids.toolsPanelOwner].label;
+    assert.deepEqual(measuredLabels, [label]);
+    assert.equal(result.placement.width, (48 + label.length * 8) * 44 / 52);
+    assert.notEqual(result.placement.width, member.width);
+    assert.equal(result.placement.skinOverrideId, "skin-default-neutral");
+    assert.equal(member.skinOverrideId, CHIPPED_CONCRETE_BUTTON_SKIN.id, "authored content remains untouched");
+  } finally {
+    if (priorDocument === undefined) delete globalThis.document;
+    else globalThis.document = priorDocument;
+  }
+});
+
+test("default Pop-out selections switch saved-file pointers without changing layouts or other owners", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  const context = { programName: "Blender", panelName: "Tools" };
+  const regular = document.popoutUnits[ids.regular];
+  const toolset = document.popoutUnits[ids.toolUnit];
+  assert.equal(resolveButtonDefaultPopoutOwnerId(document, regular.surfaceId, context), ids.toolsPanelOwner);
+  assert.equal(resolveButtonDefaultPopoutOwnerId(document, toolset.surfaceId, context), toolset.ownerButtonId);
+  assert.equal(resolveButtonDefaultPopoutOwnerId(document, ids.toolsPanelSurface, context), null);
+  assert.equal(getButtonDefaultPopoutChoice(document, ids.toolsPanelOwner), null);
+  const before = structuredClone(document);
+  const first = createButtonDefaultPopoutChoice(ids.toolsPanelOwner, regular.surfaceId, "C:/User/Pop/First.json");
+  const second = createButtonDefaultPopoutChoice(ids.toolsPanelOwner, regular.surfaceId, "C:/User/Pop/Second.json");
+  const toolChoice = createButtonDefaultPopoutChoice(toolset.ownerButtonId, toolset.surfaceId, "C:/User/Pop/Tools.json");
+  assert.equal(setButtonDefaultPopoutChoice(document, toolset.ownerButtonId, toolChoice), true);
+  assert.equal(setButtonDefaultPopoutChoice(document, ids.toolsPanelOwner, first), true);
+  assert.deepEqual(getButtonDefaultPopoutChoice(JSON.parse(JSON.stringify(document)), ids.toolsPanelOwner), first);
+  assert.equal(setButtonDefaultPopoutChoice(document, ids.toolsPanelOwner, first), false);
+  assert.equal(setButtonDefaultPopoutChoice(document, ids.toolsPanelOwner, second), true);
+  assert.deepEqual(getButtonDefaultPopoutChoice(document, ids.toolsPanelOwner), second);
+  assert.deepEqual(getButtonDefaultPopoutChoice(document, toolset.ownerButtonId), toolChoice);
+  assert.equal(buttonDefaultPopoutChoicesEqual(second, { ...second, path: "c:\\user\\pop\\SECOND.json" }), true);
+  assert.deepEqual(document.placements, before.placements);
+  assert.deepEqual(document.surfaces, before.surfaces);
+  assert.deepEqual(document.popoutUnits, before.popoutUnits);
+  assert.deepEqual(document.skins, before.skins);
+  const arbitraryFile = buildButtonSettingsFile(before, regular.surfaceId, context);
+  const loaded = applyButtonSettingsFile(document, regular.surfaceId, arbitraryFile, context);
+  assert.deepEqual(getButtonDefaultPopoutChoice(loaded, ids.toolsPanelOwner), second,
+    "loading a different saved file does not assign it as default");
+  assert.deepEqual(getButtonDefaultPopoutChoice(loaded, toolset.ownerButtonId), toolChoice);
+  // A stale editor's ordinary settings save must not revert the newer selection.
+  const staleDraft = structuredClone(before);
+  staleDraft.placements[regular.memberPlacementIds[0]].textOffsetX = 3;
+  const saved = buildButtonSettingsScopedDocument(document, staleDraft, regular.surfaceId, context, before);
+  assert.deepEqual(getButtonDefaultPopoutChoice(saved, ids.toolsPanelOwner), second);
+  assert.deepEqual(getButtonDefaultPopoutChoice(saved, toolset.ownerButtonId), toolChoice);
+  assert.equal(setButtonDefaultPopoutChoice(saved, ids.toolsPanelOwner, null), true);
+  assert.equal(getButtonDefaultPopoutChoice(saved, ids.toolsPanelOwner), null, "unchecked selection returns Main Pop to its normal fallback");
+  assert.deepEqual(getButtonDefaultPopoutChoice(saved, toolset.ownerButtonId), toolChoice);
+  assert.equal(setButtonDefaultPopoutChoice(saved, ids.toolsPanelOwner, null), false);
+  assert.throws(() => createButtonDefaultPopoutChoice(ids.toolsPanelOwner, regular.surfaceId, " "), /saved Pop-out file/);
+  saved.buttons[ids.toolsPanelOwner].metadata.defaultPopoutSettings = { path: "missing-fields" };
+  assert.equal(getButtonDefaultPopoutChoice(saved, ids.toolsPanelOwner), null);
+});
+
+test("saved setup association survives reopening and remains whole-owner scoped", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  const context = { programName: "Blender", panelName: "Tools" };
+  const regular = document.popoutUnits[ids.regular];
+  const toolset = document.popoutUnits[ids.toolUnit];
+  const before = structuredClone(document);
+  const panelFile = createButtonDefaultPopoutChoice(ids.toolsPanelOwner, regular.surfaceId, "C:/Pop/Panel.json");
+  const toolFile = createButtonDefaultPopoutChoice(toolset.ownerButtonId, toolset.surfaceId, "C:/Pop/Entire toolset.json");
+  assert.equal(setButtonSavedPopoutChoice(document, ids.toolsPanelOwner, panelFile), true);
+  assert.equal(setButtonSavedPopoutChoice(document, toolset.ownerButtonId, toolFile), true);
+  assert.equal(setButtonSavedPopoutChoice(document, toolset.ownerButtonId, toolFile), false);
+  const reopened = JSON.parse(JSON.stringify(document));
+  assert.deepEqual(getButtonSavedPopoutChoice(reopened, ids.toolsPanelOwner, regular.surfaceId), panelFile);
+  assert.deepEqual(getButtonSavedPopoutChoice(reopened, toolset.ownerButtonId, toolset.surfaceId), toolFile);
+  assert.equal(getButtonDefaultPopoutChoice(reopened, toolset.ownerButtonId), null, "ordinary Save does not assign default");
+  for (const id of toolset.childPlacementIds) {
+    const child = document.placements[id].buttonId;
+    assert.equal(getButtonSavedPopoutChoice(reopened, child, toolset.surfaceId), null);
+    assert.equal(resolveButtonDefaultPopoutOwnerId(reopened, document.placements[id].surfaceId, context), toolset.ownerButtonId);
+  }
+  assert.equal(buttonDefaultPopoutChoicesEqual(toolFile, { ...toolFile, surfaceId: "remapped-surface", path: "c:\\pop\\ENTIRE TOOLSET.json" }), true);
+  assert.equal(getButtonSavedPopoutChoice(reopened, toolset.ownerButtonId, "other-surface"), null);
+  for (const key of ["placements", "surfaces", "popoutUnits", "skins"]) assert.deepEqual(reopened[key], before[key]);
+  const stale = structuredClone(before);
+  const saved = buildButtonSettingsScopedDocument(reopened, stale, toolset.surfaceId, context, before);
+  assert.deepEqual(getButtonSavedPopoutChoice(saved, toolset.ownerButtonId, toolset.surfaceId), toolFile);
+});
+
+test("known-file default selection never directly rewrites its saved setup", () => {
+  const editor = readFileSync(join(frontendRoot, "src", "button", "editor", "ButtonEditorPage.tsx"), "utf8");
+  const handler = editor.slice(editor.indexOf("const setSelectedFileAsDefaultPopout ="), editor.indexOf("const saveSettings ="));
+  assert.match(editor, /<span>Make this default pop out\.<\/span>/);
+  assert.match(handler, /commitScopedDocument/);
+  assert.match(handler, /setButtonDefaultPopoutChoice\(next, ownerId, choice\)/);
+  assert.doesNotMatch(handler, /saveButtonSettingsFile|buildButtonSettingsFile|buildButtonSettingsScopedDocument|showSaveFileDialog/);
+  const save = editor.slice(editor.indexOf("const saveSettings ="), editor.indexOf("const stageSettingsFile ="));
+  assert.ok(save.indexOf("writtenPath = await saveButtonSettingsFile") < save.indexOf("setSettingsFilePaths"));
+  const stage = editor.slice(editor.indexOf("const stageSettingsFile ="), editor.indexOf("const loadDefaultSettings ="));
+  assert.match(stage, /setSettingsFilePaths/);
+  assert.doesNotMatch(stage, /setButtonDefaultPopoutChoice/);
 });
 
 test("new Fan subsets receive unique names in the same panel", () => {

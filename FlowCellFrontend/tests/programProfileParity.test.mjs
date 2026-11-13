@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { createProgramProfileRecipient, verifyProgramProfileRoundTrip } from "../../release-tools/program-profile-roundtrip.mjs";
+import { createProgramProfileRecipient, verifyProgramProfileRoundTrip, verifyProgramSelectedSourcesRoundTrip } from "../../release-tools/program-profile-roundtrip.mjs";
 import { capturePortableTheme } from "./.compiled-button-system/theme/portableTheme.js";
 import { encodeProgramDefaultTheme } from "./.compiled-button-system/pages/program-setup/programDefaultTheme.js";
 import { ensureRegularPopout } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
@@ -19,6 +19,16 @@ for (const entry of readdirSync(programsRoot, { withFileTypes: true })) {
     const result = verifyProgramProfileRoundTrip({ programRoot: join(programsRoot, entry.name) });
     assert.equal(result.programId, manifest.programId);
     assert.ok(result.placements > 0);
+  });
+  test(`${entry.name}: all selectable scripts fit the packaged layout without moving captured Buttons`, async () => {
+    const result = await verifyProgramSelectedSourcesRoundTrip({ programRoot: join(programsRoot, entry.name) });
+    assert.equal(result.selectedSources, manifest.bundledSources.length);
+    if (entry.name === "Blender") {
+      const updater = result.descriptors.find((descriptor) => descriptor.sourceId === "blender.update-git-scripts");
+      assert.ok(updater, "the uncaptured Update Git Scripts source must be selected");
+      assert.ok(Object.values(result.document.placements).some((placement) => placement.buttonId === updater.ownerButtonId),
+        "Update Git Scripts must receive a normal visible placement");
+    }
   });
 }
 

@@ -11,6 +11,7 @@ import type {
   ButtonRect,
   ButtonRecord,
   ButtonStateDocument,
+  ButtonThemeOverride,
   ButtonToolField,
   ButtonVisualMeasurement,
   ButtonVisualState,
@@ -18,7 +19,10 @@ import type {
 } from "../types";
 import { useButtonFanMotion, type ButtonFanMotionPhase } from "../fan/useButtonFanMotion";
 import type { ButtonFanMotionDirection } from "../fan/buttonFanMotion";
-import { expandedButtonPopoutPlacementIds } from "../state/buttonPopoutInteractionOperations";
+import {
+  createButtonPopoutOwnerPlacement,
+  expandedButtonPopoutPlacementIds
+} from "../state/buttonPopoutInteractionOperations";
 import {
   createToolFieldRuntimeState,
   reconcileToolFieldRuntimeState,
@@ -27,23 +31,6 @@ import {
 import "./buttonPopout.css";
 
 const EMPTY_TOOL_FIELDS: ButtonToolField[] = [];
-
-function findLegacyOwnerPlacement(
-  document: ButtonStateDocument,
-  ownerButtonId: string
-): ButtonPlacement | null {
-  const candidates = Object.values(document.placements).filter(
-    (placement) => placement.buttonId === ownerButtonId
-  );
-  candidates.sort((left, right) => {
-    const leftSurface = document.surfaces[left.surfaceId];
-    const rightSurface = document.surfaces[right.surfaceId];
-    const rank = (kind: string | undefined) =>
-      kind === "panel" ? 0 : kind === "main" ? 1 : kind === "fan" ? 2 : 3;
-    return rank(leftSurface?.kind) - rank(rightSurface?.kind) || left.id.localeCompare(right.id);
-  });
-  return candidates[0] ?? null;
-}
 
 function resolveSavedOwnerPlacement(
   document: ButtonStateDocument,
@@ -62,13 +49,14 @@ function buildCollapsedOwnerDocument(args: {
   document: ButtonStateDocument;
   unit: ButtonPopoutUnit;
   sourcePlacement: ButtonPlacement;
+  sourceThemeOverride?: ButtonThemeOverride;
 }): { document: ButtonStateDocument; surfaceId: string; placementId: string; sourcePlacementId: string } | null {
   const ownerButtonId = args.sourcePlacement.buttonId;
   const sourcePlacement = args.sourcePlacement;
 
   const surfaceId = `button-window-owner-surface:${ownerButtonId}`;
   const placementId = `button-window-owner-placement:${ownerButtonId}`;
-  const sourceThemeOverride = args.document.themeOverrides?.[sourcePlacement.id];
+  const sourceThemeOverride = args.sourceThemeOverride;
   return {
     surfaceId,
     placementId,
@@ -246,16 +234,24 @@ export function ButtonPopoutRenderer({
     [document, unit]
   );
   const authoredFan = unit.interactionMode === "fan" && Boolean(savedOwnerPlacement);
-  const collapsedSourcePlacement = authoredFan
-    ? savedOwnerPlacement
-    : unit.kind === "tool-set"
-      ? findLegacyOwnerPlacement(document, unit.ownerButtonId)
-      : null;
+  const collapsedOwnerSource = useMemo(
+    () => savedOwnerPlacement
+      ? { placement: savedOwnerPlacement, themeOverride: document.themeOverrides?.[savedOwnerPlacement.id] }
+      : unit.kind === "tool-set"
+        ? createButtonPopoutOwnerPlacement(
+            document, unit, unit.ownerButtonId, `button-window-owner-placement:${unit.ownerButtonId}`
+          )
+        : null,
+    [document, savedOwnerPlacement, unit]
+  );
   const collapsedOwner = useMemo(
-    () => collapsedSourcePlacement
-      ? buildCollapsedOwnerDocument({ document, unit, sourcePlacement: collapsedSourcePlacement })
+    () => collapsedOwnerSource
+      ? buildCollapsedOwnerDocument({
+          document, unit, sourcePlacement: collapsedOwnerSource.placement,
+          sourceThemeOverride: collapsedOwnerSource.themeOverride
+        })
       : null,
-    [collapsedSourcePlacement, document, unit]
+    [collapsedOwnerSource, document, unit]
   );
   const expandedDocument = useMemo(() => {
     const surface = document.surfaces[unit.surfaceId];

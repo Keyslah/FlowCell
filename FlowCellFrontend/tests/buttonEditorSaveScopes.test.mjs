@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import vm from "node:vm";
+import ts from "typescript";
 
 import {
   createButtonStateDocument,
@@ -7,6 +10,10 @@ import {
 } from "./.compiled-button-system/button/state/buttonDefaults.js";
 import { createButtonSourceIdentity } from "./.compiled-button-system/button/state/sourceIdentity.js";
 import { validateButtonStateDocument } from "./.compiled-button-system/button/state/buttonStateValidation.js";
+import {
+  getButtonAnimationFadeCurve,
+  getButtonAnimationFrequency
+} from "./.compiled-button-system/button/animations/buttonActivationAnimations.js";
 import {
   applyButtonAnimationSavedScope,
   applyButtonBehaviorSavedScope,
@@ -932,6 +939,124 @@ test("animation save retains unrelated draft placement geometry", () => {
   assert.equal(saved.buttons.one.activationAnimation.presetId, "flowcell-plus");
   applyButtonAnimationSavedScope(draft, saved, "one");
   assert.equal(draft.placements["placement-one"].y, 222);
+});
+
+function animationApplyHarness(setupOpen = false, opacity = 0.65) {
+  const source = readFileSync(new URL("../src/button/editor/ButtonEditorPage.tsx", import.meta.url), "utf8");
+  const parsed = ts.createSourceFile("ButtonEditorPage.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let declaration;
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(parsed) === "applyAnimationSelection") {
+      declaration = node.getText(parsed);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  assert.ok(declaration, "execute the actual Animation Apply handler");
+  const compiled = ts.transpileModule(`const ${declaration}; applyAnimationSelection;`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText;
+  const committed = documentWithButton();
+  committed.buttons.one.activationAnimation = {
+    presetId: "plus-rise",
+    desktopBounds: { left: 110, top: 220, width: 300, height: 300 },
+    opacity,
+    frequency: { mode: "random-presses", minimum: 2, maximum: 4 },
+    fadeCurve: [{ time: 0, opacity: 0 }, { time: 0.3, opacity: 1 }, { time: 1, opacity: 0 }]
+  };
+  const draft = structuredClone(committed);
+  draft.placements["placement-one"].y = 222;
+  draft.buttons.one.label = "Pending label";
+  const state = { committed, draft, activeId: setupOpen ? "one" : null, saves: 0, nativeCalls: [], messages: [] };
+  const apply = vm.runInNewContext(compiled, {
+    selectedButton: draft.buttons.one,
+    activeAnimationEditorButtonId: state.activeId,
+    structuredClone,
+    cloneButtonDocument: structuredClone,
+    getButtonAnimationFadeCurve,
+    getButtonAnimationFrequency,
+    store: { current: () => draft },
+    editEditorButtonPresentation: (document, buttonId, patch) => Object.assign(document.buttons[buttonId], patch),
+    persistButtonAnimation: async (next, buttonId, message) => {
+      state.committed = buildButtonAnimationScopedDocument(state.committed, next, buttonId);
+      applyButtonAnimationSavedScope(draft, state.committed, buttonId);
+      state.saves++;
+      state.messages.push(message);
+      return true;
+    },
+    configureButtonAnimation: async (...args) => state.nativeCalls.push(["configure", ...structuredClone(args)]),
+    hideButtonActivationAnimationEditorWindow: async () => state.nativeCalls.push(["hide"]),
+    setActiveAnimationEditorButtonId: (id) => { state.activeId = id; },
+    setMessage: (message) => state.messages.push(message)
+  });
+  return { apply, state, animation: structuredClone(committed.buttons.one.activationAnimation) };
+}
+
+for (const setupOpen of [false, true]) {
+  for (const frequency of [
+    { mode: "random-presses", minimum: 5, maximum: 12 },
+    { mode: "every-n-presses", presses: 7 },
+    { mode: "every-press" }
+  ]) {
+    test(`Animation Apply saves ${frequency.mode} without opening or replaying setup, setupOpen=${setupOpen}`, async () => {
+      const { apply, state, animation } = animationApplyHarness(setupOpen);
+      await apply(animation.presetId, animation.opacity, frequency, animation.fadeCurve);
+      assert.equal(state.saves, 1);
+      assert.deepEqual(state.nativeCalls, []);
+      assert.equal(state.activeId, setupOpen ? "one" : null);
+      assert.deepEqual(state.committed.buttons.one.activationAnimation, { ...animation, frequency });
+      assert.deepEqual(state.draft.buttons.one.activationAnimation, { ...animation, frequency });
+      assert.notEqual(state.committed.buttons.one.activationAnimation.frequency, frequency);
+      assert.equal(state.committed.buttons.one.label, "One");
+      assert.equal(state.committed.placements["placement-one"].y, 20);
+      assert.equal(state.draft.buttons.one.label, "Pending label");
+      assert.equal(state.draft.placements["placement-one"].y, 222);
+    });
+  }
+}
+
+test("interval edits do not reopen setup because the transparency slider rounds saved opacity", async () => {
+  for (const opacity of [0.45, 0.451, 0.125, 0.375, 0.625, 0.875]) {
+    const { apply, state, animation } = animationApplyHarness(false, opacity);
+    const sliderOpacity = 1 - Math.round((1 - opacity) * 100) / 100;
+    const frequency = { mode: "every-n-presses", presses: 20 };
+    await apply(animation.presetId, sliderOpacity, frequency, animation.fadeCurve);
+    assert.equal(state.saves, 1);
+    assert.deepEqual(state.nativeCalls, []);
+    assert.deepEqual(state.committed.buttons.one.activationAnimation, { ...animation, frequency });
+  }
+});
+
+test("Animation Apply still configures changes to the preset, opacity, or fade curve", async () => {
+  for (const change of [
+    { presetId: "star-wars-lightsaber" },
+    { opacity: 0.4 },
+    { fadeCurve: [{ time: 0, opacity: 1 }, { time: 1, opacity: 0 }] }
+  ]) {
+    const { apply, state, animation } = animationApplyHarness(true);
+    const selected = { ...animation, ...change };
+    await apply(selected.presetId, selected.opacity, selected.frequency, selected.fadeCurve);
+    assert.equal(state.saves, 0);
+    assert.equal(state.nativeCalls.length, 1);
+    assert.deepEqual(state.nativeCalls[0], [
+      "configure", state.draft.buttons.one, selected.presetId, undefined,
+      selected.opacity, selected.frequency, selected.fadeCurve
+    ]);
+  }
+});
+
+test("Animation Apply keeps an unchanged open setup in place and can still remove it", async () => {
+  const { apply, state, animation } = animationApplyHarness(true);
+  await apply(animation.presetId, animation.opacity, animation.frequency, animation.fadeCurve);
+  assert.equal(state.saves, 0);
+  assert.deepEqual(state.nativeCalls, []);
+  assert.equal(state.activeId, "one");
+  await apply(null, animation.opacity, animation.frequency, animation.fadeCurve);
+  assert.equal(state.saves, 1);
+  assert.equal(state.committed.buttons.one.activationAnimation, null);
+  assert.equal(state.draft.buttons.one.activationAnimation, null);
+  assert.deepEqual(state.nativeCalls, [["hide"]]);
+  assert.equal(state.activeId, null);
 });
 
 test("the document default skin is always treated as shared during assignment", () => {

@@ -22,6 +22,7 @@ import { BUTTON_SKIN_SECTION_ORDER } from "../skins/buttonSkinFormat.js";
 import { validateButtonSkin } from "../skins/skinValidator.js";
 import { isButtonTextGlowCurve, isButtonTextGlowSetting } from "../skins/buttonTextGlow.js";
 import { DEFAULT_BUTTON_SKIN, LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE } from "../skins/defaultButtonSkin.js";
+import { isBundledMainPageConcreteSkin } from "../skins/chippedConcreteButtonSkin.js";
 import {
   normalizeButtonGlowAmount,
   normalizeButtonHighlightAmount,
@@ -780,6 +781,46 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
         changed = true;
       }
       fanSetups[id] = setup;
+    }
+  }
+  if (isObject(skins)) {
+    const repairOwnerSkin = (ownerId: unknown, surfaceId: unknown, memberIds: unknown) => {
+      if (typeof ownerId !== "string" || typeof surfaceId !== "string") return;
+      const owner = placements[ownerId];
+      if (!isObject(owner) || owner.surfaceId !== surfaceId) return;
+      const button = typeof owner.buttonId === "string" ? buttons[owner.buttonId] : null;
+      const skinId = owner.skinOverrideId ?? (isObject(button) ? button.defaultSkinId : null);
+      if (typeof skinId !== "string" || !isBundledMainPageConcreteSkin(skins[skinId])) return;
+      // The old owner clone carried Main's exact default. Preserve its anchor,
+      // size and authored behavior while borrowing the Pop-out's skin only.
+      const contentSkinId = (Array.isArray(memberIds) ? memberIds : []).map((id) => {
+        const member = typeof id === "string" && id !== ownerId ? placements[id] : null;
+        if (!isObject(member) || member.surfaceId !== surfaceId) return null;
+        const memberButton = typeof member.buttonId === "string" ? buttons[member.buttonId] : null;
+        const candidateId = member.skinOverrideId ?? (isObject(memberButton) ? memberButton.defaultSkinId : null);
+        return typeof candidateId === "string" && isObject(skins[candidateId]) &&
+          !isBundledMainPageConcreteSkin(skins[candidateId]) ? candidateId : null;
+      }).find((id): id is string => Boolean(id));
+      if (!contentSkinId && !isObject(skins[DEFAULT_BUTTON_SKIN.id])) {
+        skins[DEFAULT_BUTTON_SKIN.id] = structuredClone(DEFAULT_BUTTON_SKIN);
+      }
+      placements[ownerId] = { ...owner, skinOverrideId: contentSkinId ?? DEFAULT_BUTTON_SKIN.id };
+      changed = true;
+    };
+    for (const candidate of Object.values(isObject(popoutUnits) ? popoutUnits : {})) {
+      if (!isObject(candidate) || (candidate.kind !== "regular" && candidate.kind !== "tool-set")) continue;
+      const surface = typeof candidate.surfaceId === "string" ? surfaces[candidate.surfaceId] : null;
+      if (!isObject(surface) || !["regular-popout", "tool-set-popout"].includes(String(surface.kind))) continue;
+      repairOwnerSkin(candidate.ownerPlacementId, candidate.surfaceId,
+        candidate.kind === "regular" ? candidate.memberPlacementIds : candidate.childPlacementIds);
+    }
+    for (const candidate of Object.values(isObject(fanSetups) ? fanSetups : {})) {
+      if (!isObject(candidate)) continue;
+      const surface = typeof candidate.fanSurfaceId === "string" ? surfaces[candidate.fanSurfaceId] : null;
+      if (!isObject(surface) || surface.kind !== "fan" || !Array.isArray(surface.placementIds)) continue;
+      const ownerId = surface.placementIds.find((id) => typeof id === "string" &&
+        isObject(placements[id]) && placements[id].buttonId === candidate.panelOwnerButtonId);
+      repairOwnerSkin(ownerId, candidate.fanSurfaceId, candidate.fanMemberPlacementIds);
     }
   }
   return changed

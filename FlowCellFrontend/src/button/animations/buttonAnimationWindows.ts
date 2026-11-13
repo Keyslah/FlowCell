@@ -32,6 +32,7 @@ export const BUTTON_ANIMATION_EDITOR_WINDOW_LABEL = "flowcell-button-animation-e
 
 const BUTTON_ANIMATION_CONTEXT_EVENT = "flowcell:button-animation-context";
 const BUTTON_ANIMATION_READY_EVENT = "flowcell:button-animation-ready";
+const BUTTON_ANIMATION_SHOWN_EVENT = "flowcell:button-animation-shown";
 const BUTTON_ANIMATION_PLAY_REQUEST_EVENT = "flowcell:button-animation-play-request";
 const DEFAULT_ANIMATION_WINDOW_SIZE = 260;
 const WINDOW_READY_TIMEOUT_MS = 10_000;
@@ -202,6 +203,8 @@ async function configureWindow(
   await target.setResizable(false);
   await target.setMinSize(null);
   await target.setMaxSize(null);
+  // Settings share this band while Animation is open, so either the explicit
+  // positioning preview or its controls can be brought forward by selecting it.
   await target.setAlwaysOnTop(true);
   const backgroundTarget = target as TauriWindow & {
     setBackgroundColor?: (color: [number, number, number, number]) => Promise<void>;
@@ -367,6 +370,14 @@ export async function publishButtonAnimationWindowReady(): Promise<void> {
   await emit(BUTTON_ANIMATION_READY_EVENT, {
     windowLabel: getCurrentWindow().label
   } satisfies ButtonAnimationReadyUpdate);
+}
+
+export function listenForButtonAnimationWindowShown(handler: () => void): Promise<UnlistenFn> {
+  return listen(BUTTON_ANIMATION_SHOWN_EVENT, handler);
+}
+
+export function publishButtonAnimationWindowShown(): Promise<void> {
+  return emit(BUTTON_ANIMATION_SHOWN_EVENT);
 }
 
 export async function requestButtonActivationAnimation(button: ButtonRecord): Promise<void> {

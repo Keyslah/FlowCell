@@ -11,7 +11,6 @@ export interface ButtonActivationAnimationPreset {
   id: ButtonActivationAnimationPresetId;
   label: string;
   durationMs: number;
-  pressInterval?: { minimum: number; maximum: number };
   spritePixelSize: {
     width: number;
     height: number;
@@ -41,6 +40,10 @@ export type ButtonAnimationResizeDirection =
 
 export const BUTTON_ANIMATION_MINIMUM_EDITOR_WIDTH = 140;
 export const PLUS_RISE_FRAME_COUNT = 61;
+export const BUTTON_ANIMATION_DEFAULT_FREQUENCY = {
+  mode: "every-n-presses",
+  presses: 20
+} as const;
 
 export const BUTTON_ACTIVATION_ANIMATION_PRESETS: readonly ButtonActivationAnimationPreset[] = [
   {
@@ -60,7 +63,6 @@ export const BUTTON_ACTIVATION_ANIMATION_PRESETS: readonly ButtonActivationAnima
     id: "star-wars-lightsaber",
     label: "Star Wars Lightsaber",
     durationMs: 3_010,
-    pressInterval: { minimum: 5, maximum: 50 },
     spritePixelSize: {
       width: 480,
       height: 268
@@ -165,8 +167,7 @@ export function getButtonAnimationFrequency(
   animation: Pick<ButtonActivationAnimation, "presetId" | "frequency">
 ): ButtonAnimationFrequency {
   if (animation.frequency) return animation.frequency;
-  const range = getButtonActivationAnimationPreset(animation.presetId).pressInterval;
-  return range ? { mode: "random-presses", ...range } : { mode: "every-press" };
+  return { ...BUTTON_ANIMATION_DEFAULT_FREQUENCY };
 }
 
 export function getButtonActivationAnimationPreset(

@@ -109,3 +109,12 @@ export function isBundledChippedConcreteDefaultSkin(skin: ButtonSkin): boolean {
     Object.keys(sources).length === counts.length &&
     counts.every((count) => sources[String(count)] === chippedConcreteFamilySources[String(count)].source));
 }
+
+/** Recognize Main's unchanged default after settings imports rename a conflicting ID. */
+export function isBundledMainPageConcreteSkin(value: unknown): value is ButtonSkin {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const skin = value as ButtonSkin;
+  if (typeof skin.id !== "string" || !/^(?:settings-skin-)*skin-chipped-concrete-family-default(?:-\d+)*$/.test(skin.id) ||
+    !skin.metadata || typeof skin.metadata !== "object" || Array.isArray(skin.metadata)) return false;
+  return isBundledChippedConcreteDefaultSkin({ ...skin, id: CHIPPED_CONCRETE_BUTTON_SKIN_ID });
+}

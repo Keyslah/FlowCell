@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { withNeutralSkinMeasurements } from "./neutralSkinDomFixture.mjs";
 
 const output = process.env.FLOWCELL_BUTTON_TEST_OUTPUT ?? ".compiled-button-system";
 const compiled = (path) => import(new URL(`./${output}/${path}.js`, import.meta.url));
 const { createButtonStateDocument, ensureMainPageSkinDefaults } = await compiled("button/state/buttonDefaults");
 const { mergeLegacyInstallsIntoDocument, reconcileBundledProgramSources } = await compiled("button/state/ButtonStateRepository");
-const { ensureDefaultPanelPopout, ensureRegularPopout } = await compiled("button/state/buttonDocumentOperations");
+const { ensureDefaultPanelPopout, ensureRegularPopout, ensureFanSetup } = await compiled("button/state/buttonDocumentOperations");
 const { applyPanelPopoutPreset, availablePanelPopoutPresets, availablePanelPopoutPresetsForPanel,
   panelPopoutPresetFromPath, panelPopoutPresetPath } = await compiled("button/state/buttonPanelPopoutPresets");
 const { validateButtonStateDocument } = await compiled("button/state/buttonStateValidation");
@@ -134,6 +135,61 @@ test("new regular popups use gray even when their shared record still has Concre
   assert.equal(member.skinOverrideId, concrete);
   ensureDefaultPanelPopout(document, button.id, { resetLayout: true });
   assert.equal(member.skinOverrideId, gray);
+});
+
+test("new Pop-outs and Fans pack text-dependent widths into tight rows without equalizing sizes", () => {
+  withNeutralSkinMeasurements({ iiii: 52, WWWW: 104 }, () => {
+  for (const kind of ["pop", "panel-pop", "fan"]) {
+    const document = createButtonStateDocument();
+    const records = Array.from({ length: 9 }, (_, index) => record(`grid-${index}`, `grid-${index}.py`,
+      index % 2 === 0 ? "iiii" : "WWWW"));
+    addPanel(document, records);
+    const unit = kind === "fan" ? ensureFanSetup({ document, programName: "Blender", panelName: "Collections", buttons: records })
+      : kind === "panel-pop" ? ensureDefaultPanelPopout(document, records[0].id) : ensureRegularPopout(document, records);
+    const surface = document.surfaces[unit.fanSurfaceId ?? unit.surfaceId];
+    const ids = unit.fanMemberPlacementIds ?? unit.memberPlacementIds;
+    const members = ids.map((id) => document.placements[id]);
+    assert.equal(surface.uniformButtonSize, null, "a packed default must not lock individual dimensions");
+    const originX = kind === "fan" ? 96 : 8;
+    assert.deepEqual(members.map(({ x, y, width, height }) => ({ x, y, width, height })),
+      records.map((_, index) => ({ x: originX + [0, 44, 132, 176][index % 4], y: 8 + Math.floor(index / 4) * 44,
+        width: index % 2 === 0 ? 44 : 88, height: 44 })));
+    assert.ok(members.every((placement) => placement.matchHitboxToSkin && !placement.allowStretching),
+      "each skin keeps its natural proportions");
+    if (kind === "fan") {
+      const owner = surface.placementIds.map((id) => document.placements[id])
+        .find((placement) => placement.buttonId === unit.panelOwnerButtonId);
+      assert.equal(owner.x + owner.width, originX, "the independent owner must not consume a member grid cell");
+    }
+    assert.deepEqual(validateButtonStateDocument(document).issues, []);
+  }
+  });
+});
+
+test("Load Default preserves unequal sizes and respects chosen spacing", () => {
+  const document = createButtonStateDocument();
+  const records = Array.from({ length: 5 }, (_, index) => record(`reset-${index}`, `reset-${index}.py`));
+  addPanel(document, records);
+  const unit = ensureRegularPopout(document, records);
+  const surface = document.surfaces[unit.surfaceId];
+  surface.uniformButtonSize = null;
+  const heights = [40, 44, 48, 42, 38];
+  unit.memberPlacementIds.forEach((id, index) => Object.assign(document.placements[id], {
+    width: 70 + index * 5, height: heights[index], x: index * 100, y: 110, matchHitboxToSkin: true
+  }));
+  const authored = structuredClone(unit.memberPlacementIds.map((id) => document.placements[id]));
+  ensureDefaultPanelPopout(document, records[0].id);
+  assert.deepEqual(unit.memberPlacementIds.map((id) => document.placements[id]), authored,
+    "opening an existing popup must preserve its authored layout");
+  document.settings.buttonSpacingMm = 25.4 / 96 * 3;
+  ensureDefaultPanelPopout(document, records[0].id, { unitId: unit.id, resetLayout: true });
+  assert.equal(surface.uniformButtonSize, null);
+  assert.deepEqual(unit.memberPlacementIds.map((id) => {
+    const { x, y, width, height, matchHitboxToSkin } = document.placements[id];
+    return { x, y, width, height, matchHitboxToSkin };
+  }), records.map((_, index) => ({ x: 8 + [0, 73, 151, 234, 0][index], y: index < 4 ? 8 : 59,
+    width: 70 + index * 5, height: heights[index], matchHitboxToSkin: true })));
+  assert.deepEqual(validateButtonStateDocument(document).issues, []);
 });
 
 test("fresh managed Collections scripts receive the exact authored 18-control geometry and symbols", () => {

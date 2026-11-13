@@ -3,23 +3,23 @@ import {
   emitProgramSetupCommitted,
   finalizeAddProgramPlan,
   listProgramSetupStatuses,
+  preflightAddProgramPlan,
   prepareAddProgramCanonicalCommit,
   rollbackAddProgramPlan,
   type AddProgramPlanRequest,
-  type ProgramSetupResult
+  type ProgramSetupResult,
+  type AppliedProgramSetup
 } from "../../lib/programRails.js";
 import {
   buttonStateDocumentsEqual,
   commitButtonStateDocument,
-  loadButtonStateDocument,
-  reconcileBundledProgramSources
+  loadButtonStateDocument
 } from "../../button/state/ButtonStateRepository.js";
 import { publishButtonCommit } from "../../button/state/ButtonDraftBus.js";
-import { reconcileProgramPanelOwners } from "../../button/state/panelOwnerButtonOperations.js";
-import { buildPanelRailOwnerEntries, panelRailOwnerSurfaceBounds } from "../main/mainLayout.js";
-import { applyProgramDefaultTheme, requireNewProgramAppearance, stampProgramAppearanceReceipt } from "./programDefaultTheme.js";
+import { applyProgramDefaultTheme, buildProgramSetupDocument } from "./programDefaultTheme.js";
 
 const defaultOperations = {
+  preflight: preflightAddProgramPlan,
   apply: applyAddProgramPlan,
   load: loadButtonStateDocument,
   prepare: prepareAddProgramCanonicalCommit,
@@ -42,10 +42,31 @@ export async function applyManagedProgramPlan(
   operations: typeof defaultOperations = defaultOperations,
   onProgress: (stage: string) => void = () => {}
 ): Promise<ProgramSetupResult> {
+  request = { ...request, clientStartedAtMs: Date.now() };
   let token = "";
   let result: ProgramSetupResult;
   try {
-    const applied = await operations.apply(request);
+    let applied: AppliedProgramSetup | undefined;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      onProgress("Validating the selected buttons and layout before installation…");
+      const [preview, base] = await Promise.all([operations.preflight(request), operations.load()]);
+      if (request.applyDefaultTheme && !preview.defaultTheme) {
+        throw new Error("The Program installer did not return its requested packaged appearance.");
+      }
+      await buildProgramSetupDocument(base, preview, operations.theme);
+      if ((await operations.load()).revision !== base.revision) {
+        if (attempt === 2) throw new Error("Button state changed before program installation. Retry setup.");
+        continue;
+      }
+      try {
+        applied = await operations.apply({ ...request,
+          expectedPlanFingerprint: preview.planFingerprint, expectedButtonRevision: base.revision });
+        break;
+      } catch (error) {
+        if (attempt === 2 || !message(error).includes("Button state changed before program installation.")) throw error;
+      }
+    }
+    if (!applied) throw new Error("Program setup preview could not be confirmed. Retry setup.");
     token = applied.transactionToken;
     if (request.applyDefaultTheme && !applied.defaultTheme) {
       throw new Error("The Program installer did not return its requested packaged appearance.");
@@ -53,23 +74,10 @@ export async function applyManagedProgramPlan(
     onProgress("Saving installed buttons and panel choices…");
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const base = await operations.load();
-      if (applied.defaultTheme) requireNewProgramAppearance(base, applied.programName);
-      let next = reconcileBundledProgramSources(base, applied.descriptors);
-      const panels = reconcileProgramPanelOwners(next, {
-        programName: applied.programName,
-        panels: buildPanelRailOwnerEntries(applied.panels),
-        surfaceBounds: panelRailOwnerSurfaceBounds,
-        removeStaleOwners: false
-      });
       if (applied.defaultTheme) {
         onProgress("Applying the packaged appearance and layout…");
-        next = await operations.theme(next, applied.programName, applied.defaultTheme);
       }
-      const expectedIds = [
-        ...applied.descriptors.map((descriptor) => String(descriptor.ownerButtonId ?? "")),
-        ...panels.owners.map((owner) => owner.buttonId)
-      ].filter(Boolean);
-      if (applied.defaultTheme) stampProgramAppearanceReceipt(next, expectedIds, applied.defaultThemeReceipt);
+      const { document: next, expectedButtonIds: expectedIds } = await buildProgramSetupDocument(base, applied, operations.theme);
       await operations.prepare(token, expectedIds);
       try {
         if (!buttonStateDocumentsEqual(next, base)) await operations.commit(next, base.revision);
@@ -86,6 +94,7 @@ export async function applyManagedProgramPlan(
     if (!token) throw error;
     let outcome: "finalized" | "rolled-back";
     try {
+      onProgress("Undoing the incomplete program setup…");
       outcome = await operations.rollback(token);
     } catch (rollbackError) {
       throw new Error(`Program setup failed: ${message(error)} Rollback requires startup recovery: ${message(rollbackError)}`);

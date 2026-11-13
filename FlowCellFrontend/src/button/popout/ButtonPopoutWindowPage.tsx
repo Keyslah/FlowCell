@@ -29,6 +29,7 @@ import {
   publishButtonRestingWindowBounds
 } from "../state/ButtonDraftBus";
 import { saveButtonStateDocument } from "../state/ButtonStateRepository";
+import { createButtonPopoutOwnerPlacement } from "../state/buttonPopoutInteractionOperations";
 import type {
   ButtonCoreMeasurement,
   ButtonDesktopBounds,
@@ -334,13 +335,11 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   }, [authoredFan, document, expandedSurface?.placementIds, savedOwnerPlacement?.id, unit]);
   const collapsedGeometryPlacements = useMemo<ButtonPlacement[]>(() => {
     if (!unit || !document || !collapsiblePopout) return [];
-    const source = authoredFan
-      ? savedOwnerPlacement
-      : unit.kind === "tool-set"
-        ? Object.values(document.placements).find(
-            (placement) => placement.buttonId === unit.ownerButtonId
-          )
-        : undefined;
+    const source = savedOwnerPlacement ?? (unit.kind === "tool-set"
+      ? createButtonPopoutOwnerPlacement(
+          document, unit, unit.ownerButtonId, `button-window-owner-placement:${unit.ownerButtonId}`
+        ).placement
+      : undefined);
     if (!source) return [];
     return [{
       ...source,
@@ -350,7 +349,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       y: 0,
       zIndex: 0
     }];
-  }, [authoredFan, collapsiblePopout, document, savedOwnerPlacement, unit]);
+  }, [collapsiblePopout, document, savedOwnerPlacement, unit]);
   const geometryPlacements = renderedDisplayMode === "expanded"
     ? expandedGeometryPlacements
     : collapsedGeometryPlacements;

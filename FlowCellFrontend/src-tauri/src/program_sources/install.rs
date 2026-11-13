@@ -17,10 +17,14 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[path = "toolset_package.rs"]
 pub(crate) mod toolset_package;
+
+#[path = "setup_bridge.rs"]
+mod setup_bridge;
+pub(crate) use setup_bridge::ProgramSetupBridgeSession;
 
 const TOOLSET_MANIFEST_FILE_NAME: &str = "flowcell.toolset.json";
 const SCRIPT_MANIFEST_FILE_NAME: &str = "flowcell.script.json";
@@ -2581,7 +2585,7 @@ fn finalize_install_transaction(transaction_root: &Path) {
     if !transaction_root.is_dir() {
         return;
     }
-    if let Err(error) = crate::recycle_directory_path(transaction_root) {
+    if let Err(error) = super::transaction::recycle_finalized_install_transaction(transaction_root) {
         crate::append_flowcell_local_log(
             "program-source-cleanup.log",
             &format!(
@@ -2700,6 +2704,9 @@ fn recover_install_transactions_in_program_with_canonical(
         .collect::<Vec<_>>();
     transactions.sort();
     for transaction_root in transactions {
+        if super::transaction::is_deferred_finalized_install_transaction(&transaction_root) {
+            continue;
+        }
         recover_install_transaction(manifest, program_root, &transaction_root)?;
         if transaction_awaits_canonical(manifest, program_root, &transaction_root)? {
             if require_canonical_resolution {
@@ -2887,6 +2894,7 @@ fn bridge_install_arguments(
     panel_name: &str,
     installed_source: &Path,
     bridge_data: Option<&Value>,
+    skip_sync: bool,
 ) -> Result<Vec<String>, String> {
     let selected_paths_json =
         serde_json::to_string(&vec![installed_source.to_string_lossy().to_string()])
@@ -2896,7 +2904,7 @@ fn bridge_install_arguments(
             .map_err(|error| format!("Failed to encode bridgeData: {error}"))?,
         None => "{}".to_string(),
     };
-    Ok(vec![
+    let mut arguments = vec![
         "-File".to_string(),
         script_path.to_string_lossy().to_string(),
         "-PanelName".to_string(),
@@ -2907,7 +2915,11 @@ fn bridge_install_arguments(
         owner_button_id.to_string(),
         "-BridgeDataJson".to_string(),
         bridge_data_json,
-    ])
+    ];
+    if skip_sync {
+        arguments.push("-SkipSync".to_string());
+    }
+    Ok(arguments)
 }
 
 pub(crate) fn deploy_bridge_source(
@@ -2916,6 +2928,26 @@ pub(crate) fn deploy_bridge_source(
     panel_name: &str,
     installed_source: &Path,
     bridge_data: Option<&Value>,
+) -> Result<String, String> {
+    deploy_bridge_source_with_sync(
+        manifest,
+        owner_button_id,
+        panel_name,
+        installed_source,
+        bridge_data,
+        false,
+        None,
+    )
+}
+
+fn deploy_bridge_source_with_sync(
+    manifest: &ProgramManifest,
+    owner_button_id: &str,
+    panel_name: &str,
+    installed_source: &Path,
+    bridge_data: Option<&Value>,
+    defer_blender_sync: bool,
+    bridge_session: Option<&mut ProgramSetupBridgeSession>,
 ) -> Result<String, String> {
     if !is_managed_bridge_runner(&manifest.runner.kind) {
         return Err(format!(
@@ -2942,24 +2974,37 @@ pub(crate) fn deploy_bridge_source(
             script_path.display()
         ));
     }
-    let arguments = bridge_install_arguments(
-        &script_path,
-        owner_button_id,
-        panel_name,
-        installed_source,
-        bridge_data,
-    )?;
-    let output = crate::spawn_powershell_output(&arguments)?;
-    if !output.status.success() {
-        return Err(crate::format_process_failure(
-            &output,
-            &format!("{bridge_label} Button source deployment failed."),
-        ));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let parsed = serde_json::from_str::<Value>(&stdout).map_err(|error| {
-        format!("{bridge_label} install adapter returned invalid JSON: {error}. Output: {stdout}")
-    })?;
+    let parsed = if let Some(session) = bridge_session {
+        session.install(
+            &manifest.label,
+            owner_button_id,
+            panel_name,
+            installed_source,
+            bridge_data,
+        )?
+    } else {
+        let arguments = bridge_install_arguments(
+            &script_path,
+            owner_button_id,
+            panel_name,
+            installed_source,
+            bridge_data,
+            defer_blender_sync && manifest.runner.kind == "blender-bridge",
+        )?;
+        let output = crate::spawn_powershell_output(&arguments)?;
+        if !output.status.success() {
+            return Err(crate::format_process_failure(
+                &output,
+                &format!("{bridge_label} Button source deployment failed."),
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        serde_json::from_str::<Value>(&stdout).map_err(|error| {
+            format!(
+                "{bridge_label} install adapter returned invalid JSON: {error}. Output: {stdout}"
+            )
+        })?
+    };
     let result = parsed
         .get("results")
         .and_then(Value::as_array)
@@ -3284,6 +3329,139 @@ fn classify_canonical_update(
     }
 }
 
+fn prepared_active_record(
+    manifest: &ProgramManifest,
+    program_root: &Path,
+    panel_name: &str,
+    owner_button_id: &str,
+    source_display_path: &Path,
+    mut prepared: PreparedSource,
+    bundled_identity: Option<(String, String)>,
+) -> Result<ActiveSourceRecord, String> {
+    if let Some((id, _)) = &bundled_identity {
+        if let Some(source) = manifest
+            .bundled_sources
+            .iter()
+            .find(|source| source.id == *id && !source.display_label.is_empty())
+        {
+            prepared.label = source.display_label.clone();
+        }
+    }
+    let final_package = program_root
+        .join(&manifest.local_scripts_folder)
+        .join(owner_button_id);
+    let committed_source = final_package
+        .join("source")
+        .join(&prepared.source_relative_to_package);
+    let portable = super::records::is_portable_windows_execution(prepared.runner_data.as_ref());
+    Ok(ActiveSourceRecord {
+        schema_version: 1,
+        owner_button_id: owner_button_id.to_string(),
+        install_id: owner_button_id.to_string(),
+        program_id: manifest.program_id.clone(),
+        program_name: manifest.label.clone(),
+        panel_name: panel_name.to_string(),
+        label: prepared.label,
+        tooltip: prepared.tooltip,
+        kind: prepared.kind,
+        local_package_path: path_relative_to_program(program_root, &final_package)?,
+        source_path: path_relative_to_program(program_root, &committed_source)?,
+        runner: manifest.runner.kind.clone(),
+        runner_data: prepared.runner_data,
+        execution_target: prepared.execution_target,
+        bridge_action: if is_managed_bridge_runner(&manifest.runner.kind) && !portable {
+            owned_bridge_action(owner_button_id)
+        } else {
+            String::new()
+        },
+        bridge_data: prepared.bridge_data,
+        state_query: prepared.state_query,
+        events: prepared.events,
+        children: prepared.children,
+        layout: prepared.layout,
+        page: prepared.page,
+        source_display_path: source_display_path.to_string_lossy().to_string(),
+        bundled_source_id: bundled_identity.as_ref().map(|(id, _)| id.clone()),
+        bundled_source_version: bundled_identity.map(|(_, version)| version),
+    })
+}
+
+/// Build the exact installed Button/layout descriptor without staging files,
+/// registering bridge actions, or changing any native state.
+pub(crate) fn preview_program_setup_source(
+    request: InstallButtonSourceRequest,
+) -> Result<InstallButtonSourceResponse, String> {
+    let owner_button_id = validate_owner_button_id(&request.owner_button_id)?;
+    let panel_name = crate::validate_folder_name(&request.panel_name, "Panel")?;
+    let manifest = load_program_manifest(request.program_name.trim())?;
+    let program_root = crate::resolve_program_directory(request.program_name.trim())?;
+    program_setup_bridge_sync_script(&manifest, &program_root)?;
+    let source_display_path = PathBuf::from(request.source_path.trim());
+    reject_selected_source_reparse_point(&source_display_path)?;
+    let source_path = source_display_path
+        .canonicalize()
+        .map_err(|error| format!("Selected Button source could not be resolved: {error}"))?;
+    let requested_kind = normalize_import_kind(&request.import_kind)?;
+    let import_kind = if requested_kind == "auto" {
+        detect_import_kind(&source_path)?
+    } else {
+        requested_kind
+    };
+    let bundled_identity = match (
+        request.bundled_source_id.as_deref(),
+        request.bundled_source_version.as_deref(),
+    ) {
+        (None, None) => None,
+        (Some(id), Some(version)) => {
+            let declared = manifest
+                .bundled_sources
+                .iter()
+                .find(|source| source.id.eq_ignore_ascii_case(id.trim()))
+                .ok_or_else(|| {
+                    format!("Program does not declare bundled source '{}'.", id.trim())
+                })?;
+            let declared_path = super::manifest::resolve_relative_manifest_path(
+                &program_root,
+                &declared.source_path,
+                "bundledSources.sourcePath",
+                false,
+            )?
+            .ok_or_else(|| "bundledSources.sourcePath cannot be empty.".to_string())?
+            .canonicalize()
+            .map_err(|error| format!("Bundled source could not be resolved: {error}"))?;
+            if declared.version != version.trim()
+                || declared.import_kind != import_kind
+                || declared_path != source_path
+            {
+                return Err(format!(
+                    "Bundled source '{}' changed before setup preview.",
+                    declared.id
+                ));
+            }
+            Some((declared.id.clone(), declared.version.clone()))
+        }
+        _ => {
+            return Err(
+                "bundledSourceId and bundledSourceVersion must be supplied together.".to_string(),
+            )
+        }
+    };
+    let prepared = prepare_source(&manifest, &source_path, import_kind)?;
+    let record = prepared_active_record(
+        &manifest,
+        &program_root,
+        &panel_name,
+        &owner_button_id,
+        &source_path,
+        prepared,
+        bundled_identity,
+    )?;
+    Ok(build_response(
+        &record,
+        active_record_file_name(&owner_button_id),
+    ))
+}
+
 pub(crate) fn install_from_path(
     request: InstallButtonSourceRequest,
     replace_existing: bool,
@@ -3306,7 +3484,113 @@ pub(crate) fn install_from_path_while_source_locked(
         replace_existing,
         source_guard,
         None,
+        false,
+        None,
     )
+}
+
+/// Add Program owns the enclosing journal and must synchronize the bridge before
+/// publishing its native-applied boundary. Other install/update/recovery callers
+/// continue to synchronize immediately.
+pub(crate) fn install_program_setup_source_while_source_locked(
+    request: InstallButtonSourceRequest,
+    source_guard: &std::sync::MutexGuard<'static, ()>,
+    bridge_session: Option<&mut ProgramSetupBridgeSession>,
+) -> Result<InstallButtonSourceResponse, String> {
+    install_from_path_while_source_locked_with_completion(
+        request,
+        false,
+        source_guard,
+        None,
+        true,
+        bridge_session,
+    )
+}
+
+pub(crate) fn create_program_setup_bridge_session(
+    manifest: &ProgramManifest,
+) -> Result<Option<ProgramSetupBridgeSession>, String> {
+    let program_root = crate::resolve_program_directory(&manifest.label)?;
+    let Some(synchronizer) = program_setup_bridge_sync_script(manifest, &program_root)? else {
+        return Ok(None);
+    };
+    let installer = super::manifest::resolve_runner_script_path(
+        &program_root,
+        manifest,
+        &manifest.runner.install_script,
+        "runner.installScript",
+    )?
+    .ok_or_else(|| "Blender install adapter is missing.".to_string())?;
+    ProgramSetupBridgeSession::new(&manifest.label, &installer, &synchronizer).map(Some)
+}
+
+fn program_setup_bridge_sync_script(
+    manifest: &ProgramManifest,
+    program_root: &Path,
+) -> Result<Option<PathBuf>, String> {
+    if manifest.runner.kind != "blender-bridge" {
+        return Ok(None);
+    }
+    let script_path = super::manifest::resolve_runner_script_path(
+        program_root,
+        manifest,
+        "Sync-BlenderCustomActionCode.ps1",
+        "Blender setup synchronization",
+    )?
+    .ok_or_else(|| "Blender setup synchronization script is missing.".to_string())?;
+    if !script_path.is_file() {
+        return Err("Blender setup synchronization script is missing; reimport the program package before installing Buttons.".to_string());
+    }
+    Ok(Some(script_path))
+}
+
+pub(crate) fn synchronize_program_setup_bridge(
+    manifest: &ProgramManifest,
+    bridge_session: Option<&mut ProgramSetupBridgeSession>,
+) -> Result<(), String> {
+    let started = Instant::now();
+    let program_root = crate::resolve_program_directory(&manifest.label)?;
+    let Some(script_path) = program_setup_bridge_sync_script(manifest, &program_root)? else {
+        return Ok(());
+    };
+    let result = if let Some(session) = bridge_session {
+        session.synchronize()
+    } else {
+        crate::spawn_powershell_output(&[
+            "-File".to_string(),
+            script_path.to_string_lossy().to_string(),
+        ])
+        .and_then(|output| {
+            if !output.status.success() {
+                return Err(crate::format_process_failure(
+                    &output,
+                    "Blender setup synchronization failed.",
+                ));
+            }
+            serde_json::from_slice::<Value>(&output.stdout).map_err(|error| {
+                format!("Blender setup synchronization returned invalid JSON: {error}")
+            })
+        })
+    }
+    .and_then(|result| {
+        if result
+            .get("UpdatedActions")
+            .and_then(Value::as_u64)
+            .is_none()
+        {
+            return Err("Blender setup synchronization returned no action count.".to_string());
+        }
+        Ok(())
+    });
+    crate::append_flowcell_local_log(
+        "program-setup.log",
+        &json!({
+            "operation": "bridge-sync", "programName": manifest.label,
+            "elapsedMs": started.elapsed().as_millis(), "succeeded": result.is_ok()
+        })
+        .to_string(),
+    );
+    result
 }
 
 fn install_from_path_while_source_locked_with_completion(
@@ -3314,12 +3598,16 @@ fn install_from_path_while_source_locked_with_completion(
     replace_existing: bool,
     _source_guard: &std::sync::MutexGuard<'static, ()>,
     deferred_canonical_update: Option<DeferredCanonicalUpdate>,
+    program_setup: bool,
+    bridge_session: Option<&mut ProgramSetupBridgeSession>,
 ) -> Result<InstallButtonSourceResponse, String> {
+    let started = Instant::now();
     let owner_button_id = validate_owner_button_id(&request.owner_button_id)?;
     let program_name = request.program_name.trim();
     let panel_name = crate::validate_folder_name(&request.panel_name, "Panel")?;
     let manifest = load_program_manifest(program_name)?;
     let program_root = crate::resolve_program_directory(program_name)?;
+    if program_setup { program_setup_bridge_sync_script(&manifest, &program_root)?; }
     let source_display_path = PathBuf::from(request.source_path.trim());
     reject_selected_source_reparse_point(&source_display_path)?;
     let source_path = source_display_path.canonicalize().map_err(|error| {
@@ -3402,16 +3690,8 @@ fn install_from_path_while_source_locked_with_completion(
             )
         }
     };
-    let mut prepared = prepare_source(&manifest, &source_path, import_kind)?;
-    if let Some((id, _)) = &bundled_identity {
-        if let Some(source) = manifest
-            .bundled_sources
-            .iter()
-            .find(|source| source.id == *id && !source.display_label.is_empty())
-        {
-            prepared.label = source.display_label.clone();
-        }
-    }
+    let prepared = prepare_source(&manifest, &source_path, import_kind)?;
+    let prepare_ms = started.elapsed().as_millis();
     if deferred_canonical_update.is_some()
         && (!replace_existing
             || bundled_identity.is_some()
@@ -3514,10 +3794,12 @@ fn install_from_path_while_source_locked_with_completion(
     })?;
     let staged_package = install_transaction_new_package(&transaction_root);
     let staged_source_root = staged_package.join("source");
+    let copy_started = Instant::now();
     if let Err(error) = copy_package_source(&prepared.package_source_root, &staged_source_root) {
         finalize_install_transaction(&transaction_root);
         return Err(error);
     }
+    let copy_ms = copy_started.elapsed().as_millis();
     let installed_source = staged_source_root.join(&prepared.source_relative_to_package);
     if !installed_source.is_file() {
         finalize_install_transaction(&transaction_root);
@@ -3560,37 +3842,9 @@ fn install_from_path_while_source_locked_with_completion(
     let committed_source = final_package
         .join("source")
         .join(&prepared.source_relative_to_package);
-    let portable = super::records::is_portable_windows_execution(prepared.runner_data.as_ref());
-    let mut record = ActiveSourceRecord {
-        schema_version: 1,
-        owner_button_id: owner_button_id.clone(),
-        install_id: owner_button_id.clone(),
-        program_id: manifest.program_id.clone(),
-        program_name: manifest.label.clone(),
-        panel_name: panel_name.clone(),
-        label: prepared.label,
-        tooltip: prepared.tooltip,
-        kind: prepared.kind,
-        local_package_path: path_relative_to_program(&program_root, &final_package)?,
-        source_path: path_relative_to_program(&program_root, &committed_source)?,
-        runner: manifest.runner.kind.clone(),
-        runner_data: prepared.runner_data,
-        execution_target: prepared.execution_target,
-        bridge_action: if is_managed_bridge_runner(&manifest.runner.kind) && !portable {
-            owned_bridge_action(&owner_button_id)
-        } else {
-            String::new()
-        },
-        bridge_data: prepared.bridge_data,
-        state_query: prepared.state_query,
-        events: prepared.events,
-        children: prepared.children,
-        layout: prepared.layout,
-        page: prepared.page,
-        source_display_path: source_path.to_string_lossy().to_string(),
-        bundled_source_id: bundled_identity.as_ref().map(|(id, _)| id.clone()),
-        bundled_source_version: bundled_identity.map(|(_, version)| version),
-    };
+    let mut record = prepared_active_record(&manifest, &program_root, &panel_name,
+        &owner_button_id, &source_path, prepared, bundled_identity)?;
+    let portable = super::records::is_portable_windows_execution(record.runner_data.as_ref());
     let mut journal = InstallTransactionJournal {
         schema_version: INSTALL_TRANSACTION_SCHEMA_VERSION,
         phase: InstallTransactionPhase::Prepared,
@@ -3654,13 +3908,16 @@ fn install_from_path_while_source_locked_with_completion(
         ));
     }
 
+    let bridge_started = Instant::now();
     if is_managed_bridge_runner(&manifest.runner.kind) && !portable {
-        match deploy_bridge_source(
+        match deploy_bridge_source_with_sync(
             &manifest,
             &owner_button_id,
             &panel_name,
             &committed_source,
             record.bridge_data.as_ref(),
+            program_setup,
+            bridge_session,
         ) {
             Ok(action) => {
                 record.bridge_action = action;
@@ -3690,6 +3947,7 @@ fn install_from_path_while_source_locked_with_completion(
             }
         }
     }
+    let bridge_ms = bridge_started.elapsed().as_millis();
 
     journal.phase = InstallTransactionPhase::CommitPending;
     if let Err(error) = write_install_transaction_journal(
@@ -3750,10 +4008,20 @@ fn install_from_path_while_source_locked_with_completion(
             .filter(|previous| previous.label != record.label)
             .map(|previous| previous.label.clone());
     }
+    let cleanup_started = Instant::now();
     if journal.phase == InstallTransactionPhase::AwaitingCanonical {
         response.update_transaction_token = Some(transaction_token);
     } else {
         finalize_install_transaction(&transaction_root);
+    }
+    if program_setup {
+        crate::append_flowcell_local_log("program-setup.log", &json!({
+            "operation": "source-install-timing", "programName": manifest.label,
+            "ownerButtonId": owner_button_id, "prepareMs": prepare_ms,
+            "copyMs": copy_ms, "bridgeMs": bridge_ms,
+            "cleanupMs": cleanup_started.elapsed().as_millis(),
+            "elapsedMs": started.elapsed().as_millis()
+        }).to_string());
     }
     Ok(response)
 }
@@ -3949,6 +4217,8 @@ fn update_button_source_sync(
         Some(DeferredCanonicalUpdate {
             previous_projection,
         }),
+        false,
+        None,
     );
     drop(source_guard);
     drop(button_state_guard);
@@ -4053,6 +4323,276 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir().join(format!("flowcell-{name}-{}-{token}", std::process::id()))
+    }
+
+    /// Run explicitly against a disposable copy of Programs, never an installed
+    /// profile: FLOWCELL_SETUP_BENCHMARK=1, FLOWCELL_PROGRAMS_ROOT and
+    /// FLOWCELL_LOCAL_ROOT must both resolve below the OS temporary directory.
+    #[test]
+    #[ignore = "explicit isolated Blender setup timing; creates temporary owned source packages"]
+    fn isolated_blender_program_setup_pipeline_timing() {
+        assert_eq!(
+            std::env::var("FLOWCELL_SETUP_BENCHMARK").as_deref(),
+            Ok("1")
+        );
+        let temporary = std::env::temp_dir().canonicalize().expect("temporary root");
+        let programs_root = crate::resolve_programs_root()
+            .expect("fixture Programs root")
+            .canonicalize()
+            .expect("canonical fixture Programs root");
+        let local_root = crate::resolve_flowcell_local_root()
+            .expect("fixture local root")
+            .canonicalize()
+            .expect("canonical fixture local root");
+        assert!(
+            programs_root.starts_with(&temporary) && local_root.starts_with(&temporary),
+            "benchmark refuses non-temporary Programs or local roots"
+        );
+        let isolated_appdata = PathBuf::from(std::env::var_os("APPDATA").expect("isolated APPDATA"))
+            .canonicalize().expect("benchmark APPDATA must exist");
+        assert!(isolated_appdata.starts_with(&temporary),
+            "benchmark refuses real APPDATA; redirect it to an existing temporary directory so bridge auto-discovery cannot reach a live Blender profile");
+        let manifest = super::load_program_manifest("Blender").expect("copied Blender catalog");
+        let program_root =
+            crate::resolve_program_directory("Blender").expect("fixture Blender root");
+        let rollback_core = std::env::var("FLOWCELL_SETUP_BENCHMARK_ROLLBACK").as_deref() == Ok("1");
+        let delete_adapter = program_root.join(&manifest.support_scripts_folder).join(&manifest.runner.delete_script);
+        let original_delete_adapter = if rollback_core {
+            assert!(delete_adapter.canonicalize().unwrap().starts_with(&programs_root));
+            let original = fs::read_to_string(&delete_adapter).expect("fixture deletion adapter");
+            let process_probe = "$blenderRunning = $null -ne (Get-Process blender -ErrorAction SilentlyContinue | Select-Object -First 1)";
+            assert_eq!(original.matches(process_probe).count(), 1, "update the explicit no-host fixture seam");
+            fs::write(&delete_adapter, original.replace(process_probe,
+                "$blenderRunning = $false # This disposable benchmark has no Blender host."
+            )).unwrap();
+            Some(original)
+        } else { None };
+        let run_root = crate::commands::execution::windows_child_process_path(&local_root).join(format!(
+            "setup-benchmark-{}",
+            super::timestamp().replace(['.', ':'], "-")
+        ));
+        let bridge = run_root.join("addons").join("blender_bridge_flowcell");
+        fs::create_dir_all(&bridge).expect("fixture bridge");
+        fs::create_dir_all(bridge.join("ManagedActions")).expect("fixture managed actions");
+        fs::write(bridge.join("flowcell_custom_actions.json"), "{\"actions\":[]}").expect("fixture bridge registry");
+        fs::write(
+            run_root.join("addons").join("flowcell_actions.py"),
+            "# isolated fixture\n",
+        )
+        .unwrap();
+        fs::write(
+            run_root.join("addons").join("flowcell_bridge.py"),
+            "# isolated fixture\n",
+        )
+        .unwrap();
+        let config_path = local_root.join("private").join("blender.config.local.json");
+        assert!(
+            !config_path.exists(),
+            "use a fresh fixture without a private Blender config"
+        );
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        let child_bridge = crate::commands::execution::windows_child_process_path(&bridge);
+        fs::write(
+            &config_path,
+            serde_json::to_vec(&json!({"automation":{"bridgeFolder":child_bridge}})).unwrap(),
+        )
+        .unwrap();
+        let count: usize = std::env::var("FLOWCELL_SETUP_BENCHMARK_COUNT")
+            .unwrap_or_else(|_| "52".into())
+            .parse()
+            .unwrap();
+        assert!(count > 0 && count <= manifest.bundled_sources.len());
+        let deferred = std::env::var("FLOWCELL_SETUP_BENCHMARK_MODE").as_deref() != Ok("immediate");
+        let guard = crate::program_sources::source_quarantine_guard().expect("source guard");
+        let cleanup = if deferred {
+            Some(
+                crate::program_sources::transaction::begin_deferred_install_cleanup()
+                    .expect("isolated cleanup scope"),
+            )
+        } else {
+            None
+        };
+        let mut bridge_session = if deferred {
+            super::create_program_setup_bridge_session(&manifest).expect("isolated bridge session")
+        } else {
+            None
+        };
+        let started = std::time::Instant::now();
+        let mut created = Vec::new();
+        let mut expected_bridge_actions = Vec::new();
+        for source in manifest.bundled_sources.iter().take(count) {
+            let owner = crate::program_sources::synchronize::deterministic_bundled_owner_id(
+                &manifest.program_id,
+                &source.id,
+            );
+            let package = program_root
+                .join(&manifest.local_scripts_folder)
+                .join(&owner);
+            let active = program_root
+                .join(&manifest.panels_folder)
+                .join(&source.panel_name)
+                .join(active_record_file_name(&owner));
+            assert!(
+                !package.exists() && !active.exists(),
+                "benchmark requires uninstalled fixture sources"
+            );
+            let request = || super::InstallButtonSourceRequest {
+                owner_button_id: owner.clone(),
+                program_name: manifest.label.clone(),
+                panel_name: source.panel_name.clone(),
+                source_path: program_root
+                    .join(&source.source_path)
+                    .to_string_lossy()
+                    .to_string(),
+                import_kind: source.import_kind.clone(),
+                bundled_source_id: Some(source.id.clone()),
+                bundled_source_version: Some(source.version.clone()),
+            };
+            let preview =
+                super::preview_program_setup_source(request()).expect("read-only source preview");
+            assert!(
+                !package.exists() && !active.exists(),
+                "preview changed native state"
+            );
+            let source_started = std::time::Instant::now();
+            let installed = if deferred {
+                super::install_program_setup_source_while_source_locked(
+                    request(),
+                    &guard,
+                    bridge_session.as_mut(),
+                )
+            } else {
+                super::install_from_path_while_source_locked(request(), false, &guard)
+            }
+            .expect("isolated source installation");
+            let installed_record = read_active_record(&active).expect("fixture active record");
+            if !installed_record.bridge_action.is_empty() {
+                expected_bridge_actions.push(installed_record.bridge_action);
+            }
+            assert_eq!(
+                serde_json::to_value(preview).unwrap(),
+                serde_json::to_value(installed).unwrap(),
+                "preview/installed descriptor mismatch for {}",
+                source.id
+            );
+            eprintln!(
+                "setup-benchmark source={} elapsedMs={}",
+                source.id,
+                source_started.elapsed().as_millis()
+            );
+            created.push((package, active));
+        }
+        if deferred {
+            super::synchronize_program_setup_bridge(&manifest, bridge_session.as_mut())
+                .expect("final isolated sync");
+        }
+        if let Some(cleanup) = cleanup {
+            cleanup.finish();
+        }
+        let registry_text = fs::read_to_string(bridge.join("flowcell_custom_actions.json")).expect("fixture registry must receive registrations");
+        let registry: Value = serde_json::from_str(registry_text.trim_start_matches('\u{feff}')).unwrap();
+        let actions = registry["actions"].as_array().expect("fixture actions array");
+        assert_eq!(actions.len(), expected_bridge_actions.len(), "all registrations must stay in the fixture bridge");
+        let canonical_bridge = bridge.canonicalize().unwrap();
+        for action in actions {
+            assert!(expected_bridge_actions.iter().any(|expected| action["action"].as_str() == Some(expected.as_str())));
+            assert!(Path::new(action["pythonPath"].as_str().unwrap()).canonicalize().unwrap().starts_with(&canonical_bridge));
+            assert!(Path::new(action["sourcePythonPath"].as_str().unwrap()).canonicalize().unwrap().starts_with(&programs_root));
+        }
+        eprintln!(
+            "setup-benchmark mode={} sources={} elapsedMs={}",
+            if deferred { "deferred" } else { "immediate" },
+            count,
+            started.elapsed().as_millis()
+        );
+        drop(guard);
+        drop(bridge_session);
+        if rollback_core {
+            // Exercise the production ownership/quarantine/bridge-removal core,
+            // excluding outer program-registration restoration and UI hotkeys.
+            let rollback_started = std::time::Instant::now();
+            for (index, (package, active)) in created.iter().rev().enumerate() {
+                let owner_started = std::time::Instant::now();
+                let record = read_active_record(active).expect("benchmark owned record");
+                let source_guard = crate::program_sources::source_quarantine_guard().unwrap();
+                let bindings_guard = crate::commands::bindings::bindings_state_guard().unwrap();
+                let (_, bindings, _) = crate::read_bindings_file_state().expect("fixture bindings");
+                let owner_key = record.owner_button_id.to_ascii_lowercase();
+                let action_key = record.bridge_action.to_ascii_lowercase();
+                let package_key = package.to_string_lossy().to_ascii_lowercase();
+                assert!(
+                    !bindings
+                        .values()
+                        .flat_map(|section| section.values())
+                        .any(|value| {
+                            let value = value.to_ascii_lowercase();
+                            value.contains(&owner_key)
+                                || (!action_key.is_empty() && value.contains(&action_key))
+                                || value.contains(&package_key)
+                        }),
+                    "benchmark refuses owned bindings that could restart a host service"
+                );
+                // Keep disposable quarantine paths below legacy Shell limits;
+                // quarantine_owned_source already appends the owner directory.
+                let transaction = crate::commands::execution::windows_child_process_path(&local_root)
+                    .join("rb").join(index.to_string());
+                assert!(!transaction.exists(), "benchmark rollback transaction already exists");
+                let quarantined = crate::program_sources::delete::quarantine_owned_source(
+                    &record.owner_button_id,
+                    &transaction,
+                )
+                .expect("isolated source rollback core");
+                assert_eq!(
+                    quarantined.removed_binding_count, 0,
+                    "fixture must not trigger hotkey/backend changes"
+                );
+                assert!(!package.exists() && !active.exists());
+                drop(bindings_guard);
+                drop(source_guard);
+                assert!(transaction.canonicalize().unwrap().starts_with(&local_root));
+                crate::recycle_directory_path(&transaction)
+                    .expect("recycle completed temporary rollback");
+                eprintln!(
+                    "setup-benchmark rollbackCoreOwner={} elapsedMs={}",
+                    record.owner_button_id,
+                    owner_started.elapsed().as_millis()
+                );
+            }
+            let registry_text =
+                fs::read_to_string(bridge.join("flowcell_custom_actions.json")).unwrap();
+            let registry: Value =
+                serde_json::from_str(registry_text.trim_start_matches('\u{feff}')).unwrap();
+            assert_eq!(
+                registry["actions"].as_array().unwrap().len(),
+                0,
+                "rollback left bridge registrations behind"
+            );
+            assert!(created
+                .iter()
+                .all(|(package, active)| !package.exists() && !active.exists()));
+            eprintln!(
+                "setup-benchmark rollbackCoreHost=absent rollbackCoreSources={} elapsedMs={}",
+                count,
+                rollback_started.elapsed().as_millis()
+            );
+        }
+        // Only artifacts created by this run, all under the validated TEMP roots.
+        for (package, active) in created {
+            if rollback_core {
+                continue;
+            }
+            assert!(
+                package.canonicalize().unwrap().starts_with(&programs_root)
+                    && active.canonicalize().unwrap().starts_with(&programs_root)
+            );
+            fs::remove_file(active).expect("remove temporary active record");
+            fs::remove_dir_all(package).expect("remove temporary source package");
+        }
+        fs::remove_file(config_path).expect("remove temporary private config");
+        fs::remove_dir_all(run_root).expect("remove temporary bridge");
+        if let Some(original) = original_delete_adapter {
+            fs::write(delete_adapter, original).expect("restore disposable adapter after no-host benchmark");
+        }
     }
 
     #[test]
@@ -5206,6 +5746,7 @@ mod tests {
             "Tools",
             Path::new("tool.py"),
             Some(&json!({"capabilities":["example-capability"]})),
+            false,
         )
         .expect("arguments");
         let value_index = arguments
@@ -5216,6 +5757,61 @@ mod tests {
         let bridge_data: serde_json::Value =
             serde_json::from_str(&arguments[value_index]).expect("bridgeData JSON");
         assert_eq!(bridge_data["capabilities"], json!(["example-capability"]));
+        assert!(!arguments.iter().any(|argument| argument == "-SkipSync"));
+    }
+
+    #[test]
+    fn program_setup_can_defer_bridge_sync_without_changing_owner_payload() {
+        let arguments = bridge_install_arguments(
+            Path::new("Install-BlenderFlowCellButtons.ps1"),
+            "button_2",
+            "Files",
+            Path::new("tool.py"),
+            Some(&json!({"command":"export"})),
+            true,
+        )
+        .expect("deferred arguments");
+        assert_eq!(arguments.last().map(String::as_str), Some("-SkipSync"));
+        let owner = arguments
+            .iter()
+            .position(|argument| argument == "-OwnerButtonId")
+            .unwrap();
+        assert_eq!(arguments[owner + 1], "button_2");
+        let paths = arguments
+            .iter()
+            .position(|argument| argument == "-SelectedPathsJson")
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&arguments[paths + 1]).unwrap(),
+            json!(["tool.py"])
+        );
+    }
+
+    #[test]
+    fn program_setup_requires_final_sync_dependency_before_native_writes() {
+        let root = temporary_test_root("setup-sync-dependency");
+        let mut manifest = windows_manifest();
+        fs::create_dir_all(root.join(&manifest.support_scripts_folder)).unwrap();
+        assert!(super::program_setup_bridge_sync_script(&manifest, &root)
+            .unwrap()
+            .is_none());
+        manifest.runner.kind = "blender-bridge".into();
+        let error = super::program_setup_bridge_sync_script(&manifest, &root).unwrap_err();
+        assert!(error.contains("synchronization script is missing"));
+        assert!(!root.join(&manifest.local_scripts_folder).exists());
+        let script = root
+            .join(&manifest.support_scripts_folder)
+            .join("Sync-BlenderCustomActionCode.ps1");
+        fs::write(&script, "throw 'must never execute during preflight'\n").unwrap();
+        let resolved = super::program_setup_bridge_sync_script(&manifest, &root)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            resolved.canonicalize().unwrap(),
+            script.canonicalize().unwrap()
+        );
+        assert!(!root.join(&manifest.local_scripts_folder).exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

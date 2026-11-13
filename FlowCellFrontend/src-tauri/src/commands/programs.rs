@@ -1,5 +1,6 @@
 use crate::*;
 use std::collections::BTreeSet;
+use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +78,12 @@ pub(crate) struct AddProgramPlanRequest {
     pub(crate) selected_sources: Vec<AddProgramSourceSelection>,
     #[serde(default)]
     pub(crate) apply_default_theme: bool,
+    #[serde(default)]
+    pub(crate) expected_plan_fingerprint: Option<String>,
+    #[serde(default)]
+    pub(crate) expected_button_revision: Option<u64>,
+    #[serde(default)]
+    pub(crate) client_started_at_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -97,11 +104,25 @@ pub(crate) struct AppliedProgramSetup {
     pub(crate) program_name: String,
     pub(crate) panels: Vec<String>,
     pub(crate) descriptors: Vec<program_sources::install::InstallButtonSourceResponse>,
+    pub(crate) theme_descriptors: Vec<Value>,
     pub(crate) install_effects: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) default_theme: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) default_theme_receipt: Option<String>,
+}
+
+/// A read-only description of the exact selection. No owners or host actions are installed.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AddProgramPreview {
+    #[serde(flatten)]
+    preflight: AddProgramPreflight,
+    descriptors: Vec<program_sources::install::InstallButtonSourceResponse>,
+    theme_descriptors: Vec<Value>,
+    default_theme: Option<Value>,
+    default_theme_receipt: Option<String>,
+    plan_fingerprint: String,
 }
 
 const PROGRAM_SETUP_PROGRESS_EVENT: &str = "flowcell:program-setup-progress";
@@ -2383,15 +2404,127 @@ fn preflight_add_program_plan_inner(
     })
 }
 
+fn hash_program_plan_path(path: &Path, digest: &mut Sha256) -> Result<(), String> {
+    program_sources::installed_page::reject_package_source_reparse_point(path)?;
+    if path.is_dir() {
+        digest.update(b"directory\0");
+        let mut entries = fs::read_dir(path).map_err(|e| e.to_string())?
+            .map(|entry| entry.map(|entry| entry.path())).collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        entries.sort();
+        for entry in entries {
+            let name = entry.file_name().ok_or("Program source entry has no name.")?.to_string_lossy();
+            digest.update((name.len() as u64).to_le_bytes());
+            digest.update(name.as_bytes());
+            hash_program_plan_path(&entry, digest)?;
+        }
+        digest.update(b"end-directory\0");
+    } else if path.is_file() {
+        digest.update(b"file\0");
+        let bytes = fs::read(path).map_err(|e| format!("Failed to fingerprint {}: {e}", path.display()))?;
+        digest.update((bytes.len() as u64).to_le_bytes());
+        digest.update(&bytes);
+    } else {
+        return Err(format!("Program source is not a regular file or directory: {}", path.display()));
+    }
+    Ok(())
+}
+
+fn preview_add_program_plan_inner(request: &AddProgramPlanRequest) -> Result<AddProgramPreview, String> {
+    let preflight = preflight_add_program_plan_inner(request)?;
+    let (program_root, manifest) = if request.create_plain_program {
+        preview_plain_program_package(&preflight.program_name, Path::new(&preflight.executable_path))?
+    } else {
+        (resolve_program_directory(&preflight.program_name)?,
+            program_sources::manifest::load_program_manifest(&preflight.program_name)?)
+    };
+    let default_theme = if request.apply_default_theme {
+        Some(super::theme_archive::read_program_default_theme(&program_root, &manifest)?
+            .ok_or("This Program package has no packaged appearance.")?)
+    } else { None };
+    let default_theme_receipt = default_theme.as_ref()
+        .map(super::theme_archive::program_default_theme_receipt).transpose()?;
+    let mut descriptors = Vec::new();
+    let mut theme_descriptors = Vec::new();
+    let mut digest = Sha256::new();
+    digest.update(serde_json::to_vec(&(&preflight, &manifest, &default_theme))
+        .map_err(|e| e.to_string())?);
+    if !preflight.sources.is_empty() && manifest.runner.kind == "blender-bridge" {
+        let sync = program_sources::manifest::resolve_runner_script_path(&program_root, &manifest,
+            "Sync-BlenderCustomActionCode.ps1", "Blender setup synchronization")?
+            .ok_or("Blender setup synchronization script is missing.")?;
+        if !sync.is_file() {
+            return Err("Blender setup synchronization script is missing.".into());
+        }
+        // The final sync and its companion bridge helpers are also inputs to
+        // this plan; reject missing or changed support before installing owners.
+        let support = program_sources::manifest::resolve_manifest_folder(&program_root,
+            &manifest.support_scripts_folder, "supportScriptsFolder")?;
+        hash_program_plan_path(&support, &mut digest)?;
+    }
+    let mut hashed_roots = BTreeSet::new();
+    for source in &preflight.sources {
+        let declared = manifest.bundled_sources.iter().find(|entry| entry.id == source.id)
+            .ok_or_else(|| format!("Selected source '{}' is no longer declared.", source.id))?;
+        let path = program_sources::manifest::resolve_relative_manifest_path(
+            &program_root, &declared.source_path, "bundledSources.sourcePath", false)?
+            .ok_or("Selected source path is missing.")?;
+        let package_root = if path.is_file() && path.parent().is_some_and(|parent|
+            parent.join("flowcell.script.json").is_file() || parent.join("flowcell.toolset.json").is_file()) {
+            path.parent().unwrap().to_path_buf()
+        } else { path.clone() };
+        if hashed_roots.insert(package_root.clone()) {
+            hash_program_plan_path(&package_root, &mut digest)?;
+        }
+        let owner = program_sources::synchronize::deterministic_bundled_owner_id(&manifest.program_id, &source.id);
+        let descriptor = program_sources::install::preview_program_setup_source(
+            program_sources::install::InstallButtonSourceRequest {
+                owner_button_id: owner.clone(), program_name: preflight.program_name.clone(),
+                panel_name: source.panel_name.clone(), source_path: path.to_string_lossy().into_owned(),
+                import_kind: declared.import_kind.clone(), bundled_source_id: Some(declared.id.clone()),
+                bundled_source_version: Some(declared.version.clone()),
+            })?;
+        theme_descriptors.push(json!({"ownerButtonId": owner,
+            "programName": preflight.program_name, "programId": manifest.program_id,
+            "panelName": source.panel_name, "sourceId": source.id, "sourceVersion": source.version,
+            "sourceName": source.label, "importKind": declared.import_kind,
+            "catalogPath": declared.source_path, "sourcePath": path.to_string_lossy(),
+            "slots": descriptor.children.iter().map(|child| child.slot.clone()).collect::<Vec<_>>() }));
+        descriptors.push(descriptor);
+    }
+    digest.update(serde_json::to_vec(&(&descriptors, &theme_descriptors)).map_err(|e| e.to_string())?);
+    Ok(AddProgramPreview { preflight, descriptors, theme_descriptors, default_theme,
+        default_theme_receipt, plan_fingerprint: format!("{:x}", digest.finalize()) })
+}
+
+fn verify_program_plan_preview(request: &AddProgramPlanRequest, preview: &AddProgramPreview,
+    current_revision: u64) -> Result<(), String> {
+    if request.expected_plan_fingerprint.as_deref() != Some(preview.plan_fingerprint.as_str()) {
+        return Err("Program setup changed after layout validation. Review the selection and try again.".into());
+    }
+    if request.expected_button_revision != Some(current_revision) {
+        return Err("Button state changed before program installation.".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) async fn preflight_add_program_plan(
     window: tauri::WebviewWindow,
     request: AddProgramPlanRequest,
-) -> Result<AddProgramPreflight, String> {
+) -> Result<AddProgramPreview, String> {
     run_add_program_blocking("preflight", move || {
         let progress = ProgramSetupProgress::new(Some(&window), "install", &request.program_name);
         progress.stage("Checking the selected program…", None);
-        preflight_add_program_plan_inner(&request)
+        if let Some(started) = request.client_started_at_ms {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+            append_flowcell_local_log("program-setup.log", &format!(
+                "Program setup request: program={}, clientStartedAtMs={started}, dispatchElapsedMs={}",
+                request.program_name, now.saturating_sub(started as u128)));
+        }
+        let result = preview_add_program_plan_inner(&request);
+        progress.stage(if result.is_ok() { "Program layout preview prepared." } else { "Program preflight failed." }, None);
+        result
     }).await
 }
 
@@ -2927,6 +3060,10 @@ fn install_add_program_sources_while_source_locked(
             "Add Program planned source ownership changed before native apply.".to_string(),
         );
     }
+    let cleanup = program_sources::transaction::begin_deferred_install_cleanup()?;
+    let mut bridge_session = if preflight.sources.is_empty() { None } else {
+        program_sources::install::create_program_setup_bridge_session(manifest)?
+    };
     let mut descriptors = Vec::with_capacity(preflight.sources.len());
     for (source, planned) in preflight.sources.iter().zip(planned_sources) {
         if let Some(progress) = progress {
@@ -2945,7 +3082,7 @@ fn install_add_program_sources_while_source_locked(
         )?
         .ok_or_else(|| "bundledSources.sourcePath cannot be empty.".to_string())?;
         descriptors.push(
-            program_sources::install::install_from_path_while_source_locked(
+            program_sources::install::install_program_setup_source_while_source_locked(
                 program_sources::install::InstallButtonSourceRequest {
                     owner_button_id: planned.owner_button_id.clone(),
                     program_name: preflight.program_name.clone(),
@@ -2955,11 +3092,22 @@ fn install_add_program_sources_while_source_locked(
                     bundled_source_id: Some(declared.id.clone()),
                     bundled_source_version: Some(declared.version.clone()),
                 },
-                false,
                 source_guard,
+                bridge_session.as_mut(),
             )?,
         );
     }
+    if !descriptors.is_empty() {
+        if let Some(progress) = progress {
+            progress.stage("Synchronizing installed program actions…", None);
+        }
+        program_sources::install::synchronize_program_setup_bridge(manifest, bridge_session.as_mut())?;
+    }
+    drop(bridge_session);
+    if let Some(progress) = progress {
+        progress.stage("Finishing program setup cleanup…", None);
+    }
+    cleanup.finish();
     if let Some(progress) = progress {
         progress.stage("Selected buttons installed.", Some((descriptors.len(), preflight.sources.len())));
     }
@@ -2986,8 +3134,10 @@ fn rollback_add_program_transaction(
     root: &Path,
     journal: &mut AddProgramTransactionJournal,
 ) -> Result<(), String> {
+    let progress = ProgramSetupProgress::new(None, "rollback", &journal.preflight.program_name);
+    progress.stage("Rolling back program setup…", Some((0, journal.planned_sources.len())));
     let mut errors = Vec::new();
-    for source in journal.planned_sources.iter().rev() {
+    for (index, source) in journal.planned_sources.iter().rev().enumerate() {
         match active_source_for_planned_owner(&journal.preflight.program_name, source) {
             Ok(Some(resolution)) => {
                 let request = program_sources::delete::UninstallButtonSourceRequest {
@@ -3008,6 +3158,7 @@ fn rollback_add_program_transaction(
             Ok(None) => {}
             Err(error) => errors.push(error),
         }
+        progress.stage("Rolling back installed button…", Some((index + 1, journal.planned_sources.len())));
     }
     let source_guard = if errors.is_empty() {
         Some(program_sources::source_quarantine_guard()?)
@@ -3129,6 +3280,7 @@ fn rollback_add_program_transaction(
     drop(bindings_guard);
     drop(source_guard);
     if !errors.is_empty() {
+        progress.stage("Program rollback failed; recovery retained.", None);
         return Err(errors.join(" | "));
     }
     journal.phase = AddProgramTransactionPhase::RolledBack;
@@ -3138,12 +3290,14 @@ fn rollback_add_program_transaction(
         program_sources::transaction::AtomicWriteMode::Replace,
     )?;
     let _ = restart_flowcell_headless_backend();
-    fs::remove_dir_all(root).map_err(|error| {
+    let result = fs::remove_dir_all(root).map_err(|error| {
         format!(
             "Add Program rollback completed, but temporary transaction cleanup failed at {}: {error}",
             root.display()
         )
-    })
+    });
+    progress.stage(if result.is_ok() { "Program rollback complete." } else { "Program rollback cleanup failed." }, None);
+    result
 }
 
 fn remove_committed_plain_program_marker(
@@ -3643,10 +3797,20 @@ fn apply_add_program_plan_inner(
     let _guard = lock
         .lock()
         .map_err(|_| "Add Program transaction lock was poisoned.".to_string())?;
+    // Keep the global lock order used by canonical saves. The source lock keeps
+    // that revision stable after we release the Button lock below.
+    let button_guard = crate::button_state::button_state_commit_guard()?;
     let source_guard = program_sources::source_quarantine_guard()?;
     let bindings_guard = super::bindings::bindings_state_guard()?;
     progress.stage("Checking the selected program and buttons…", None);
-    let preflight = preflight_add_program_plan_inner(&request)?;
+    let preview = preview_add_program_plan_inner(&request)?;
+    let current = crate::button_state::read_button_state_for_program_rename_locked()?;
+    let current_revision = current.as_ref().and_then(|state| state["revision"].as_u64()).unwrap_or(0);
+    verify_program_plan_preview(&request, &preview, current_revision)?;
+    drop(button_guard);
+    let AddProgramPreview { preflight, theme_descriptors, default_theme,
+        default_theme_receipt, .. } = preview;
+    progress.stage("Validated program layout inputs confirmed.", None);
     let creates_plain_program = request.create_plain_program;
     let (program_root, manifest) = if creates_plain_program {
         preview_plain_program_package(
@@ -3659,14 +3823,6 @@ fn apply_add_program_plan_inner(
             program_sources::manifest::load_program_manifest(&preflight.program_name)?,
         )
     };
-    let default_theme = if request.apply_default_theme {
-        Some(super::theme_archive::read_program_default_theme(&program_root, &manifest)?
-            .ok_or("This Program package has no packaged appearance.")?)
-    } else {
-        None
-    };
-    let default_theme_receipt = default_theme.as_ref()
-        .map(super::theme_archive::program_default_theme_receipt).transpose()?;
     let (_, bindings_before_document, bindings_path) = read_bindings_file_state()?;
     let bindings_before = serialize_bindings(&bindings_before_document);
     let mut bindings_after_document = bindings_before_document.clone();
@@ -3818,6 +3974,7 @@ fn apply_add_program_plan_inner(
                 program_name: preflight.program_name,
                 panels: preflight.panels,
                 descriptors,
+                theme_descriptors,
                 install_effects: preflight.install_effects,
                 default_theme,
                 default_theme_receipt,
@@ -6125,6 +6282,52 @@ mod durable_delete_lifecycle_tests {
         ))
     }
 
+    #[test]
+    fn program_layout_preview_rejects_stale_inputs_before_apply() {
+        let request = super::AddProgramPlanRequest {
+            program_name: "Preview".into(), executable_path: "preview.exe".into(),
+            create_plain_program: true, selected_panels: vec![], selected_sources: vec![],
+            apply_default_theme: false, expected_plan_fingerprint: Some("verified-package".into()),
+            expected_button_revision: Some(7), client_started_at_ms: None,
+        };
+        let preview = super::AddProgramPreview {
+            preflight: super::AddProgramPreflight { program_id: "preview".into(), program_name: "Preview".into(),
+                executable_path: "preview.exe".into(), panels: vec![], sources: vec![], install_effects: vec![] },
+            descriptors: vec![], theme_descriptors: vec![], default_theme: None,
+            default_theme_receipt: None, plan_fingerprint: "verified-package".into(),
+        };
+        assert!(super::verify_program_plan_preview(&request, &preview, 7).is_ok());
+        assert_eq!(super::verify_program_plan_preview(&request, &preview, 8).unwrap_err(),
+            "Button state changed before program installation.");
+        let mut changed = request.clone();
+        changed.expected_plan_fingerprint = None;
+        assert!(super::verify_program_plan_preview(&changed, &preview, 7).is_err(), "unchecked installation is rejected");
+        changed.expected_plan_fingerprint = Some("old-package".into());
+        assert!(super::verify_program_plan_preview(&changed, &preview, 7).unwrap_err().contains("changed after layout validation"));
+    }
+
+    #[test]
+    fn program_layout_fingerprint_includes_companion_contents_and_inventory() {
+        use sha2::{Digest, Sha256};
+        let root = temporary_root("preview-fingerprint");
+        fs::create_dir_all(root.join("page")).unwrap();
+        fs::write(root.join("flowcell.script.json"), b"{}").unwrap();
+        fs::write(root.join("page/page.js"), b"before").unwrap();
+        let fingerprint = || {
+            let mut digest = Sha256::new();
+            super::hash_program_plan_path(&root, &mut digest).unwrap();
+            format!("{:x}", digest.finalize())
+        };
+        let initial = fingerprint();
+        assert_eq!(initial, fingerprint(), "repeated preview must be stable");
+        fs::write(root.join("page/page.js"), b"after!").unwrap();
+        assert_ne!(initial, fingerprint(), "same-length companion edits invalidate preview");
+        let changed = fingerprint();
+        fs::write(root.join("page/new.js"), b"new").unwrap();
+        assert_ne!(changed, fingerprint(), "new package files invalidate preview");
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn initial_bindings() -> crate::commands::bindings::IniDocument {
         parse_ini_document(
             r#"
@@ -6749,6 +6952,9 @@ mod managed_program_setup_tests {
             executable_path: executable.to_string_lossy().to_string(),
             create_plain_program: true,
             apply_default_theme: false,
+                expected_plan_fingerprint: None,
+                expected_button_revision: None,
+                client_started_at_ms: None,
             selected_panels: Vec::new(),
             selected_sources: Vec::new(),
         })
@@ -6804,6 +7010,9 @@ mod managed_program_setup_tests {
                 executable_path: r"C:\Apps\Krita.exe".to_string(),
                 create_plain_program: true,
                 apply_default_theme: false,
+                expected_plan_fingerprint: None,
+                expected_button_revision: None,
+                client_started_at_ms: None,
                 selected_panels: Vec::new(),
                 selected_sources: Vec::new(),
             },
@@ -7270,6 +7479,17 @@ mod managed_program_setup_tests {
             panel_name: "Tools".to_string(),
         }];
         let transaction_root = program_root.join("test-add-program-transaction");
+        let preview_request = crate::program_sources::install::InstallButtonSourceRequest {
+            owner_button_id: planned_sources[0].owner_button_id.clone(),
+            program_name: program_name.clone(), panel_name: "Tools".into(),
+            source_path: source_root.to_string_lossy().into_owned(), import_kind: "script".into(),
+            bundled_source_id: Some(source_id.clone()), bundled_source_version: Some("1.0.0".into()),
+        };
+        let before_preview = fs::read_dir(&program_root).unwrap().count();
+        let source_preview = crate::program_sources::install::preview_program_setup_source(preview_request)
+            .expect("preview without installing a source");
+        assert_eq!(fs::read_dir(&program_root).unwrap().count(), before_preview,
+            "source preview must not create installed owners, source transactions or panel directories");
         let mut journal = AddProgramTransactionJournal {
             schema_version: ADD_PROGRAM_TRANSACTION_SCHEMA_VERSION,
             phase: AddProgramTransactionPhase::Prepared,
@@ -7278,6 +7498,9 @@ mod managed_program_setup_tests {
                 executable_path: "explorer.exe".to_string(),
                 create_plain_program: false,
                 apply_default_theme: false,
+                expected_plan_fingerprint: None,
+                expected_button_revision: None,
+                client_started_at_ms: None,
                 selected_panels: vec!["Tools".to_string()],
                 selected_sources: vec![AddProgramSourceSelection {
                     source_id: source_id.clone(),
@@ -7318,6 +7541,8 @@ mod managed_program_setup_tests {
         )
         .expect("selected source install returns while outer source guard is held");
         assert_eq!(descriptors.len(), 1);
+        assert_eq!(serde_json::to_value(&source_preview).unwrap(), serde_json::to_value(&descriptors[0]).unwrap(),
+            "layout preflight must describe the same installed owner and child graph");
         drop(source_guard);
 
         mark_add_program_native_applied(&transaction_root, &mut journal)

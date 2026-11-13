@@ -8,13 +8,14 @@ import { buttonStateDocumentsEqual, reconcileBundledProgramSources, runButtonSta
 import { reconcileMainPageButtonDiscovery } from "./.compiled-button-system/button/state/mainPageButtonDiscovery.js";
 import { reconcileProgramPanelOwners } from "./.compiled-button-system/button/state/panelOwnerButtonOperations.js";
 import { buildProgramRailButtons, buildPanelRailButtons, buildPanelRailOwnerEntries, panelRailOwnerSurfaceBounds } from "./.compiled-button-system/pages/main/mainLayout.js";
+import { buildProgramSetupDocument } from "./.compiled-button-system/pages/program-setup/programDefaultTheme.js";
 
 // Exercise today's transaction orchestration without rebuilding the application
 // or relying on an older emitted copy of this changed module.
 const transactionSource = componentSource("pages/program-setup/applyManagedProgramPlan.ts", "applyManagedProgramPlan");
 const applyManagedProgramPlan = evaluate(transactionSource.component, transactionSource.parsed, {
   buttonStateDocumentsEqual, reconcileBundledProgramSources, reconcileProgramPanelOwners,
-  buildPanelRailOwnerEntries, panelRailOwnerSurfaceBounds, console,
+  buildPanelRailOwnerEntries, panelRailOwnerSurfaceBounds, buildProgramSetupDocument, console,
   message: evaluate(transactionSource.parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "message"), transactionSource.parsed, {})
 });
 
@@ -183,7 +184,8 @@ function harness(overrides = {}) {
   let document = createButtonStateDocument();
   const events = [];
   const operations = {
-    apply: async () => { events.push("apply"); return { transactionToken: "add-program-test", programName: "Windows", panels: ["Files"], descriptors: [] }; },
+    preflight: async () => { events.push("preflight"); return { programName: "Windows", panels: ["Files"], descriptors: [], themeDescriptors: [], planFingerprint: "f".repeat(64) }; },
+    apply: async () => { events.push("apply"); return { transactionToken: "add-program-test", programName: "Windows", panels: ["Files"], descriptors: [], themeDescriptors: [] }; },
     load: async () => { events.push("load"); return document; },
     prepare: async (token, ids) => { events.push("prepare"); assert.equal(token, "add-program-test"); assert.equal(ids.length, 1); },
     commit: async (next, revision) => { events.push("commit"); assert.equal(document.revision, revision); document = { ...next, revision: revision + 1 }; return document; },
@@ -200,7 +202,7 @@ function harness(overrides = {}) {
 test("managed setup commits canonical panel owners before finalizing and notifies after commit", async () => {
   const h = harness();
   assert.deepEqual(await applyManagedProgramPlan(request, h.operations), result);
-  assert.deepEqual(h.events, ["apply", "load", "prepare", "commit", "finalize", "notify", "load", "publish"]);
+  assert.deepEqual(h.events, ["preflight", "load", "load", "apply", "load", "prepare", "commit", "finalize", "notify", "load", "publish"]);
   assert.ok(Object.values(h.document().buttons).some(button => button.label === "Files"));
 });
 
@@ -223,7 +225,7 @@ test("lost finalize response recovers committed setup instead of reinstalling", 
 test("failed native apply does not try rolling back an unknown transaction", async () => {
   const h = harness({ apply: async () => { throw new Error("native preflight failed"); } });
   await assert.rejects(applyManagedProgramPlan(request, h.operations), /native preflight failed/);
-  assert.deepEqual(h.events, []);
+  assert.deepEqual(h.events, ["preflight", "load", "load"]);
 });
 
 test("rollback failure retains the startup recovery instruction", async () => {
@@ -259,13 +261,13 @@ test("installed targets are announced before a delayed full Button-state refresh
   let release;
   const delayed = new Promise(resolve => { release = resolve; });
   const h = harness({ load: async () => {
-    if (++loads === 2) await delayed;
+    if (++loads === 4) await delayed;
     return h.document();
   } });
   const installing = applyManagedProgramPlan(request, h.operations);
   try {
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(loads, 2);
+    assert.equal(loads, 4);
     assert.equal(h.events.includes("notify"), true, "Theme/navigation and the restart notice can refresh while Buttons are still loading");
     assert.equal(h.events.includes("publish"), false);
   } finally { release(); }
@@ -452,18 +454,29 @@ for (const installerPanelNames of [["Files", "Startup"], ["Files", "Utility", "S
     const expectedPlan = buildWindowsSetupPlan(program, new Set(installerPanelNames));
     const runningRef = { current: false };
     const operations = {
+      preflight: async request => ({ programName: "Windows", panels: request.selectedPanels,
+        descriptors: request.selectedSources.map(source => ({
+          ownerButtonId: `owner-${source.sourceId}`,
+          sourceIdentity: { programName: "Windows", panelName: source.destinationPanel, fileName: `${source.sourceId}.flowcell-source.json` },
+          owner: { label: program.sources.find(entry => entry.id === source.sourceId).label,
+            executionTarget: { kind: "panel-script", programName: "Windows", panelName: source.destinationPanel, fileName: `${source.sourceId}.flowcell-source.json` } }, children: []
+        })), themeDescriptors: [], planFingerprint: "f".repeat(64) }),
       apply: async request => {
-        assert.deepEqual(request, expectedPlan);
+        const { expectedPlanFingerprint, expectedButtonRevision, clientStartedAtMs, ...selection } = request;
+        assert.deepEqual(selection, expectedPlan);
+        assert.equal(expectedPlanFingerprint, "f".repeat(64));
+        assert.equal(expectedButtonRevision, JSON.parse(savedDocument).revision);
+        assert.equal(Number.isFinite(clientStartedAtMs), true);
         registeredPrograms = ["Windows"];
         installedPanels = [...request.selectedPanels];
         return {
-          transactionToken: "add-program-fresh-windows", programName: "Windows", panels: installedPanels,
+          transactionToken: "add-program-fresh-windows", programName: "Windows", panels: installedPanels, themeDescriptors: [],
           descriptors: request.selectedSources.map(source => ({
             ownerButtonId: `owner-${source.sourceId}`,
             sourceIdentity: { programName: "Windows", panelName: source.destinationPanel, fileName: `${source.sourceId}.flowcell-source.json` },
             owner: {
               label: program.sources.find(entry => entry.id === source.sourceId).label,
-              executionTarget: { kind: "program-action", programName: "Windows", actionId: "run-installed-source", payload: { ownerButtonId: `owner-${source.sourceId}` } }
+              executionTarget: { kind: "panel-script", programName: "Windows", panelName: source.destinationPanel, fileName: `${source.sourceId}.flowcell-source.json` }
             },
             children: []
           }))

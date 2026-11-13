@@ -13,8 +13,10 @@ import {
 import { cloneButtonDocument, createStableButtonId } from "./buttonDefaults.js";
 import { canonicalSourceIdentity, deriveRegularPopoutSelectionKey } from "./sourceIdentity.js";
 import { arrangeDefaultPanelButtons } from "./buttonPanelDefaults.js";
-import { DEFAULT_BUTTON_SKIN_ID } from "../skins/defaultButtonSkin.js";
+import { DEFAULT_BUTTON_SKIN_ID, getDefaultButtonSize } from "../skins/defaultButtonSkin.js";
 import { applyPanelPopoutPreset } from "./buttonPanelPopoutPresets.js";
+import { resolveButtonFanStyle } from "../fan/buttonFanMotion.js";
+import { applyButtonFanDirection, resolveButtonFanExpansionDirection } from "../fan/buttonFanDirection.js";
 
 export interface RemoveOwnedButtonResult {
   removedButtonIds: string[];
@@ -97,7 +99,7 @@ export function ensureRegularPopout(
   );
   if (existing) return existing;
   const starter = createStarterButtonLayout(
-    eligible.map((button) => ({ id: button.id, width: 160, height: 44 })),
+    eligible.map((button) => ({ id: button.id, ...getDefaultButtonSize(button.label) })),
     {
       padding: document.settings.defaultSurfacePadding,
       gap: buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm),
@@ -252,28 +254,42 @@ export function resolveDiscardedStagedOwnerButtonIds(
   return normalizeIds(stagedOwnerButtonIds).filter((id) => !document.buttons[id]);
 }
 
-export function ensureFanSetup(args: {
+interface FanSetupSelection {
   document: ButtonStateDocument;
   programName: string;
   panelName: string;
   buttons: readonly ButtonRecord[];
-}): ButtonFanSetup {
-  const uniqueButtons = [...new Map(
-    args.buttons.filter((button) => button.metadata.themeContributionOnly !== true)
+}
+
+function uniqueFanButtons(buttons: readonly ButtonRecord[]): ButtonRecord[] {
+  return [...new Map(
+    buttons.filter((button) => button.metadata.themeContributionOnly !== true)
       .map((button) => [button.id.trim(), button] as const)
   ).values()];
+}
+
+export function findExistingFanSetup(args: FanSetupSelection): ButtonFanSetup | undefined {
+  const uniqueButtons = uniqueFanButtons(args.buttons);
+  const memberIds = uniqueButtons.filter((button) => button.role === "single-script").map((button) => button.id);
+  const ownerIds = uniqueButtons.filter((button) => button.role === "tool-set-owner").map((button) => button.id);
+  if (memberIds.length === 0 && ownerIds.length === 0) return undefined;
+  return Object.values(args.document.fanSetups).find(
+    (setup) =>
+      setup.programName === args.programName &&
+      setup.panelName === args.panelName &&
+      sameIds(setup.fanMemberButtonIds, memberIds) &&
+      sameIds(setup.selectedToolSetOwnerButtonIds, ownerIds)
+  );
+}
+
+export function ensureFanSetup(args: FanSetupSelection & { reuseExisting?: boolean }): ButtonFanSetup {
+  const uniqueButtons = uniqueFanButtons(args.buttons);
   const members = uniqueButtons.filter((button) => button.role === "single-script");
   const owners = uniqueButtons.filter((button) => button.role === "tool-set-owner");
   if (members.length === 0 && owners.length === 0) {
     throw new Error("A fan needs at least one script Button or tool-set owner.");
   }
-  const existing = Object.values(args.document.fanSetups).find(
-    (setup) =>
-      setup.programName === args.programName &&
-      setup.panelName === args.panelName &&
-      sameIds(setup.fanMemberButtonIds, members.map((button) => button.id)) &&
-      sameIds(setup.selectedToolSetOwnerButtonIds, owners.map((button) => button.id))
-  );
+  const existing = args.reuseExisting === false ? undefined : findExistingFanSetup(args);
   if (existing) return existing;
   let panelOwner = Object.values(args.document.buttons).find(
     (button) =>
@@ -301,12 +317,14 @@ export function ensureFanSetup(args: {
     };
     args.document.buttons[id] = panelOwner;
   }
-  const layoutButtons = [panelOwner, ...members];
+  const gap = buttonSpacingPixelsFromMillimeters(args.document.settings.buttonSpacingMm);
+  const ownerRect = { x: args.document.settings.defaultSurfacePadding,
+    y: args.document.settings.defaultSurfacePadding, ...getDefaultButtonSize(panelOwner.label) };
   const starter = createStarterButtonLayout(
-    layoutButtons.map((button) => ({ id: button.id, width: 160, height: 44 })),
+    members.map((button) => ({ id: button.id, ...getDefaultButtonSize(button.label) })),
     {
       padding: args.document.settings.defaultSurfacePadding,
-      gap: buttonSpacingPixelsFromMillimeters(args.document.settings.buttonSpacingMm),
+      gap,
       maximumColumns: 4
     }
   );
@@ -314,17 +332,20 @@ export function ensureFanSetup(args: {
     args.document,
     `${args.panelName} Fan`,
     "fan",
-    starter.requiredWidth,
-    starter.requiredHeight
+    members.length > 0 ? starter.requiredWidth + ownerRect.width + gap
+      : ownerRect.width + args.document.settings.defaultSurfacePadding * 2,
+    Math.max(starter.requiredHeight, ownerRect.height + args.document.settings.defaultSurfacePadding * 2)
   );
   addPlacement(
     args.document,
     panelOwner.id,
     surface.id,
-    starter.rects[panelOwner.id]
+    ownerRect
   );
   const memberPlacements = members.map((button) =>
-    addPlacement(args.document, button.id, surface.id, starter.rects[button.id])
+    addPlacement(args.document, button.id, surface.id, {
+      ...starter.rects[button.id], x: starter.rects[button.id].x + ownerRect.width + gap
+    })
   );
   const id = createStableButtonId("fan");
   const setup: ButtonFanSetup = {
@@ -348,13 +369,31 @@ export function ensureFanSetup(args: {
     collapsedBoundsEnvelope: {
       x: 0,
       y: 0,
-      width: starter.rects[panelOwner.id].width,
-      height: starter.rects[panelOwner.id].height
+      width: ownerRect.width,
+      height: ownerRect.height
     },
     animation: { durationMs: 180, easing: "ease-out", staggerMs: 30, spinEnabled: false }
   };
   args.document.fanSetups[id] = setup;
   return setup;
+}
+
+/** Main's quick Fan always starts from the default, independent of saved setups. */
+export function buildQuickDefaultFanDocument(args: FanSetupSelection): {
+  document: ButtonStateDocument;
+  setup: ButtonFanSetup;
+} {
+  const document = cloneButtonDocument(args.document);
+  const setup = ensureFanSetup({ ...args, document, reuseExisting: false });
+  setup.name = `${args.panelName} Fan`;
+  const style = resolveButtonFanStyle(document.buttons[setup.panelOwnerButtonId]?.metadata.panelFanMotionStyle);
+  if (style) setup.animation = { ...setup.animation, ...style.animation };
+  const ownerPlacementId = document.surfaces[setup.fanSurfaceId].placementIds.find(id =>
+    document.placements[id].buttonId === setup.panelOwnerButtonId)!;
+  const directed = applyButtonFanDirection(document, {
+    surfaceId: setup.fanSurfaceId, ownerPlacementId, memberPlacementIds: setup.fanMemberPlacementIds
+  }, resolveButtonFanExpansionDirection(document.buttons[setup.panelOwnerButtonId]?.metadata.panelFanDirection));
+  return { document: directed, setup: directed.fanSetups[setup.id] };
 }
 
 function removePlacement(document: ButtonStateDocument, placementId: string): void {

@@ -67,6 +67,7 @@ import {
   reloadCurrentHostWindow
 } from "../../lib/coreWindows";
 import {
+  buildButtonFanWindowLabel,
   buildButtonPopoutWindowLabel,
   closeButtonFanWindow,
   closeManagedButtonWindow,
@@ -95,6 +96,7 @@ import {
   publishButtonDraftToWindow,
   registerButtonDraftResponder,
   subscribeButtonDrafts,
+  subscribeButtonRestingWindowBounds,
   subscribeButtonCommits
 } from "../../button/state/ButtonDraftBus";
 import { cloneButtonDocument } from "../../button/state/buttonDefaults";
@@ -103,16 +105,20 @@ import {
   panelPopoutPresetFromPath, panelPopoutPresetPath
 } from "../../button/state/buttonPanelPopoutPresets";
 import {
-  ensureFanSetup,
+  buildQuickDefaultFanDocument,
   ensureDefaultPanelPopout,
   ensureRegularPopout,
   removeOwnedButtonGraph
 } from "../../button/state/buttonDocumentOperations";
 import {
+  applyButtonSettingsFile,
   buildTransientButtonPopoutSettingsDocument,
   buildButtonSettingsFile
 } from "../../button/state/buttonSettingsFile";
-import { resolvePanelOwnerMainPlacement } from "../../button/state/panelOwnerButtonOperations";
+import { findPanelOwnerButton, resolvePanelOwnerMainPlacement } from "../../button/state/panelOwnerButtonOperations";
+import { getButtonDefaultPopoutChoice } from "../../button/state/buttonDefaultPopout";
+import { BUTTON_FAN_STYLE_CATALOG, resolveButtonFanStyle } from "../../button/fan/buttonFanMotion";
+import { DEFAULT_BUTTON_FAN_DIRECTION, resolveButtonFanExpansionDirection, type ButtonFanExpansionDirection } from "../../button/fan/buttonFanDirection";
 import { loadMainPageButtonBootstrap } from "../../button/state/mainPageButtonBootstrap";
 import {
   removePanelButtonDocumentScope,
@@ -195,7 +201,10 @@ const BUTTON_CONTEXT_MENU_WIDTH = 168;
 const BUTTON_CONTEXT_MENU_HEIGHT = 156;
 const BUTTON_CONTEXT_MENU_MARGIN = 8;
 const BUTTON_STATE_MUTATION_ATTEMPTS = 3;
-const MAIN_LAST_POP_SETTINGS_STORAGE_KEY = "flowcell.main.last-pop-settings.v1";
+const MAIN_FAN_DIRECTIONS: ReadonlyArray<{ id: ButtonFanExpansionDirection; name: string }> = [
+  { id: "left", name: "Left" }, { id: "right", name: "Right" },
+  { id: "top", name: "Top" }, { id: "bottom", name: "Bottom" }
+];
 // Version 7 marks bounds stored in physical desktop pixels, captured exactly
 // as the window sits on its monitor and restored verbatim (position first,
 // then size — see applyWindowBounds / windowing's applyWindowPlacement).
@@ -219,12 +228,15 @@ interface MainPopOpenOptions {
   bounds?: FlowCellBounds;
   displayMode?: "collapsed" | "expanded";
   reveal?: boolean;
+  toggle?: boolean;
+  toolSetOwnerButtonId?: string;
 }
 
 interface SettingsBackedPopoutRestoreDescriptor {
   document: ButtonStateDocument;
   choice: MainLastPopChoice;
   panelOwnerButtonId: string;
+  toolSetOwnerButtonId?: string;
 }
 
 function stableMainPopChoiceId(value: string): string {
@@ -236,9 +248,25 @@ function stableMainPopChoiceId(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
-async function loadMainPopSettingsFile(document: ButtonStateDocument, path: string, programName: string, panelName: string) {
+async function loadMainPopSettingsFile(
+  document: ButtonStateDocument, path: string, programName: string, panelName: string,
+  toolSetOwnerButtonId?: string
+) {
   const preset = panelPopoutPresetFromPath(path);
-  if (!preset) return loadButtonSettingsFile(path);
+  if (!preset) {
+    const file = await loadButtonSettingsFile(path);
+    if (!toolSetOwnerButtonId) return file;
+    const owner = document.buttons[toolSetOwnerButtonId];
+    const unit = Object.values(document.popoutUnits).find((candidate) =>
+      candidate.kind === "tool-set" && candidate.ownerButtonId === toolSetOwnerButtonId);
+    if (owner?.role !== "tool-set-owner" || !unit ||
+        !sourceIdentityMatchesFolderScope(owner.sourceIdentity, programName, panelName)) {
+      throw new Error("The selected Tool Set is no longer installed in this panel.");
+    }
+    const mapped = applyButtonSettingsFile(document, unit.surfaceId, file, { programName, panelName });
+    return buildButtonSettingsFile(mapped, unit.surfaceId, { programName, panelName });
+  }
+  if (toolSetOwnerButtonId) throw new Error("A Tool Set default requires a Tool Set settings file.");
   if (!availablePanelPopoutPresetsForPanel(document, programName, panelName).some((entry) => entry.id === preset)) {
     throw new Error("The selected panel no longer has the complete Collections preset's scripts.");
   }
@@ -251,43 +279,33 @@ async function loadMainPopSettingsFile(document: ButtonStateDocument, path: stri
   return buildButtonSettingsFile(next, unit.surfaceId, { programName, panelName });
 }
 
-function readMainLastPopChoices(): Record<string, MainLastPopChoice> {
-  try {
-    const raw = localStorage.getItem(MAIN_LAST_POP_SETTINGS_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(
-      Object.entries(parsed)
-        .filter((entry): entry is [string, { path: string; choiceId: string }] => {
-          const value = entry[1];
-          return Boolean(
-            value &&
-            typeof value === "object" &&
-            !Array.isArray(value) &&
-            typeof (value as { path?: unknown }).path === "string" &&
-            Boolean((value as { path: string }).path.trim()) &&
-            typeof (value as { choiceId?: unknown }).choiceId === "string" &&
-            Boolean((value as { choiceId: string }).choiceId.trim())
-          );
-        })
-        .map(([key, value]) => [
-          key,
-          { path: value.path.trim(), choiceId: value.choiceId.trim() }
-        ])
-    );
-  } catch {
-    return {};
+function applyMainPanelFanStyle(
+  document: ButtonStateDocument, programName: string, panelName: string, styleId: string,
+  direction: ButtonFanExpansionDirection = DEFAULT_BUTTON_FAN_DIRECTION
+): boolean {
+  const style = resolveButtonFanStyle(styleId);
+  if (!style) throw new Error("The selected Fan style is no longer available.");
+  const owner = findPanelOwnerButton(document, programName, panelName);
+  if (!owner) throw new Error("The selected panel has no canonical panel-owner Button.");
+  let changed = owner.metadata.panelFanMotionStyle !== style.id || owner.metadata.panelFanDirection !== direction;
+  owner.metadata.panelFanMotionStyle = style.id;
+  owner.metadata.panelFanDirection = direction;
+  for (const setup of Object.values(document.fanSetups)) {
+    if (!areFolderNamesEqual(setup.programName, programName) || !areFolderNamesEqual(setup.panelName, panelName)) continue;
+    const animation = { ...setup.animation, ...style.animation };
+    if (Object.entries(animation).some(([key, value]) => Reflect.get(setup.animation, key) !== value)) changed = true;
+    setup.animation = animation;
   }
-}
-
-function writeMainLastPopChoice(
-  panelOwnerButtonId: string,
-  choice: MainLastPopChoice
-): void {
-  const choices = readMainLastPopChoices();
-  choices[panelOwnerButtonId] = choice;
-  localStorage.setItem(MAIN_LAST_POP_SETTINGS_STORAGE_KEY, JSON.stringify(choices));
+  for (const unit of Object.values(document.popoutUnits)) {
+    const identities = unit.kind === "tool-set"
+      ? [document.buttons[unit.ownerButtonId]?.sourceIdentity]
+      : unit.memberSourceIdentities;
+    if (!identities.length || !identities.every((identity) => sourceIdentityMatchesFolderScope(identity, programName, panelName))) continue;
+    const animation = { durationMs: 180, easing: "ease-out", staggerMs: 30, ...unit.fanAnimation, ...style.animation };
+    if (!unit.fanAnimation || Object.entries(animation).some(([key, value]) => Reflect.get(unit.fanAnimation!, key) !== value)) changed = true;
+    unit.fanAnimation = animation;
+  }
+  return changed;
 }
 
 function formatErrorMessage(error: unknown): string {
@@ -790,7 +808,6 @@ export default function MainPage() {
   const panelFolderLoadRequestRef = useRef(0);
   const panelScriptLoadRequestRef = useRef(0);
   const [contextMenu, setContextMenu] = useState<ButtonContextMenuState | null>(null);
-  const [fanSetupMenu, setFanSetupMenu] = useState<FanSetupMenuState | null>(null);
   const [panelPopMenu, setPanelPopMenu] = useState<FanSetupMenuState | null>(null);
   const [programNames, setProgramNames] = useState<string[]>([]);
   const [selectedProgramName, setSelectedProgramName] = useState<string | null>(null);
@@ -799,6 +816,10 @@ export default function MainPage() {
   const [panelScripts, setPanelScripts] = useState<PanelScriptFileRecord[]>([]);
   const [selectedPanelScriptFileNames, setSelectedPanelScriptFileNames] = useState<string[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isFanOptionsOpen, setIsFanOptionsOpen] = useState(false);
+  const [pendingFanStyleId, setPendingFanStyleId] = useState<string | null>(null);
+  const [pendingFanDirection, setPendingFanDirection] = useState<ButtonFanExpansionDirection>(DEFAULT_BUTTON_FAN_DIRECTION);
+  const [fanStyleBusy, setFanStyleBusy] = useState(false);
   const [startupSettings, setStartupSettings] = useState<StartupSettings>(() =>
     readStartupSettings()
   );
@@ -816,6 +837,7 @@ export default function MainPage() {
   const buttonDocumentRef = useRef<ButtonStateDocument | null>(null);
   const previousButtonDocumentRef = useRef<ButtonStateDocument | null>(null);
   const mainPopDraftSessionsRef = useRef<Map<string, MainPopDraftSession>>(new Map());
+  const quickFanOpeningRef = useRef(false);
   const selectedProgramNameRef = useRef<string | null>(selectedProgramName);
   const selectedPanelNameRef = useRef<string | null>(selectedPanelName);
   selectedProgramNameRef.current = selectedProgramName;
@@ -1470,21 +1492,11 @@ export default function MainPage() {
   const fanOptionsDisabled = !selectedProgramName || !selectedPanelName;
   const orderButtonDisabled =
     !selectedProgramName || !selectedPanelName || resolvedPanelScripts.length <= 1;
-  const panelFanSetups = useMemo(
-    () =>
-      Object.values(buttonDocument?.fanSetups ?? {})
-        .filter(
-          (setup) =>
-            areFolderNamesEqual(setup.programName, selectedProgramName) &&
-            areFolderNamesEqual(setup.panelName, selectedPanelName)
-        )
-        .sort((left, right) => left.name.localeCompare(right.name)),
-    [buttonDocument, selectedPanelName, selectedProgramName]
-  );
-
   useEffect(() => {
-    setFanSetupMenu(null);
     setPanelPopMenu(null);
+    setIsFanOptionsOpen(false);
+    setPendingFanStyleId(null);
+    setPendingFanDirection(DEFAULT_BUTTON_FAN_DIRECTION);
   }, [selectedPanelName, selectedProgramName]);
 
   useEffect(() => {
@@ -1836,8 +1848,14 @@ export default function MainPage() {
           windowEntry.ProgramName,
           windowEntry.PanelName
         );
+        const savedOwner = windowEntry.ButtonOwnerId
+          ? settingsBackedCanonicalDocument.buttons[windowEntry.ButtonOwnerId] : undefined;
+        if (windowEntry.ButtonOwnerId && !savedOwner) {
+          throw new Error("The saved Button Pop-out owner is no longer installed.");
+        }
+        const toolSetOwnerButtonId = savedOwner?.role === "tool-set-owner" ? savedOwner.id : undefined;
         const settingsFile = await loadMainPopSettingsFile(settingsBackedCanonicalDocument, settingsPath,
-          windowEntry.ProgramName, windowEntry.PanelName);
+          windowEntry.ProgramName, windowEntry.PanelName, toolSetOwnerButtonId);
         const transient = buildTransientButtonPopoutSettingsDocument(
           settingsBackedCanonicalDocument,
           settingsFile,
@@ -1856,7 +1874,8 @@ export default function MainPage() {
             path: settingsPath,
             choiceId: windowEntry.ButtonPopoutChoiceId
           },
-          panelOwnerButtonId: windowEntry.PanelOwnerButtonId
+          panelOwnerButtonId: windowEntry.PanelOwnerButtonId,
+          toolSetOwnerButtonId
         });
         continue;
       }
@@ -1912,6 +1931,7 @@ export default function MainPage() {
                 {
                   programName: windowEntry.ProgramName,
                   panelName: windowEntry.PanelName,
+                  toolSetOwnerButtonId: settingsBackedDescriptor.toolSetOwnerButtonId,
                   bounds: windowEntry.Bounds,
                   displayMode: windowEntry.ButtonDisplayMode,
                   closeControlOffset: windowEntry.ButtonCloseControlOffset,
@@ -1941,6 +1961,8 @@ export default function MainPage() {
             windowEntry.ButtonFanSetupId &&
             windowEntry.ButtonOwnerId
           ) {
+            settingsBackedCanonicalDocument ??= await loadButtonStateDocument();
+            if (!settingsBackedCanonicalDocument.fanSetups[windowEntry.ButtonFanSetupId]) break;
             await openButtonFanWindow({
               programName: windowEntry.ProgramName,
               panelName: windowEntry.PanelName,
@@ -2111,6 +2133,14 @@ export default function MainPage() {
     const document = sourceDocument ?? buttonDocumentRef.current ?? await loadButtonStateDocument();
     if (!buttonDocumentRef.current) acceptButtonDocument(document);
     const target = resolveToolSetOwnerActivationTarget(document, ownerButtonId);
+    const defaultChoice = getButtonDefaultPopoutChoice(document, ownerButtonId);
+    if (defaultChoice) {
+      await openMainPopChoice(defaultChoice, document, undefined, {
+        programName: target.programName, panelName: target.panelName, toggle: behavior === "toggle",
+        toolSetOwnerButtonId: ownerButtonId
+      });
+      return;
+    }
     const unit = document.popoutUnits[target.popoutUnitId];
     const ownerPlacement = unit?.ownerPlacementId
       ? document.placements[unit.ownerPlacementId]
@@ -2740,127 +2770,156 @@ export default function MainPage() {
     }
   };
 
-  const handleOpenSavedFanSetup = async (
-    fanSetupId: string,
-    sourceDocument?: ButtonStateDocument
-  ) => {
-    if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening a fan setup.");
-      return;
-    }
-
+  const handleOpenQuickDefaultFan = async () => {
+    if (!selectedProgramName || !selectedPanelName || quickFanOpeningRef.current) return;
+    quickFanOpeningRef.current = true;
     try {
-      const document = sourceDocument ?? buttonDocument ?? await loadButtonStateDocument();
-      const setup = document.fanSetups[fanSetupId];
-      if (
-        !setup ||
-        !areFolderNamesEqual(setup.programName, selectedProgramName) ||
-        !areFolderNamesEqual(setup.panelName, selectedPanelName)
-      ) {
-        throw new Error("That saved fan setup no longer belongs to the selected panel.");
-      }
-
-      const selectedToolSetOwnerIds = new Set(setup.selectedToolSetOwnerButtonIds);
-      const panelToolSetUnits = Object.values(document.popoutUnits).filter(
-        (unit): unit is ToolSetButtonPopoutUnit => {
-        if (unit.kind !== "tool-set") return false;
-        const owner = document.buttons[unit.ownerButtonId];
-        const identity = owner?.sourceIdentity;
-        return Boolean(
-          identity &&
-            areFolderNamesEqual(identity.displayProgramName, selectedProgramName) &&
-            areFolderNamesEqual(identity.displayPanelName, selectedPanelName)
-        );
-      });
-
-      await Promise.all(
-        panelToolSetUnits
-          .filter((unit) => !selectedToolSetOwnerIds.has(unit.ownerButtonId))
-          .map((unit) =>
-            closeButtonPopoutWindow({
-              popoutUnitId: unit.id,
-              ownerButtonId: unit.ownerButtonId
-            })
-          )
-      );
-
-      const fanWindowPromise = setup.fanMemberButtonIds.length > 0
-        ? openButtonFanWindow({
-            programName: setup.programName,
-            panelName: setup.panelName,
-            fanSetupId: setup.id,
-            panelOwnerButtonId: setup.panelOwnerButtonId,
-            collapsedBounds: setup.collapsedPanelOwnerBounds
-              ? {
-                  Left: setup.collapsedPanelOwnerBounds.left,
-                  Top: setup.collapsedPanelOwnerBounds.top,
-                  Width: setup.collapsedPanelOwnerBounds.width,
-                  Height: setup.collapsedPanelOwnerBounds.height
-                }
-              : null
+      const current = buttonDocumentRef.current ?? buttonDocument ?? await loadButtonStateDocument();
+      const eligible = Object.values(current.buttons).filter((button) =>
+        (button.role === "single-script" || button.role === "tool-set-owner") &&
+        button.metadata.themeContributionOnly !== true &&
+        sourceIdentityMatchesFolderScope(button.sourceIdentity, selectedProgramName, selectedPanelName));
+      const buttons = selectedPanelScriptRecords.length > 0
+        ? selectedPanelScriptRecords.map((record) => {
+            const key = canonicalButtonSourceKey(selectedProgramName, selectedPanelName, record.fileName);
+            const button = eligible.find((candidate) => candidate.sourceIdentity &&
+              canonicalButtonSourceKey(candidate.sourceIdentity.displayProgramName,
+                candidate.sourceIdentity.displayPanelName, candidate.sourceIdentity.displayFileName) === key);
+            if (!button) throw new Error(`Canonical Button was not found for '${record.label}'.`);
+            return button;
           })
-        : closeButtonFanWindow(setup.panelOwnerButtonId);
-
-      const toolSetWindowPromises = setup.selectedToolSetOwnerButtonIds.map((ownerButtonId) => {
-        const unit = panelToolSetUnits.find(
-          (candidate) => candidate.ownerButtonId === ownerButtonId
-        );
-        const anchor = setup.toolSetOwnerAnchors[ownerButtonId];
-        if (!unit) {
-          throw new Error(`Tool-set owner '${ownerButtonId}' has no canonical popout unit.`);
-        }
-        if (!anchor) {
-          throw new Error(`Fan setup '${setup.name}' is missing the saved anchor for '${ownerButtonId}'.`);
-        }
-        return openButtonPopoutWindow({
-          programName: setup.programName,
-          panelName: setup.panelName,
-          popoutUnitId: unit.id,
-          ownerButtonId,
-          displayMode: "collapsed",
-          bounds: {
-            Left: anchor.left,
-            Top: anchor.top,
-            Width: anchor.width,
-            Height: anchor.height
-          }
-        });
+        : eligible;
+      const { document, setup } = buildQuickDefaultFanDocument({
+        document: current, programName: selectedProgramName, panelName: selectedPanelName, buttons
       });
-
-      await Promise.all([fanWindowPromise, ...toolSetWindowPromises]);
-      setFanSetupMenu(null);
+      const selectedOwners = new Set(setup.selectedToolSetOwnerButtonIds);
+      const panelToolSets = Object.values(document.popoutUnits).filter(
+        (unit): unit is ToolSetButtonPopoutUnit => unit.kind === "tool-set" &&
+          sourceIdentityMatchesFolderScope(document.buttons[unit.ownerButtonId]?.sourceIdentity,
+            selectedProgramName, selectedPanelName));
+      const toolSetWindows = setup.selectedToolSetOwnerButtonIds.map((ownerButtonId) => {
+        const unit = panelToolSets.find((candidate) => candidate.ownerButtonId === ownerButtonId);
+        const anchor = setup.toolSetOwnerAnchors[ownerButtonId];
+        if (!unit || !anchor) throw new Error(`Tool-set owner '${ownerButtonId}' has no default Pop-out.`);
+        return { unit, anchor };
+      });
+      const sessionPrefix = `main-quick-fan:${setup.panelOwnerButtonId}:`;
+      for (const [id, previous] of mainPopDraftSessionsRef.current) {
+        if (!id.startsWith(sessionPrefix)) continue;
+        mainPopDraftSessionsRef.current.delete(id);
+        previous.cleanups.splice(0).forEach((cleanup) => cleanup());
+      }
+      const openDraftWindow = async (
+        windowLabel: string,
+        targetId: string,
+        kind: "fan" | "popout",
+        open: (draftSessionId: string) => Promise<void>
+      ) => {
+        const sessionKey = `${sessionPrefix}${windowLabel}`;
+        const sessionId = `${sessionKey}:${setup.id}`;
+        const session: MainPopDraftSession = { document, cleanups: [], windowCleanupRegistered: false };
+        mainPopDraftSessionsRef.current.set(sessionKey, session);
+        const isCurrent = () => mainPopDraftSessionsRef.current.get(sessionKey) === session;
+        const dispose = () => {
+          if (isCurrent()) mainPopDraftSessionsRef.current.delete(sessionKey);
+          session.cleanups.splice(0).forEach((cleanup) => cleanup());
+        };
+        const addCleanup = (cleanup: () => void) => {
+          if (isCurrent()) session.cleanups.push(cleanup);
+          else cleanup();
+        };
+        let opened = false;
+        try {
+          addCleanup(await registerButtonDraftResponder(sessionId, () => session.document));
+          addCleanup(await subscribeButtonDrafts(sessionId, (draft) => {
+            if (!isCurrent() || !draft.fanSetups[setup.id]) return;
+            if (kind === "popout" && !draft.popoutUnits[targetId]) return;
+            session.document = draft;
+          }));
+          addCleanup(await subscribeButtonRestingWindowBounds(sessionId, (update) => {
+            if (!isCurrent()) return;
+            if (kind === "fan" && update.kind === "fan" && update.fanSetupId === targetId) {
+              const fan = session.document.fanSetups[targetId];
+              if (!fan) return;
+              session.document = { ...session.document, fanSetups: { ...session.document.fanSetups,
+                [targetId]: { ...fan, collapsedPanelOwnerBounds: update.bounds,
+                  collapsedBoundsFitMode: update.fitMode, collapsedBoundsEnvelope: update.envelope } } };
+            } else if (kind === "popout" && update.kind === "popout" && update.popoutUnitId === targetId) {
+              const unit = session.document.popoutUnits[targetId];
+              if (!unit) return;
+              session.document = { ...session.document, popoutUnits: { ...session.document.popoutUnits,
+                [targetId]: { ...unit, desktopBounds: update.bounds,
+                  desktopBoundsFitMode: update.fitMode, desktopBoundsEnvelope: update.envelope } } };
+            }
+          }));
+          if (!isCurrent()) return;
+          await open(sessionId);
+          opened = true;
+          const target = await WebviewWindow.getByLabel(windowLabel);
+          if (!target) { dispose(); return; }
+          addCleanup(await target.once("tauri://destroyed", () => { if (isCurrent()) dispose(); }));
+          await publishButtonDraftToWindow(sessionId, windowLabel, session.document);
+        } catch (error) {
+          if (!opened) dispose();
+          throw error;
+        }
+      };
+      const operations = panelToolSets.filter((unit) => !selectedOwners.has(unit.ownerButtonId))
+        .map((unit) => closeButtonPopoutWindow({ popoutUnitId: unit.id, ownerButtonId: unit.ownerButtonId }));
+      operations.push(setup.fanMemberButtonIds.length > 0
+        ? openDraftWindow(buildButtonFanWindowLabel(setup.panelOwnerButtonId), setup.id, "fan", (draftSessionId) =>
+            openButtonFanWindow({ programName: setup.programName, panelName: setup.panelName,
+              fanSetupId: setup.id, panelOwnerButtonId: setup.panelOwnerButtonId,
+              draftSessionId, registerInLayout: false }))
+        : closeButtonFanWindow(setup.panelOwnerButtonId));
+      operations.push(...toolSetWindows.map(({ unit, anchor }) =>
+        openDraftWindow(buildButtonPopoutWindowLabel({ popoutUnitId: unit.id, ownerButtonId: unit.ownerButtonId }),
+          unit.id, "popout", (draftSessionId) => openButtonPopoutWindow({
+            programName: setup.programName, panelName: setup.panelName,
+            popoutUnitId: unit.id, ownerButtonId: unit.ownerButtonId, displayMode: "collapsed",
+            draftSessionId, registerInLayout: false,
+            bounds: { Left: anchor.left, Top: anchor.top, Width: anchor.width, Height: anchor.height }
+          }))));
+      const results = await Promise.allSettled(operations);
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failed) throw failed.reason;
     } catch (error) {
-      console.error(
-        `Failed to open saved fan setup for ${selectedProgramName}/${selectedPanelName}.`,
-        error
-      );
-      window.alert(`Fan setup could not be opened.\n\n${formatErrorMessage(error)}`);
+      console.error(`Failed to open a default Fan for ${selectedProgramName}/${selectedPanelName}.`, error);
+      window.alert(`Fan could not be opened.\n\n${formatErrorMessage(error)}`);
+    } finally {
+      quickFanOpeningRef.current = false;
     }
   };
 
-  const handleEditFanSetups = async () => {
-    if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening fan options.");
-      return;
-    }
+  const handleOpenFanOptions = () => {
+    if (!selectedProgramName || !selectedPanelName || fanStyleBusy) return;
+    const document = buttonDocumentRef.current;
+    const owner = document ? findPanelOwnerButton(document, selectedProgramName, selectedPanelName) : null;
+    setPendingFanStyleId(resolveButtonFanStyle(owner?.metadata.panelFanMotionStyle)?.id ?? "default");
+    setPendingFanDirection(resolveButtonFanExpansionDirection(owner?.metadata.panelFanDirection));
+    setIsFanOptionsOpen(true);
+  };
 
+  const handleCloseFanOptions = () => {
+    if (fanStyleBusy) return;
+    setIsFanOptionsOpen(false);
+    setPendingFanStyleId(null);
+    setPendingFanDirection(DEFAULT_BUTTON_FAN_DIRECTION);
+  };
+
+  const handleApplyFanStyle = async () => {
+    if (!selectedProgramName || !selectedPanelName || !pendingFanStyleId || fanStyleBusy) return;
+    setFanStyleBusy(true);
     try {
-      const document = buttonDocument ?? await loadButtonStateDocument();
-      const setup = Object.values(document.fanSetups).find(
-        (candidate) =>
-          candidate.programName === selectedProgramName && candidate.panelName === selectedPanelName
-      );
-      await openButtonEditorWindow({
-        programName: selectedProgramName,
-        panelName: selectedPanelName,
-        surfaceId: setup?.fanSurfaceId
-      });
+      await commitButtonDocumentMutation((draft) =>
+        applyMainPanelFanStyle(draft, selectedProgramName, selectedPanelName, pendingFanStyleId, pendingFanDirection));
+      setIsFanOptionsOpen(false);
+      setPendingFanStyleId(null);
+      setPendingFanDirection(DEFAULT_BUTTON_FAN_DIRECTION);
     } catch (error) {
-      console.error(
-        `Failed to open panel fan options for ${selectedProgramName}/${selectedPanelName}.`,
-        error
-      );
-      window.alert(`Fan options could not be opened.\n\n${formatErrorMessage(error)}`);
+      window.alert(`Fan options could not be saved.\n\n${formatErrorMessage(error)}`);
+    } finally {
+      setFanStyleBusy(false);
     }
   };
 
@@ -2917,7 +2976,7 @@ export default function MainPage() {
         panelName
       )
     };
-    const settingsFile = await loadMainPopSettingsFile(canonical, choice.path, programName, panelName);
+    const settingsFile = await loadMainPopSettingsFile(canonical, choice.path, programName, panelName, options.toolSetOwnerButtonId);
     const transient = buildTransientButtonPopoutSettingsDocument(
       canonical,
       settingsFile,
@@ -2927,6 +2986,16 @@ export default function MainPage() {
       },
       choice.choiceId
     );
+    const openedUnit = transient.document.popoutUnits[transient.popoutUnitId];
+    if (options.toggle) {
+      const existingLabel = buildButtonPopoutWindowLabel({
+        popoutUnitId: transient.popoutUnitId, ownerButtonId: openedUnit?.ownerButtonId ?? undefined
+      });
+      if (await WebviewWindow.getByLabel(existingLabel)) {
+        await closeManagedButtonWindow(existingLabel);
+        return;
+      }
+    }
     const sessionId = `main-open-pop:${panelOwnerButtonId}:${choice.choiceId}`;
     let session = mainPopDraftSessionsRef.current.get(sessionId);
     const createdSession = !session;
@@ -3005,15 +3074,6 @@ export default function MainPage() {
       if (createdSession) disposeSession();
       throw error;
     }
-    try {
-      writeMainLastPopChoice(panelOwnerButtonId, choice);
-    } catch (error) {
-      console.error("The transient Pop opened, but its last-used file could not be remembered.", error);
-      window.alert(
-        `The Pop window opened, but FlowCell could not remember it for the Pop button.\n\n` +
-        formatErrorMessage(error)
-      );
-    }
   };
 
   const openPanelButtonsPop = async (
@@ -3023,15 +3083,24 @@ export default function MainPage() {
   ) => {
     const current = buttonDocumentRef.current ?? await loadButtonStateDocument();
     const selectedIds = new Set(selectedButtonIds);
-    const panelButtons = Object.values(current.buttons).filter((candidate) =>
+    const allPanelButtons = Object.values(current.buttons).filter((candidate) =>
       (candidate.role === "single-script" || candidate.role === "tool-set-owner") &&
-      sourceIdentityMatchesFolderScope(candidate.sourceIdentity, programName, panelName) &&
-      (selectedIds.size === 0 || selectedIds.has(candidate.id))
+      sourceIdentityMatchesFolderScope(candidate.sourceIdentity, programName, panelName)
     );
+    const panelButtons = allPanelButtons.filter((candidate) => selectedIds.size === 0 || selectedIds.has(candidate.id));
     if (selectedIds.size > 0 && panelButtons.length !== selectedIds.size) {
       throw new Error("A selected Button no longer belongs to this panel. Refresh and select it again.");
     }
     const toolSetOwners = panelButtons.filter((candidate) => candidate.role === "tool-set-owner");
+    const selectedOnlyToolSets = selectedIds.size > 0 && toolSetOwners.length === panelButtons.length;
+    if (!selectedOnlyToolSets) {
+      const panelOwner = findPanelOwnerButton(current, programName, panelName);
+      const defaultChoice = panelOwner ? getButtonDefaultPopoutChoice(current, panelOwner.id) : null;
+      if (defaultChoice) {
+        await openMainPopChoice(defaultChoice, current, panelOwner!.id, { programName, panelName });
+        return;
+      }
+    }
     for (const owner of toolSetOwners) {
       await activateToolSetOwner(owner.id, current, "open");
     }
@@ -3151,122 +3220,6 @@ export default function MainPage() {
         error
       );
       window.alert(`Open Pop could not open the selected file.\n\n${formatErrorMessage(error)}`);
-    }
-  };
-
-  const handleOpenGenericFanSetup = async () => {
-    if (!selectedProgramName || !selectedPanelName) {
-      return;
-    }
-
-    try {
-      const currentDocument = buttonDocument ?? await loadButtonStateDocument();
-      const draft = cloneButtonDocument(currentDocument);
-      const memberButtons = Object.values(draft.buttons).filter(
-        (candidate) =>
-          candidate.role === "single-script" &&
-          sourceIdentityMatchesFolderScope(
-            candidate.sourceIdentity,
-            selectedProgramName,
-            selectedPanelName
-          )
-      );
-      const setup = ensureFanSetup({
-        document: draft,
-        programName: selectedProgramName,
-        panelName: selectedPanelName,
-        buttons: memberButtons
-      });
-      const document = currentDocument.fanSetups[setup.id]
-        ? currentDocument
-        : await saveButtonStateDocument(draft, currentDocument.revision);
-      if (document !== currentDocument) {
-        acceptButtonDocument(document);
-        await publishButtonCommit(document);
-      }
-      const storedSetup = document.fanSetups[setup.id];
-      await openButtonFanWindow({
-        programName: storedSetup.programName,
-        panelName: storedSetup.panelName,
-        fanSetupId: storedSetup.id,
-        panelOwnerButtonId: storedSetup.panelOwnerButtonId,
-        collapsedBounds: storedSetup.collapsedPanelOwnerBounds
-          ? {
-              Left: storedSetup.collapsedPanelOwnerBounds.left,
-              Top: storedSetup.collapsedPanelOwnerBounds.top,
-              Width: storedSetup.collapsedPanelOwnerBounds.width,
-              Height: storedSetup.collapsedPanelOwnerBounds.height
-            }
-          : null
-      });
-    } catch (error) {
-      console.error(
-        `Failed to open a generic fan for ${selectedProgramName}/${selectedPanelName}.`,
-        error
-      );
-      window.alert(`Fan could not be opened.\n\n${formatErrorMessage(error)}`);
-    }
-  };
-
-  const handleOpenSelectedFanSetup = async () => {
-    if (
-      !selectedProgramName ||
-      !selectedPanelName ||
-      selectedPanelScriptRecords.length === 0
-    ) {
-      return;
-    }
-
-    try {
-      const currentDocument = buttonDocument ?? await loadButtonStateDocument();
-      const draft = cloneButtonDocument(currentDocument);
-      const selectedButtons = selectedPanelScriptRecords.map((record) => {
-        const sourceKey = canonicalButtonSourceKey(
-          selectedProgramName,
-          selectedPanelName,
-          record.fileName
-        );
-        const button = canonicalButtonsBySource.get(sourceKey) ??
-          Object.values(draft.buttons).find((candidate) => {
-            const identity = candidate.sourceIdentity;
-            return Boolean(
-              identity &&
-              candidate.role !== "tool-set-child" &&
-              canonicalButtonSourceKey(
-                identity.displayProgramName,
-                identity.displayPanelName,
-                identity.displayFileName
-              ) === sourceKey
-            );
-          });
-        if (
-          !button ||
-          (button.role !== "single-script" && button.role !== "tool-set-owner")
-        ) {
-          throw new Error(`Canonical Button was not found for '${record.label}'.`);
-        }
-        return button;
-      });
-      const setup = ensureFanSetup({
-        document: draft,
-        programName: selectedProgramName,
-        panelName: selectedPanelName,
-        buttons: selectedButtons
-      });
-      const document = currentDocument.fanSetups[setup.id]
-        ? currentDocument
-        : await saveButtonStateDocument(draft, currentDocument.revision);
-      if (document !== currentDocument) {
-        acceptButtonDocument(document);
-        await publishButtonCommit(document);
-      }
-      await handleOpenSavedFanSetup(setup.id, document);
-    } catch (error) {
-      console.error(
-        `Failed to open a selected Fan for ${selectedProgramName}/${selectedPanelName}.`,
-        error
-      );
-      window.alert(`Selected Fan could not be opened.\n\n${formatErrorMessage(error)}`);
     }
   };
 
@@ -3493,34 +3446,12 @@ export default function MainPage() {
     }
 
     if (button.actionId === "open-fan-setup-menu") {
-      if (fanMenuDisabled) return;
-      if (selectedPanelScriptRecords.length > 0) {
-        await handleOpenSelectedFanSetup();
-        return;
-      }
-      if (panelFanSetups.length === 0) {
-        await handleOpenGenericFanSetup();
-        return;
-      }
-      if (panelFanSetups.length === 1) {
-        await handleOpenSavedFanSetup(panelFanSetups[0].id);
-        return;
-      }
-      const target = event.currentTarget;
-      const rect = target instanceof Element ? target.getBoundingClientRect() : null;
-      setFanSetupMenu((current) =>
-        current
-          ? null
-          : {
-              left: rect?.left ?? button.x,
-              top: (rect?.bottom ?? button.y + button.height) + 6
-            }
-      );
+      if (!fanMenuDisabled) await handleOpenQuickDefaultFan();
       return;
     }
 
     if (button.actionId === "edit-fan-setups") {
-      await handleEditFanSetups();
+      if (!fanOptionsDisabled) handleOpenFanOptions();
       return;
     }
 
@@ -3771,54 +3702,6 @@ export default function MainPage() {
               </div>
             </>
           ) : null}
-          {fanSetupMenu ? (
-            <>
-              <div
-                className="fan-setup-menu__backdrop"
-                aria-hidden="true"
-                onMouseDown={() => setFanSetupMenu(null)}
-              />
-              <div
-                className="fan-setup-menu"
-                role="menu"
-                aria-label={`Saved fan setups for ${selectedPanelName ?? "panel"}`}
-                style={{ left: fanSetupMenu.left, top: fanSetupMenu.top }}
-                onMouseDown={(event) => event.stopPropagation()}
-              >
-                <div className="fan-setup-menu__title">Fan setups</div>
-                {panelFanSetups.length > 0 ? (
-                  panelFanSetups.map((setup) => (
-                    <CanonicalActionButton
-                      key={setup.id}
-                      id={`fan-setup-menu:${setup.id}`}
-                      label={setup.name}
-                      tooltip={`Open the exact saved '${setup.name}' fan arrangement.`}
-                      className="fan-setup-menu__item"
-                      onActivate={() => handleOpenSavedFanSetup(setup.id)}
-                    />
-                  ))
-                ) : (
-                  <>
-                    <p className="fan-setup-menu__empty">
-                      No saved fan setup exists for this panel.
-                    </p>
-                    <CanonicalActionButton
-                      id="fan-setup-menu:open-editor"
-                      label="Open Buttons Editor"
-                      className="fan-setup-menu__item"
-                      onActivate={async () => {
-                        setFanSetupMenu(null);
-                        await openButtonEditorWindow({
-                          programName: selectedProgramName ?? undefined,
-                          panelName: selectedPanelName ?? undefined
-                        });
-                      }}
-                    />
-                  </>
-                )}
-              </div>
-            </>
-          ) : null}
           {contextMenu &&
           contextMenuButton &&
           (isScriptContextMenu || isProgramFolderContextMenu || isPanelFolderContextMenu) ? (
@@ -3925,6 +3808,39 @@ export default function MainPage() {
                   </>
                 ) : null}
               </div>
+            </>
+          ) : null}
+          {isFanOptionsOpen ? (
+            <>
+              <div className="main-page__settings-backdrop" aria-hidden="true" onMouseDown={handleCloseFanOptions} />
+              <section className="main-page__settings main-page__fan-options" role="dialog" aria-modal="true"
+                aria-label="Fan Options" onMouseDown={(event) => event.stopPropagation()}
+                aria-busy={fanStyleBusy}
+                onKeyDown={(event) => { if (event.key === "Escape") handleCloseFanOptions(); }}>
+                <header className="main-page__settings-header">
+                  <h2>Fan Options</h2>
+                  <button type="button" className="main-page__settings-close" aria-label="Close Fan Options"
+                    autoFocus disabled={fanStyleBusy} onClick={handleCloseFanOptions}>X</button>
+                </header>
+                <fieldset className="main-page__fan-options-group">
+                  <legend>Animation</legend>
+                  {BUTTON_FAN_STYLE_CATALOG.map((style) => <button key={style.id} type="button"
+                    className="main-page__fan-style" disabled={fanStyleBusy}
+                    aria-pressed={pendingFanStyleId === style.id}
+                    onClick={() => setPendingFanStyleId(style.id)}>{style.name}</button>)}
+                </fieldset>
+                <fieldset className="main-page__fan-options-group">
+                  <legend>Direction</legend>
+                  <div className="main-page__fan-directions">
+                    {MAIN_FAN_DIRECTIONS.map((direction) => <button key={direction.id} type="button"
+                      className="main-page__fan-direction" disabled={fanStyleBusy}
+                      aria-pressed={pendingFanDirection === direction.id}
+                      onClick={() => setPendingFanDirection(direction.id)}>{direction.name}</button>)}
+                  </div>
+                </fieldset>
+                <button type="button" className="main-page__fan-apply" disabled={fanStyleBusy || !pendingFanStyleId}
+                  onClick={() => void handleApplyFanStyle()}>Apply</button>
+              </section>
             </>
           ) : null}
           {isSettingsOpen ? (
