@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { LayoutSnapshot } from "../types.js";
+import type { ThemeToolDescriptor } from "../theme/portableTheme.js";
 import { trackProgramAction } from "./programUndo.js";
 
 export const PROGRAM_DATA_INVALIDATED_EVENT = "flowcell://program-data-invalidated";
@@ -172,25 +173,33 @@ export interface AddProgramPlanRequest {
   selectedPanels: string[];
   selectedSources: Array<{ sourceId: string; destinationPanel: string }>;
   applyDefaultTheme?: boolean;
+  expectedPlanFingerprint?: string;
+  expectedButtonRevision?: number;
+  clientStartedAtMs?: number;
 }
 
-export interface AddProgramPreflight {
+export interface AddProgramPreflight extends ProgramSetupPresentation {
   programId: string;
   programName: string;
   executablePath: string;
   panels: string[];
   sources: ProgramSetupSource[];
   installEffects: string[];
+  planFingerprint: string;
 }
 
-export interface AppliedProgramSetup {
-  transactionToken: string;
+export interface ProgramSetupPresentation {
   programName: string;
   panels: string[];
   descriptors: Record<string, unknown>[];
-  installEffects: string[];
+  themeDescriptors: ThemeToolDescriptor[];
   defaultTheme?: unknown;
   defaultThemeReceipt?: string;
+}
+
+export interface AppliedProgramSetup extends ProgramSetupPresentation {
+  transactionToken: string;
+  installEffects: string[];
 }
 
 export interface AddPanelPlanRequest {

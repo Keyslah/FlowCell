@@ -7,6 +7,7 @@ import type {
   ToolSetButtonPopoutUnit
 } from "../types.js";
 import {
+  buttonRectsOverlap,
   buttonSpacingPixelsFromMillimeters,
   createStarterButtonLayout
 } from "../geometry/buttonGeometry.js";
@@ -16,6 +17,7 @@ import { validateInstalledButtonLayout } from "./installedButtonLayoutValidation
 import { resolveInstalledToolFields } from "./installedToolFields.js";
 import { assignInstalledToolSetSkins } from "./installedToolSetSkins.js";
 import { hideThemeContributionOwner } from "./buttonDocumentOperations.js";
+import { DEFAULT_BUTTON_SKIN, getDefaultButtonSize } from "../skins/defaultButtonSkin.js";
 
 function stableDocumentIdSegment(value: string): string {
   const normalized = value.trim().toLocaleLowerCase();
@@ -53,8 +55,18 @@ function appendMissingToolSetChildren(
 ): void {
   const surface = document.surfaces[unit.surfaceId];
   if (!surface) throw new Error(`Tool-set owner '${owner.id}' is missing its canonical surface.`);
+  const existingPlacements = new Map(unit.childPlacementIds.map((id) => document.placements[id])
+    .filter(Boolean).map((placement) => [placement.buttonId, placement]));
   const starter = createStarterButtonLayout(
-    installed.children.map((child) => ({ id: child.slot, width: 144, height: 42 })),
+    installed.children.map((child) => {
+      const existing = existingPlacements.get(childIdBySlot.get(normalizedSlot(child.slot)) ?? "");
+      return { id: child.slot,
+      ...(existing ? { width: existing.width, height: existing.height }
+        : document.skins[document.settings.defaultSkinId]?.structure === DEFAULT_BUTTON_SKIN.structure &&
+        !installed.layout?.appearance?.children?.[child.slot]
+        ? getDefaultButtonSize(child.label, 42, 144, installed.layout?.placementPresentation?.[child.slot]?.textSizeOverride ?? undefined)
+        : { width: 144, height: 42 }) };
+    }),
     {
       padding: document.settings.defaultSurfacePadding,
       gap: buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm),
@@ -71,8 +83,20 @@ function appendMissingToolSetChildren(
     if (document.buttons[childId] || document.placements[placementId]) {
       throw new Error(`Tool-set child migration ID '${childId}' is already in use.`);
     }
-    const rect: (ButtonRect & { zIndex?: number }) | undefined = installed.layout?.placements?.[child.slot] ?? starter.rects[child.slot];
+    let rect: (ButtonRect & { zIndex?: number }) | undefined = installed.layout?.placements?.[child.slot] ?? starter.rects[child.slot];
     if (!rect) throw new Error(`Tool-set child '${child.slot}' has no placement.`);
+    if (!installed.layout?.placements?.[child.slot]) {
+      const occupied = [
+        ...surface.placementIds.map((id) => document.placements[id]).filter(Boolean),
+        ...unit.fields,
+        ...(installed.layout?.fields ?? [])
+      ];
+      if (occupied.some((item) => buttonRectsOverlap(rect!, item))) {
+        rect = { ...rect, x: document.settings.defaultSurfacePadding,
+          y: Math.max(document.settings.defaultSurfacePadding, ...occupied.map((item) => item.y + item.height)) +
+            buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm) };
+      }
+    }
     document.buttons[childId] = {
       id: childId,
       role: "tool-set-child",

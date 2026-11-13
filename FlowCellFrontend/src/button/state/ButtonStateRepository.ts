@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { packButtonDocumentTransport, unpackButtonDocumentTransport } from "./buttonDocumentTransport.js";
 import type {
   ButtonExecutionTarget,
   ButtonPlacement,
@@ -17,6 +18,7 @@ import {
   ensureMainPageSkinDefaults
 } from "./buttonDefaults.js";
 import { CHIPPED_CONCRETE_BUTTON_SKIN_ID } from "../skins/chippedConcreteButtonSkin.js";
+import { DEFAULT_BUTTON_SKIN, getDefaultButtonSize } from "../skins/defaultButtonSkin.js";
 import {
   buttonSpacingPixelsFromMillimeters,
   buttonRectsOverlap,
@@ -131,6 +133,7 @@ function stripPlaceholderFanAnchors(document: ButtonStateDocument): ButtonStateD
 }
 
 function parseLoadedDocument(value: unknown): ButtonStateDocument {
+  value = unpackButtonDocumentTransport(value);
   if (value === null || value === undefined || value === "") {
     return createButtonStateDocument();
   }
@@ -380,7 +383,7 @@ export async function saveButtonStateDocument(
   try {
     response = await invoke<unknown>("commit_button_state", {
       request: {
-        document: next,
+        document: packButtonDocumentTransport(next),
         expectedRevision,
         uninstallOwnerButtonIds: [...uninstallOwnerButtonIds],
         migrationToken,
@@ -894,7 +897,11 @@ function addMigratedToolSet(
   );
 
   const starter = createStarterButtonLayout(
-    install.children.map((child) => ({ id: child.slot, width: 144, height: 42 })),
+    install.children.map((child) => ({ id: child.slot,
+      ...(document.skins[document.settings.defaultSkinId]?.structure === DEFAULT_BUTTON_SKIN.structure &&
+        !layout?.appearance?.children?.[child.slot]
+        ? getDefaultButtonSize(child.label, 42, 144, layout?.placementPresentation?.[child.slot]?.textSizeOverride ?? undefined)
+        : { width: 144, height: 42 }) })),
     {
       padding: document.settings.defaultSurfacePadding,
       gap: buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm),

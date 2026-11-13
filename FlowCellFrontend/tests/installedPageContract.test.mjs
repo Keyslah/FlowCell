@@ -591,8 +591,14 @@ test("installed-page Button-theme palette is live Pop-out/Fan scoped, stale-scan
   assert.match(broker, /if \(registered\.buttonDraftSessionId\?\.trim\(\)\) \{\s*return;/);
   assert.match(broker, /Promise\.all\(handles\.map\(async \(handle\)/);
   assert.match(buttonWindows, /kind: "button-fan"[\s\S]{0,240}buttonDraftSessionId: args\.draftSessionId/);
+  assert.match(fanRenderer, /const sourceThemeOverride = .*themeOverrides\?\.\[sourcePlacement\.id\]/);
+  assert.match(popoutRenderer, /savedOwnerPlacement\s*\? \{ placement: savedOwnerPlacement, themeOverride: document\.themeOverrides\?\.\[savedOwnerPlacement\.id\] \}/);
+  assert.match(popoutRenderer, /: unit\.kind === "tool-set"\s*\? createButtonPopoutOwnerPlacement\(/);
+  assert.match(popoutOperations, /const appearanceTheme = appearanceSource && document\.themeOverrides\?\.\[appearanceSource\.id\]/);
+  assert.match(popoutOperations, /themeOverride: cloneButtonDocument\(appearanceTheme\)/);
+  assert.match(popoutRenderer, /sourceThemeOverride: collapsedOwnerSource\.themeOverride/);
+  assert.match(popoutRenderer, /const sourceThemeOverride = args\.sourceThemeOverride/);
   for (const renderer of [fanRenderer, popoutRenderer]) {
-    assert.match(renderer, /const sourceThemeOverride = .*themeOverrides\?\.\[sourcePlacement\.id\]/);
     assert.match(renderer, /themeOverrides: sourceThemeOverride[\s\S]{0,180}\[placementId\]: sourceThemeOverride/);
   }
   assert.match(broker, /buttonPopoutSettingsPath/);

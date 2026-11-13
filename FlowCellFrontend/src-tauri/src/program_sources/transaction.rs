@@ -1,12 +1,121 @@
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const ATOMIC_FILE_LOCK_COUNT: usize = 64;
 static ATOMIC_FILE_LOCKS: OnceLock<Vec<Mutex<()>>> = OnceLock::new();
+
+#[derive(Default)]
+struct DeferredCleanup {
+    files: BTreeSet<PathBuf>,
+    directories: BTreeSet<PathBuf>,
+}
+
+thread_local! {
+    // Add Program owns the source lock while this scope is active. A different
+    // native command/thread must keep its normal immediate cleanup behavior.
+    static DEFERRED_INSTALL_CLEANUP: RefCell<Option<DeferredCleanup>> = const { RefCell::new(None) };
+}
+
+/// Defer only obsolete artifacts; every atomic flush, rename and journal commit
+/// still happens before the caller can observe success. Dropping on an error
+/// flushes the same queue; a crash simply leaves normal recoverable artifacts.
+pub(crate) struct DeferredInstallCleanup {
+    active: bool,
+    _same_thread: PhantomData<Rc<()>>,
+}
+
+pub(crate) fn begin_deferred_install_cleanup() -> Result<DeferredInstallCleanup, String> {
+    DEFERRED_INSTALL_CLEANUP.with(|pending| {
+        let mut pending = pending.borrow_mut();
+        if pending.is_some() {
+            return Err("An install cleanup batch is already active on this thread.".into());
+        }
+        *pending = Some(DeferredCleanup::default());
+        Ok(DeferredInstallCleanup { active: true, _same_thread: PhantomData })
+    })
+}
+
+impl DeferredInstallCleanup {
+    fn take_pending(&mut self) -> Option<DeferredCleanup> {
+        if !self.active { return None; }
+        self.active = false;
+        DEFERRED_INSTALL_CLEANUP.with(|pending| pending.borrow_mut().take())
+    }
+
+    fn flush(&mut self) {
+        let Some(pending) = self.take_pending() else { return; };
+        if pending.files.is_empty() && pending.directories.is_empty() { return; }
+        let started = Instant::now();
+        let files = pending.files.len();
+        let directories = pending.directories.len();
+        let result = recycle_deferred_cleanup_with(pending, crate::recycle_file_paths, crate::recycle_directory_paths);
+        crate::append_flowcell_local_log("program-setup.log", &serde_json::json!({
+            "operation": "source-cleanup", "queuedFiles": files, "queuedDirectories": directories,
+            "elapsedMs": started.elapsed().as_millis(), "succeeded": result.is_ok()
+        }).to_string());
+        if let Err(error) = result {
+            crate::append_flowcell_local_log("program-source-cleanup.log", &format!(
+                "Install batch cleanup is pending; recoverable artifacts were retained: {error}"
+            ));
+        }
+    }
+
+    pub(crate) fn finish(mut self) { self.flush(); }
+}
+
+impl Drop for DeferredInstallCleanup {
+    fn drop(&mut self) { self.flush(); }
+}
+
+/// Only call once the install transaction has completed or safely rolled back.
+pub(crate) fn recycle_finalized_install_transaction(path: &Path) -> Result<(), String> {
+    let deferred = DEFERRED_INSTALL_CLEANUP.with(|pending| {
+        let mut pending = pending.borrow_mut();
+        if let Some(pending) = pending.as_mut() {
+            pending.directories.insert(path.to_path_buf());
+            true
+        } else { false }
+    });
+    if deferred { Ok(()) } else { crate::recycle_directory_path(path) }
+}
+
+pub(crate) fn is_deferred_finalized_install_transaction(path: &Path) -> bool {
+    DEFERRED_INSTALL_CLEANUP.with(|pending| pending.borrow().as_ref()
+        .is_some_and(|pending| pending.directories.iter().any(|directory| path.starts_with(directory))))
+}
+
+fn recycle_deferred_cleanup_with<F, D>(pending: DeferredCleanup, mut files_recycler: F, mut directories_recycler: D) -> Result<(), String>
+where
+    F: FnMut(&[PathBuf]) -> Result<(), String>,
+    D: FnMut(&[PathBuf]) -> Result<(), String>,
+{
+    let mut candidates: Vec<_> = pending.directories.into_iter().collect();
+    candidates.sort_by_key(|path| path.components().count());
+    let mut directories: Vec<PathBuf> = Vec::new();
+    for candidate in candidates {
+        if !directories.iter().any(|parent| candidate.starts_with(parent)) {
+            directories.push(candidate);
+        }
+    }
+    let files: Vec<_> = pending.files.into_iter()
+        .filter(|file| !directories.iter().any(|directory| file.starts_with(directory))).collect();
+    let mut errors = Vec::new();
+    if !files.is_empty() {
+        if let Err(error) = files_recycler(&files) { errors.push(error); }
+    }
+    if !directories.is_empty() {
+        if let Err(error) = directories_recycler(&directories) { errors.push(error); }
+    }
+    if errors.is_empty() { Ok(()) } else { Err(errors.join(" | ")) }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ArtifactKind {
@@ -125,6 +234,14 @@ fn remove_staged_artifact(path: &Path) -> Result<(), String> {
 
 fn recycle_backup_artifacts(paths: &[PathBuf]) {
     if !paths.is_empty() {
+        let deferred = DEFERRED_INSTALL_CLEANUP.with(|pending| {
+            let mut pending = pending.borrow_mut();
+            if let Some(pending) = pending.as_mut() {
+                pending.files.extend(paths.iter().cloned());
+                true
+            } else { false }
+        });
+        if deferred { return; }
         if let Err(error) = crate::recycle_file_paths(paths) {
             // The durable value is already committed. Preserve its backups
             // for recovery, but do not silently report cleanup as complete.
@@ -525,7 +642,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{recover_atomic_file_with, write_json_file, AtomicWriteMode};
+    use super::{begin_deferred_install_cleanup, is_deferred_finalized_install_transaction,
+        list_artifacts, recycle_backup_artifacts, recycle_deferred_cleanup_with,
+        recycle_finalized_install_transaction, recover_atomic_file_with, write_json_file, AtomicWriteMode};
     use serde_json::Value;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -567,6 +686,111 @@ mod tests {
 
     fn remove_backup(path: &Path) -> Result<(), String> {
         fs::remove_file(path).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn deferred_cleanup_keeps_durable_values_and_batches_only_obsolete_artifacts() {
+        let root = TestRoot::new("deferred-commits");
+        let canonical = root.join("state.json");
+        let unrelated = root.join("unrelated.txt");
+        fs::write(&unrelated, "keep").unwrap();
+        let mut scope = begin_deferred_install_cleanup().unwrap();
+        write_json_file(&canonical, br#"{"revision":1}"#, AtomicWriteMode::Create).unwrap();
+        write_json_file(&canonical, br#"{"revision":2}"#, AtomicWriteMode::Replace).unwrap();
+        write_json_file(&canonical, br#"{"revision":3}"#, AtomicWriteMode::Replace).unwrap();
+        assert_eq!(fs::read_to_string(&canonical).unwrap(), r#"{"revision":3}"#);
+        assert_eq!(list_artifacts(&canonical).unwrap().len(), 2, "backups remain durable until the bulk cleanup");
+        let mut calls = 0;
+        recycle_deferred_cleanup_with(scope.take_pending().unwrap(), |paths| {
+            calls += 1;
+            assert_eq!(paths.len(), 2, "repeated recovery reads must not duplicate backup requests");
+            assert!(!paths.contains(&canonical) && !paths.contains(&unrelated));
+            for path in paths { remove_backup(path)?; }
+            Ok(())
+        }, |_| panic!("no finalized directories in this batch")).unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(fs::read_to_string(&unrelated).unwrap(), "keep");
+        assert!(list_artifacts(&canonical).unwrap().is_empty());
+    }
+
+    #[test]
+    fn deferred_cleanup_deduplicates_finalized_directories_and_their_backup_children() {
+        let root = TestRoot::new("deferred-descendants");
+        let transaction = root.join("completed-install");
+        let child = transaction.join("nested");
+        fs::create_dir_all(&child).unwrap();
+        let standalone = root.join(".state.json.backup");
+        let contained = child.join(".journal.json.backup");
+        fs::write(&standalone, "{}").unwrap();
+        fs::write(&contained, "{}").unwrap();
+        let mut scope = begin_deferred_install_cleanup().unwrap();
+        recycle_backup_artifacts(&[standalone.clone(), contained.clone(), standalone.clone()]);
+        recycle_finalized_install_transaction(&child).unwrap();
+        recycle_finalized_install_transaction(&transaction).unwrap();
+        recycle_finalized_install_transaction(&transaction).unwrap();
+        assert!(is_deferred_finalized_install_transaction(&child));
+        let mut file_calls = 0;
+        let mut directory_calls = 0;
+        recycle_deferred_cleanup_with(scope.take_pending().unwrap(), |paths| {
+            file_calls += 1;
+            assert_eq!(paths, &[standalone.clone()]);
+            Ok(())
+        }, |paths| {
+            directory_calls += 1;
+            assert_eq!(paths, &[transaction.clone()]);
+            Ok(())
+        }).unwrap();
+        assert_eq!((file_calls, directory_calls), (1, 1));
+        assert!(!is_deferred_finalized_install_transaction(&transaction));
+    }
+
+    #[test]
+    fn failed_deferred_cleanup_preserves_backups_for_interrupted_write_recovery() {
+        let root = TestRoot::new("deferred-recovery");
+        let canonical = root.join("state.json");
+        let mut scope = begin_deferred_install_cleanup().unwrap();
+        write_json_file(&canonical, br#"{"revision":1}"#, AtomicWriteMode::Create).unwrap();
+        write_json_file(&canonical, br#"{"revision":2}"#, AtomicWriteMode::Replace).unwrap();
+        let artifacts = list_artifacts(&canonical).unwrap();
+        assert_eq!(artifacts.len(), 1);
+        assert!(recycle_deferred_cleanup_with(scope.take_pending().unwrap(),
+            |_| Err("Recycle Bin unavailable".into()), |_| Ok(())).is_err());
+        assert!(artifacts[0].path.exists(), "cleanup failure must preserve the backup");
+        // Simulate the next replacement being interrupted before its rename
+        // commit. Recovery must prefer the previous durable value, not staged 3.
+        fs::rename(&canonical, root.join(".state.json.interrupted.backup")).unwrap();
+        fs::write(root.join(".state.json.interrupted.writing"), br#"{"revision":3}"#).unwrap();
+        recover_atomic_file_with(&canonical, &validate_json, remove_backup).unwrap();
+        assert_eq!(fs::read_to_string(&canonical).unwrap(), r#"{"revision":2}"#);
+    }
+
+    #[test]
+    fn deferred_cleanup_is_thread_scoped_and_rejects_nesting() {
+        let root = TestRoot::new("deferred-thread");
+        let transaction = root.join("completed-install");
+        fs::create_dir(&transaction).unwrap();
+        let mut scope = begin_deferred_install_cleanup().unwrap();
+        assert!(begin_deferred_install_cleanup().is_err());
+        recycle_finalized_install_transaction(&transaction).unwrap();
+        let other_path = transaction.clone();
+        std::thread::spawn(move || {
+            assert!(!is_deferred_finalized_install_transaction(&other_path));
+            begin_deferred_install_cleanup().unwrap().finish();
+        }).join().unwrap();
+        assert!(is_deferred_finalized_install_transaction(&transaction));
+        let pending = scope.take_pending().unwrap();
+        assert_eq!(pending.directories.len(), 1);
+        assert!(!is_deferred_finalized_install_transaction(&transaction));
+    }
+
+    #[test]
+    fn deferred_cleanup_scope_releases_on_unwind() {
+        let result = std::panic::catch_unwind(|| {
+            let _scope = begin_deferred_install_cleanup().unwrap();
+            panic!("simulated installation failure");
+        });
+        assert!(result.is_err());
+        begin_deferred_install_cleanup().unwrap().finish();
     }
 
     #[test]

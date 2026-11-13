@@ -2,9 +2,17 @@ import type {
   ButtonPlacement,
   ButtonPopoutUnit,
   ButtonRect,
-  ButtonStateDocument
+  ButtonStateDocument,
+  ButtonThemeOverride
 } from "../types.js";
 import { cloneButtonDocument, createStableButtonId } from "./buttonDefaults.js";
+import {
+  DEFAULT_BUTTON_SKIN,
+  DEFAULT_BUTTON_SKIN_ID,
+  LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE,
+  getDefaultButtonSize
+} from "../skins/defaultButtonSkin.js";
+import { isBundledMainPageConcreteSkin } from "../skins/chippedConcreteButtonSkin.js";
 import {
   findPanelOwnerButton,
   resolvePanelOwnerMainPlacement
@@ -48,6 +56,57 @@ function popoutContentPlacementIds(unit: ButtonPopoutUnit): string[] {
   return unit.kind === "tool-set"
     ? [...unit.childPlacementIds]
     : [...unit.memberPlacementIds];
+}
+
+/** New and legacy collapsed owners share the Pop-out's appearance, never Main's. */
+export function createButtonPopoutOwnerPlacement(
+  document: ButtonStateDocument,
+  unit: ButtonPopoutUnit,
+  ownerButtonId: string,
+  placementId: string
+): { placement: ButtonPlacement; themeOverride?: ButtonThemeOverride } {
+  const appearanceSource = popoutContentPlacementIds(unit)
+    .map((id) => document.placements[id])
+    .find((placement) => placement?.surfaceId === unit.surfaceId);
+  const appearanceTheme = appearanceSource && document.themeOverrides?.[appearanceSource.id];
+  const contentSkinId = appearanceSource
+    ? appearanceSource.skinOverrideId ?? document.buttons[appearanceSource.buttonId]?.defaultSkinId ?? DEFAULT_BUTTON_SKIN_ID
+    : DEFAULT_BUTTON_SKIN_ID;
+  const skinId = isBundledMainPageConcreteSkin(document.skins[contentSkinId]) ? DEFAULT_BUTTON_SKIN_ID : contentSkinId;
+  const skin = document.skins[skinId];
+  const referenceSize = { width: appearanceSource?.width ?? 160, height: appearanceSource?.height ?? 44 };
+  const size = skin && [DEFAULT_BUTTON_SKIN.structure, LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE].includes(skin.structure)
+    ? getDefaultButtonSize(document.buttons[ownerButtonId]?.label ?? "", referenceSize.height,
+        referenceSize.width, appearanceSource?.textSizeOverride ?? undefined)
+    : referenceSize;
+  return {
+    placement: {
+      id: placementId,
+      buttonId: ownerButtonId,
+      surfaceId: unit.surfaceId,
+      x: 0,
+      y: 0,
+      ...size,
+      skinOverrideId: skinId,
+      textFitMode: appearanceSource?.textFitMode ?? "shrink",
+      textAlignment: appearanceSource?.textAlignment ?? "skin",
+      textOffsetX: appearanceSource?.textOffsetX ?? 0,
+      textOffsetY: appearanceSource?.textOffsetY ?? 0,
+      textGlow: appearanceSource?.textGlow ?? null,
+      textGlowCurve: cloneButtonDocument(appearanceSource?.textGlowCurve ?? null),
+      minimumFontSize: appearanceSource?.minimumFontSize ?? document.settings.defaultMinimumFontSize,
+      textSizeOverride: appearanceSource?.textSizeOverride ?? null,
+      allowLabelResize: appearanceSource?.allowLabelResize ?? false,
+      matchHitboxToSkin: appearanceSource?.matchHitboxToSkin ?? true,
+      allowStretching: appearanceSource?.allowStretching ?? false,
+      highlightOnHover: appearanceSource?.highlightOnHover ?? false,
+      resizeAnchor: "top-left",
+      activationCycle: null,
+      visualStateMap: null,
+      zIndex: 0
+    },
+    ...(appearanceTheme ? { themeOverride: cloneButtonDocument(appearanceTheme) } : {})
+  };
 }
 
 function placementRect(placement: ButtonPlacement): ButtonRect {
@@ -203,6 +262,10 @@ export function setButtonPopoutFanMode(
   let createdOwnerPlacement = false;
   if (enabled && !ownerPlacement) {
     const source = sourceOwnerPlacement(document, unit, programName, panelName);
+    // A Fan owner is another occurrence on this Pop-out. Main's skin, sizing,
+    // and label/action overrides belong to Main, not to the new owner.
+    const ownerPlacementId = createStableButtonId("placement-popout-owner");
+    const createdOwner = createButtonPopoutOwnerPlacement(document, unit, source.buttonId, ownerPlacementId);
     const padding = Math.max(16, document.settings.defaultSurfacePadding);
     const contentBounds = unionRects(contentRects(document, unit)) ?? {
       x: padding,
@@ -216,20 +279,16 @@ export function setButtonPopoutFanMode(
       surface.width,
       MINIMUM_FAN_EDITOR_WIDTH,
       contentBounds.width * 3 + padding * 2,
-      desiredX + source.placement.width + padding
+      desiredX + createdOwner.placement.width + padding
     );
     surface.height = Math.max(
       surface.height,
       MINIMUM_FAN_EDITOR_HEIGHT,
       contentBounds.height * 3 + padding * 2,
-      desiredY + source.placement.height + padding
+      desiredY + createdOwner.placement.height + padding
     );
-    const ownerPlacementId = createStableButtonId("placement-popout-owner");
     ownerPlacement = {
-      ...cloneButtonDocument(source.placement),
-      id: ownerPlacementId,
-      buttonId: source.buttonId,
-      surfaceId: surface.id,
+      ...createdOwner.placement,
       x: desiredX,
       y: desiredY,
       zIndex: Math.max(
@@ -238,6 +297,10 @@ export function setButtonPopoutFanMode(
       ) + 1
     };
     document.placements[ownerPlacementId] = ownerPlacement;
+    if (createdOwner.themeOverride) {
+      document.themeOverrides ??= {};
+      document.themeOverrides[ownerPlacementId] = createdOwner.themeOverride;
+    }
     surface.placementIds.push(ownerPlacementId);
     unit.ownerPlacementId = ownerPlacementId;
     if (unit.kind === "regular") unit.ownerButtonId = source.buttonId;

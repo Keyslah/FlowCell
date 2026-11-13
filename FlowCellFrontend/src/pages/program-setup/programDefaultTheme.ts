@@ -1,8 +1,14 @@
 import type { ButtonSkin, ButtonStateDocument } from "../../button/types.js";
-import { isPortableTheme, themeTargetsMatch, type PortableTheme } from "../../theme/portableTheme.js";
+import { isPortableTheme, themeTargetsMatch, type PortableTheme, type ThemeToolDescriptor } from "../../theme/portableTheme.js";
 import { getThemeToolDescriptors, preparePortableThemeImport } from "../../theme/portableThemeService.js";
 import { BUTTON_SKIN_SECTION_ORDER } from "../../button/skins/buttonSkinFormat.js";
 import { getEmbeddedButtonSkinFamilySources } from "../../button/skins/buttonSkinFamily.js";
+import { buttonStateDocumentsEqual, reconcileBundledProgramSources } from "../../button/state/ButtonStateRepository.js";
+import { createButtonStateDocument } from "../../button/state/buttonDefaults.js";
+import { reconcileProgramPanelOwners } from "../../button/state/panelOwnerButtonOperations.js";
+import { validateButtonStateDocument } from "../../button/state/buttonStateValidation.js";
+import { buildPanelRailOwnerEntries, panelRailOwnerSurfaceBounds } from "../main/mainLayout.js";
+import type { ProgramSetupPresentation } from "../../lib/programRails.js";
 
 type PortableAppearance = PortableTheme["theme"]["buttons"][number];
 export interface ProgramAppearanceFile {
@@ -81,12 +87,48 @@ export function decodeProgramAppearance(value: unknown): PortableTheme {
   return theme;
 }
 
-/** A new Program may receive its package's exact appearance in the setup commit. */
+/** Discovery creates these untouched owners before a Program is installed. */
+function hasOnlyDefaultPanelScaffold(document: ButtonStateDocument, programName: string, ownerIds: string[]): boolean {
+  const owners = ownerIds.map((id) => document.buttons[id]);
+  if (!owners.length || owners.some((owner) => owner.role !== "panel-owner" ||
+    typeof owner.metadata.panelName !== "string" || !owner.metadata.panelName.trim())) return false;
+  const ids = new Set(ownerIds);
+  const placements = Object.values(document.placements).filter((placement) => ids.has(placement.buttonId));
+  if (placements.length !== owners.length || new Set(placements.map((placement) => placement.surfaceId)).size !== 1) return false;
+  const surface = document.surfaces[placements[0].surfaceId];
+  if (!surface || surface.placementIds.length !== owners.length || surface.placementIds.some((id) =>
+    !document.placements[id] || !ids.has(document.placements[id].buttonId))) return false;
+  const matches = (value: unknown) => typeof value === "string" && value.toLowerCase() === programName.toLowerCase();
+  if (Object.values(document.popoutUnits).some((unit) => unit.ownerButtonId && ids.has(unit.ownerButtonId)) ||
+    Object.values(document.fanSetups).some((fan) => ids.has(fan.panelOwnerButtonId) || matches(fan.programName))) return false;
+  const expected = createButtonStateDocument();
+  expected.settings = structuredClone(document.settings);
+  const scaffoldProgram = String(owners[0].metadata.programName);
+  const panels = surface.placementIds.map((id) => String(document.buttons[document.placements[id].buttonId].metadata.panelName));
+  reconcileProgramPanelOwners(expected, { programName: scaffoldProgram, panels: buildPanelRailOwnerEntries(panels),
+    surfaceBounds: panelRailOwnerSurfaceBounds, removeStaleOwners: false });
+  const actual = structuredClone(expected);
+  actual.buttons = Object.fromEntries(owners.map((owner) => [owner.id, owner]));
+  actual.placements = Object.fromEntries(placements.map((placement) => [placement.id, placement]));
+  actual.surfaces[surface.id] = surface;
+  for (const id of new Set([...owners.map((owner) => owner.defaultSkinId), ...placements.map((placement) => placement.skinOverrideId).filter((id): id is string => Boolean(id))])) {
+    if (!expected.skins[id] || !document.skins[id]) return false;
+    actual.skins[id] = document.skins[id];
+  }
+  for (const placement of placements) {
+    if (document.themeOverrides?.[placement.id] || document.programPopoutColorOverrides?.[placement.id] ||
+      document.programPopoutThemeLocks?.[placement.id]) return false;
+  }
+  return buttonStateDocumentsEqual(actual, expected);
+}
+
+/** A new Program may replace discovery scaffolding, never saved user presentation. */
 export function requireNewProgramAppearance(document: ButtonStateDocument, programName: string): void {
   const matches = (value: unknown) => typeof value === "string" && value.toLowerCase() === programName.toLowerCase();
-  if (Object.values(document.buttons).some((button) =>
+  const owners = Object.values(document.buttons).filter((button) =>
     matches(button.sourceIdentity?.displayProgramName) || matches(button.executionTarget?.kind === "core-action"
-      ? undefined : button.executionTarget?.programName) || matches(button.metadata.programName)) ||
+      ? undefined : button.executionTarget?.programName) || matches(button.metadata.programName));
+  if ((owners.length > 0 && !hasOnlyDefaultPanelScaffold(document, programName, owners.map((owner) => owner.id))) ||
     Object.keys(document.programPopoutThemes ?? {}).some(matches)) {
     throw new Error(`'${programName}' already has saved Button settings. Turn off 'Use packaged appearance and layout' to preserve them.`);
   }
@@ -105,7 +147,8 @@ export function stampProgramAppearanceReceipt(document: ButtonStateDocument, own
 }
 
 export async function applyProgramDefaultTheme(
-  document: ButtonStateDocument, programName: string, value: unknown
+  document: ButtonStateDocument, programName: string, value: unknown,
+  descriptors?: readonly ThemeToolDescriptor[]
 ): Promise<ButtonStateDocument> {
   const target = { kind: "program" as const, programName, panelName: null };
   const theme = decodeProgramAppearance(value);
@@ -114,7 +157,50 @@ export async function applyProgramDefaultTheme(
     throw new Error("The packaged appearance is not a valid whole-Program portable theme.");
   }
   const prepared = await preparePortableThemeImport({
-    document, theme, target, descriptors: await getThemeToolDescriptors(target), allowSourceInstallation: false
+    document, theme, target, descriptors: descriptors ?? await getThemeToolDescriptors(target), allowSourceInstallation: false
   });
   return prepared.document;
+}
+
+/** Preview and commit use the same in-memory construction, without installing sources. */
+export async function buildProgramSetupDocument(
+  base: ButtonStateDocument,
+  setup: ProgramSetupPresentation,
+  applyTheme: typeof applyProgramDefaultTheme = applyProgramDefaultTheme
+): Promise<{ document: ButtonStateDocument; expectedButtonIds: string[] }> {
+  const name = (value: string) => value.normalize("NFC").trim().toLocaleLowerCase("en");
+  const theme = setup.defaultTheme ? decodeProgramAppearance(setup.defaultTheme) : null;
+  if (theme) requireNewProgramAppearance(base, setup.programName);
+  const themedOwners = new Set(theme ? setup.themeDescriptors.filter((descriptor) =>
+    theme.dependencies.some((dependency) => name(dependency.programId) === name(descriptor.programId) &&
+      dependency.sourceId === descriptor.sourceId && dependency.sourceVersion === descriptor.sourceVersion &&
+      dependency.importKind === descriptor.importKind)).map((descriptor) => descriptor.ownerButtonId) : []);
+  const themedPanels = new Set(theme ? Object.values(theme.references).flatMap((reference) =>
+    reference.kind === "panel" && name(reference.programName) === name(setup.programName) ? [name(reference.panelName)] : []) : []);
+  const entries = buildPanelRailOwnerEntries(setup.panels);
+  if (theme && [...themedPanels].some((panel) => !entries.some((entry) => name(entry.panelName) === panel))) {
+    throw new Error("The packaged appearance requires a panel that is not selected.");
+  }
+  const primary = theme ? setup.descriptors.filter((descriptor) => themedOwners.has(String(descriptor.ownerButtonId))) : setup.descriptors;
+  const extras = theme ? setup.descriptors.filter((descriptor) => !themedOwners.has(String(descriptor.ownerButtonId))) : [];
+  let document = reconcileBundledProgramSources(base, primary);
+  const reconcilePanels = (panels: typeof entries) => reconcileProgramPanelOwners(document, {
+    programName: setup.programName, panels, surfaceBounds: panelRailOwnerSurfaceBounds, removeStaleOwners: false
+  });
+  const owners = reconcilePanels(theme ? entries.filter((entry) => themedPanels.has(name(entry.panelName))) : entries).owners;
+  if (theme) {
+    document = await applyTheme(document, setup.programName, theme, setup.themeDescriptors);
+    // Additional selected tools have no saved theme coordinates. Allocate them
+    // after the authored controls and grow the panel as needed for the selection.
+    if (extras.length) document = reconcileBundledProgramSources(document, extras);
+    owners.push(...reconcilePanels(entries.filter((entry) => !themedPanels.has(name(entry.panelName)))).owners);
+  }
+  const expectedButtonIds = [
+    ...setup.descriptors.map((descriptor) => String(descriptor.ownerButtonId ?? "")),
+    ...owners.map((owner) => owner.buttonId)
+  ].filter(Boolean);
+  if (theme) stampProgramAppearanceReceipt(document, expectedButtonIds, setup.defaultThemeReceipt);
+  const validation = validateButtonStateDocument(document);
+  if (!validation.valid) throw new Error(`Program setup layout is invalid: ${validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`);
+  return { document, expectedButtonIds };
 }

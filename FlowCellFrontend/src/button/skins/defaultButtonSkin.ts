@@ -27,3 +27,35 @@ export const LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE = DEFAULT_BUTTON_SKIN.structur
   "background-color:var(--flowcell-button-color-surface,#E6E6E6);",
   "background-image:linear-gradient(135deg,var(--flowcell-button-shade-surface-face-light,rgba(230,230,230,1)),var(--flowcell-button-shade-surface-face-dark,rgba(180,180,180,1)));"
 );
+
+/** Size the bundled neutral pill from its actual label and padding before packing a new layout. */
+export function getDefaultButtonSize(
+  label: string,
+  height = 44,
+  fallbackWidth = 160,
+  textSizeOverride?: number
+): { width: number; height: number } {
+  const fallback = { width: fallbackWidth, height };
+  if (typeof document === "undefined" || !document.body) return fallback;
+  const probe = document.createElement("span");
+  probe.style.cssText = "position:fixed;left:-100000px;top:0;visibility:hidden;pointer-events:none";
+  const shadow = probe.attachShadow({ mode: "open" });
+  shadow.innerHTML = DEFAULT_BUTTON_SKIN.structure;
+  const core = shadow.querySelector<HTMLElement>("[data-core]");
+  const carrier = core?.querySelector<HTMLElement>("span");
+  if (!core || !carrier) return fallback;
+  carrier.textContent = label;
+  carrier.style.whiteSpace = "nowrap";
+  if (textSizeOverride !== undefined) carrier.style.fontSize = `${textSizeOverride}px`;
+  document.body.append(probe);
+  try {
+    const natural = core.getBoundingClientRect();
+    if (!Number.isFinite(natural.width) || !Number.isFinite(natural.height) ||
+        natural.width <= 0 || natural.height <= 0) return fallback;
+    return { width: natural.width * height / natural.height, height };
+  } catch {
+    return fallback;
+  } finally {
+    probe.remove();
+  }
+}

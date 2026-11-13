@@ -5,7 +5,8 @@ import {
 } from "../skins/chippedConcreteButtonSkin.js";
 import { PANEL_BUTTON_GAP, panelButtonViewport } from "../../pages/main/mainLayout.js";
 import { resolveButtonPlacementPresentation } from "./buttonPresentation.js";
-import { DEFAULT_BUTTON_SKIN_ID } from "../skins/defaultButtonSkin.js";
+import { DEFAULT_BUTTON_SKIN, DEFAULT_BUTTON_SKIN_ID, getDefaultButtonSize } from "../skins/defaultButtonSkin.js";
+import { buttonSpacingPixelsFromMillimeters } from "../geometry/buttonGeometry.js";
 
 /** Match the bundled family's visible core, retaining the requested row height. */
 export function defaultPanelButtonSize(
@@ -19,13 +20,18 @@ export function defaultPanelButtonSize(
   // (including neutral Pop-outs) use their own effective assignment.
   const skinId = placement ? placement.skinOverrideId ?? button.defaultSkinId
     : button.defaultSkinId === DEFAULT_BUTTON_SKIN_ID ? CHIPPED_CONCRETE_BUTTON_SKIN_ID : button.defaultSkinId;
+  if (placement?.matchHitboxToSkin && document.skins[skinId]?.structure === DEFAULT_BUTTON_SKIN.structure &&
+      !["main", "panel"].includes(document.surfaces[placement.surfaceId]?.kind ?? "")) {
+    const presentation = resolveButtonPlacementPresentation(button, placement);
+    return getDefaultButtonSize(presentation.label, height, width, placement.textSizeOverride ?? undefined);
+  }
   if (skinId !== CHIPPED_CONCRETE_BUTTON_SKIN_ID) return { width, height };
   const presentation = placement ? resolveButtonPlacementPresentation(button, placement) : button;
   const natural = getChippedConcreteButtonSize(presentation.label, undefined, placement?.textSizeOverride ?? undefined);
   return { width: natural.width * height / natural.height, height };
 }
 
-/** Explicit defaults use the same packed rows and gap as Main's Button Section. */
+/** Main keeps its key spacing; Pop-out defaults pack each Button's individual size tightly. */
 export function arrangeDefaultPanelButtons(
   document: ButtonStateDocument,
   surfaceId: string,
@@ -40,6 +46,8 @@ export function arrangeDefaultPanelButtons(
     ? panelButtonViewport().maxButtonWidth
     : Number.POSITIVE_INFINITY);
   const maximumColumns = options.maximumColumns ?? (surface.kind === "regular-popout" ? 4 : Number.POSITIVE_INFINITY);
+  const gap = surface.kind === "panel" ? PANEL_BUTTON_GAP
+    : buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm);
   let x = padding;
   let y = padding;
   let rowHeight = 0;
@@ -52,14 +60,14 @@ export function arrangeDefaultPanelButtons(
     const size = surface.uniformButtonSize ?? defaultPanelButtonSize(document, button, placement);
     if (column > 0 && (column >= maximumColumns || x + size.width > padding + maximumWidth)) {
       x = padding;
-      y += rowHeight + PANEL_BUTTON_GAP;
+      y += rowHeight + gap;
       rowHeight = 0;
       column = 0;
     }
     Object.assign(placement, size, { x, y, zIndex: index });
     requiredWidth = Math.max(requiredWidth, x + size.width + padding);
     rowHeight = Math.max(rowHeight, size.height);
-    x += size.width + PANEL_BUTTON_GAP;
+    x += size.width + gap;
     column += 1;
   });
   const requiredHeight = y + rowHeight + padding;

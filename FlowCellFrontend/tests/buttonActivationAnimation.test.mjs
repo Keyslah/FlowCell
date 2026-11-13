@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   createButtonStateDocument
 } from "./.compiled-button-system/button/state/buttonDefaults.js";
@@ -38,6 +39,26 @@ import {
   buildWindowContextUrl,
   getWindowContextFromLocation
 } from "./.compiled-button-system/lib/windowContext.js";
+
+test("explicit animation positioning shares the settings topmost band while playback stays click-through", () => {
+  const windows = readFileSync(
+    new URL("../src/button/animations/buttonAnimationWindows.ts", import.meta.url),
+    "utf8"
+  );
+  const createWindow = windows.slice(
+    windows.indexOf("async function createAnimationWindow("),
+    windows.indexOf("async function applyPhysicalBounds(")
+  );
+  const configureWindow = windows.slice(
+    windows.indexOf("async function configureWindow("),
+    windows.indexOf("async function emitContextUpdate(")
+  );
+  assert.match(createWindow, /alwaysOnTop:\s*true/);
+  assert.match(configureWindow, /const editing = mode === "edit"/);
+  assert.match(configureWindow, /await target\.setAlwaysOnTop\(true\)/);
+  assert.match(configureWindow, /await target\.setIgnoreCursorEvents\(!editing\)/);
+  assert.match(windows, /if \(context\.mode === "edit"\) \{\s*await target\.show\(\);\s*await target\.setFocus\(\);/);
+});
 
 function deferred() {
   let resolve;
@@ -259,7 +280,30 @@ test("fade curves round-trip in window contexts and reject malformed saved data"
   }
 });
 
-test("random GIF cadence persists the pending interval and count across sessions", () => {
+test("all animation presets default to every twentieth press across sessions", () => {
+  const noRandom = () => { throw new Error("Default cadence must not roll"); };
+  for (const { id: presetId } of BUTTON_ACTIVATION_ANIMATION_PRESETS) {
+    let saved = null;
+    const session = () => ({ getItem: () => saved, setItem: (_key, value) => { saved = value; } });
+    const button = makeExecutableButton({
+      presetId,
+      desktopBounds: { left: 0, top: 0, width: 480, height: 268 }
+    });
+    const firstSession = session();
+    for (let press = 1; press <= 13; press += 1) {
+      assert.equal(consumeButtonAnimationPress(button, firstSession, noRandom), false);
+    }
+    assert.deepEqual(JSON.parse(saved), { frequencyKey: "every-n-presses:20:20", interval: 20, presses: 13 });
+    const reopenedSession = session();
+    for (let press = 14; press <= 40; press += 1) {
+      assert.equal(consumeButtonAnimationPress(button, reopenedSession, noRandom), press % 20 === 0,
+        `${presetId} press ${press}`);
+    }
+    assert.deepEqual(JSON.parse(saved), { frequencyKey: "every-n-presses:20:20", interval: 20, presses: 0 });
+  }
+});
+
+test("explicit random GIF cadence persists the pending interval and count across sessions", () => {
   const data = new Map();
   const session = () => ({
     getItem: (key) => data.get(key) ?? null,
@@ -267,7 +311,8 @@ test("random GIF cadence persists the pending interval and count across sessions
   });
   const button = makeExecutableButton({
     presetId: "star-wars-lightsaber",
-    desktopBounds: { left: 0, top: 0, width: 480, height: 268 }
+    desktopBounds: { left: 0, top: 0, width: 480, height: 268 },
+    frequency: { mode: "random-presses", minimum: 5, maximum: 50 }
   });
   const randomValues = [0, 0.999999, 0.34];
   let rolls = 0;
@@ -292,10 +337,11 @@ test("random GIF cadence persists the pending interval and count across sessions
   assert.equal(data.size, 2, "different Buttons keep separate counters");
 });
 
-test("Plus Rise remains every-press and invalid GIF counters restart safely", () => {
+test("explicit every-press remains immediate and invalid random counters restart safely", () => {
   const button = makeExecutableButton({
     presetId: "plus-rise",
-    desktopBounds: { left: 0, top: 0, width: 283, height: 295 }
+    desktopBounds: { left: 0, top: 0, width: 283, height: 295 },
+    frequency: { mode: "every-press" }
   });
   const storage = {
     getItem: () => null,
@@ -303,6 +349,8 @@ test("Plus Rise remains every-press and invalid GIF counters restart safely", ()
   };
   assert.equal(consumeButtonAnimationPress(button, storage), true);
   button.activationAnimation.presetId = "star-wars-lightsaber";
+  assert.equal(consumeButtonAnimationPress(button, storage), true);
+  button.activationAnimation.frequency = { mode: "random-presses", minimum: 5, maximum: 50 };
   for (const corrupt of ["broken", "null", "{}", '{"interval":999,"presses":1}', '{"interval":5,"presses":5}']) {
     let written;
     assert.equal(consumeButtonAnimationPress(button, {
@@ -313,11 +361,16 @@ test("Plus Rise remains every-press and invalid GIF counters restart safely", ()
   }
 });
 
-test("editable frequency validates saved assignments and preserves legacy defaults", () => {
-  assert.deepEqual(getButtonAnimationFrequency({ presetId: "plus-rise" }), { mode: "every-press" });
-  assert.deepEqual(getButtonAnimationFrequency({ presetId: "star-wars-lightsaber" }), {
-    mode: "random-presses", minimum: 5, maximum: 50
-  });
+test("editable frequency validates saved assignments and shares the twenty-press default", () => {
+  for (const { id: presetId } of BUTTON_ACTIVATION_ANIMATION_PRESETS) {
+    assert.deepEqual(getButtonAnimationFrequency({ presetId }), { mode: "every-n-presses", presses: 20 });
+    for (const frequency of [
+      { mode: "every-press" }, { mode: "every-n-presses", presses: 5 },
+      { mode: "random-presses", minimum: 5, maximum: 50 }
+    ]) {
+      assert.deepEqual(getButtonAnimationFrequency({ presetId, frequency }), frequency);
+    }
+  }
   const document = createButtonStateDocument();
   const animation = { presetId: "star-wars-lightsaber", desktopBounds: { left: 0, top: 0, width: 480, height: 268 } };
   document.buttons["animated-button"] = makeExecutableButton(animation);
@@ -369,7 +422,8 @@ test("custom random ranges include both endpoints and migrate compatible legacy 
   let saved = JSON.stringify({ interval: 20, presses: 19 });
   const storage = { getItem: () => saved, setItem: (_key, value) => { saved = value; } };
   const button = makeExecutableButton({
-    presetId: "star-wars-lightsaber", desktopBounds: { left: 0, top: 0, width: 480, height: 268 }
+    presetId: "star-wars-lightsaber", desktopBounds: { left: 0, top: 0, width: 480, height: 268 },
+    frequency: { mode: "random-presses", minimum: 5, maximum: 50 }
   });
   assert.equal(consumeButtonAnimationPress(button, storage, () => 0), true);
   button.activationAnimation.frequency = { mode: "random-presses", minimum: 2, maximum: 3 };

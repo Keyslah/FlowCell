@@ -7,6 +7,7 @@ import type {
 } from "../types";
 import {
   BUTTON_ACTIVATION_ANIMATION_PRESETS,
+  BUTTON_ANIMATION_DEFAULT_FREQUENCY,
   canButtonRunActivationAnimation,
   getButtonActivationAnimationPreset,
   getButtonAnimationFadeCurve,
@@ -50,7 +51,7 @@ export function ButtonAnimationPickerPage({
   );
   const savedFrequency = button?.activationAnimation
     ? getButtonAnimationFrequency(button.activationAnimation)
-    : { mode: "every-press" } as const;
+    : { ...BUTTON_ANIMATION_DEFAULT_FREQUENCY };
   const savedFrequencyKey = JSON.stringify(savedFrequency);
   const [frequency, setFrequency] = useState<ButtonAnimationFrequency>(savedFrequency);
   const savedFadeCurveKey = JSON.stringify(getButtonAnimationFadeCurve(button?.activationAnimation ?? {}));

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import vm from "node:vm";
+import ts from "typescript";
 
 const frontendRoot = join(import.meta.dirname, "..");
 const editorRoot = join(frontendRoot, "src", "button", "editor");
@@ -546,7 +548,7 @@ test("Save Settings uses the selected placement type folder and complete scoped 
     /resolveButtonSettingsFilePath\([\s\S]{0,500}legacyButtonSettingsFileName\(path, placementKind\)[\s\S]{0,500}getButtonSettingsDirectory\(\s*placementKind,\s*programName,\s*panelName\s*\)[\s\S]{0,220}rebaseLegacyButtonSettingsFilePath/
   );
   assert.match(editor, /initialDirectory:\s*settingsDirectory/);
-  assert.match(editor, /const saveSettings = async \(\) => \{\s*if \(busyRef\.current\) return;\s*setBusy\(true\);/);
+  assert.match(editor, /const saveSettings = async \(makeDefaultPopout = false\) => \{\s*if \(busyRef\.current\) return;\s*setBusy\(true\);/);
   assert.match(editor, /const settingsDraft = cloneButtonDocument\(store\.current\(\)\)/);
   assert.match(editor, /const editorBaseline = cloneButtonDocument\(store\.committed\)/);
   assert.match(editor, /buildButtonSettingsScopedDocument\(\s*committedDocument,\s*settingsDraft,[\s\S]{0,180}editorBaseline/);
@@ -650,7 +652,7 @@ test("Open Pop stays transient while Main Pop uses the current Buttons", () => {
     /settingsBackedLayout:\s*\{[\s\S]{0,120}panelOwnerButtonId,[\s\S]{0,180}settingsPath:\s*choice\.path[\s\S]{0,120}choiceId:\s*choice\.choiceId/
   );
   assert.doesNotMatch(transientPopBlock[0], /registerInLayout:\s*false/);
-  assert.match(transientPopBlock[0], /writeMainLastPopChoice/);
+  assert.doesNotMatch(transientPopBlock[0], /writeMainLastPopChoice|setButtonDefaultPopoutChoice/);
   assert.doesNotMatch(transientPopBlock[0], /ensureRegularPopout|commitButtonDocumentMutation/);
 
   const defaultPopBlock = main.match(
@@ -661,7 +663,8 @@ test("Open Pop stays transient while Main Pop uses the current Buttons", () => {
   assert.match(defaultPopBlock[0], /candidate\.role === "single-script"/);
   assert.match(defaultPopBlock[0], /ensureRegularPopout\(draft, memberButtons, \{ ownerless: true \}\)/);
   assert.match(defaultPopBlock[0], /selectedPanelScriptRecords\.map\(\(record\) => record\.canonicalButtonId\)/);
-  assert.doesNotMatch(defaultPopBlock[0], /readMainLastPopChoices|openMainPopChoice/);
+  assert.doesNotMatch(defaultPopBlock[0], /readMainLastPopChoices/);
+  assert.match(defaultPopBlock[0], /getButtonDefaultPopoutChoice/);
   assert.match(defaultPopBlock[0], /openButtonPopoutWindow\(\{/);
   assert.doesNotMatch(defaultPopBlock[0], /Use Open Pop first\./);
   assert.match(
@@ -691,7 +694,7 @@ test("Open Pop stays transient while Main Pop uses the current Buttons", () => {
   );
   assert.match(
     layout,
-    /id:\s*"buttons-pop-selection"[\s\S]{0,180}stepX \* 3[\s\S]{0,100}fanControlsY[\s\S]{0,260}label:\s*"Pop"[\s\S]{0,220}last-used Pop-out file, or its default Pop-out/
+    /id:\s*"buttons-pop-selection"[\s\S]{0,180}stepX \* 3[\s\S]{0,100}fanControlsY[\s\S]{0,260}label:\s*"Pop"[\s\S]{0,220}default Pop-out/
   );
   assert.ok(layout.indexOf('label: "Open Pop"') < layout.indexOf('label: "Pop"'));
   assert.match(windows, /registerInLayout\?: boolean/);
@@ -1143,6 +1146,114 @@ test("Animation page offers no animation, apply, and position setup controls", (
       `Animation page must expose '${label}'`
     );
   }
+});
+
+function animationPageTopmostHarness(activePage = "animation") {
+  const source = readEditorFile("ButtonEditorPage.tsx");
+  const parsed = ts.createSourceFile("ButtonEditorPage.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let effect;
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.expression.getText(parsed) === "useEffect" &&
+        ts.isArrowFunction(node.arguments[0]) && node.arguments[0].getText(parsed).includes("const keepAnimationPageOnTop =")) {
+      effect = node.arguments[0].getText(parsed);
+      assert.equal(node.arguments[1].getText(parsed), "[activePage]", "page navigation must dispose this effect");
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  assert.ok(effect, "execute the actual Animation page window-order effect");
+  const compiled = ts.transpileModule(`(${effect})`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText;
+  const calls = [];
+  let shown;
+  let focusChanged;
+  let finishListening;
+  let finishFocusListening;
+  const unlistens = { shown: 0, focus: 0 };
+  const subscribed = new Promise((resolve) => { finishListening = resolve; });
+  const focusSubscribed = new Promise((resolve) => { finishFocusListening = resolve; });
+  const mount = vm.runInNewContext(compiled, {
+    activePage,
+    getCurrentWindow: () => {
+      calls.push(["window"]);
+      return {
+        label: "flowcell-button-editor",
+        onFocusChanged: (handler) => {
+          calls.push(["listen-focus"]);
+          focusChanged = handler;
+          return focusSubscribed;
+        }
+      };
+    },
+    setHostWindowTopmost: async (...args) => calls.push(["topmost", ...args]),
+    listenForButtonAnimationWindowShown: (handler) => {
+      calls.push(["listen"]);
+      shown = handler;
+      return subscribed;
+    }
+  });
+  return {
+    calls,
+    cleanup: mount(),
+    shown: () => shown(),
+    focus: (focused) => focusChanged({ payload: focused }),
+    unlistens: () => unlistens,
+    finishListening: async () => {
+      finishListening(() => { unlistens.shown++; });
+      finishFocusListening(() => { unlistens.focus++; });
+      await Promise.all([subscribed, focusSubscribed]);
+    }
+  };
+}
+
+test("Animation page comes forward on selection and playback without stealing focus, and resets on exit", async () => {
+  const h = animationPageTopmostHarness();
+  assert.deepEqual(h.calls, [
+    ["window"], ["topmost", "flowcell-button-editor", true], ["listen"], ["listen-focus"]
+  ]);
+  await h.finishListening();
+  h.shown();
+  assert.deepEqual(h.calls.at(-1), ["topmost", "flowcell-button-editor", true]);
+  assert.equal(h.calls.length, 5);
+  h.focus(false);
+  assert.equal(h.calls.length, 5, "selecting the positioning preview must not trigger a focus fight");
+  h.focus(true);
+  assert.deepEqual(h.calls.at(-1), ["topmost", "flowcell-button-editor", true]);
+  assert.equal(h.calls.length, 6, "selecting settings brings them above the positioning preview");
+  h.cleanup();
+  assert.deepEqual(h.unlistens(), { shown: 1, focus: 1 });
+  assert.deepEqual(h.calls.at(-1), ["topmost", "flowcell-button-editor", false]);
+  h.shown();
+  h.focus(true);
+  h.focus(false);
+  assert.equal(h.calls.length, 7, "queued playback or focus events cannot promote a closed Animation page");
+});
+
+test("leaving Animation before listener registration finishes disposes both late listeners", async () => {
+  const h = animationPageTopmostHarness();
+  h.cleanup();
+  assert.deepEqual(h.unlistens(), { shown: 0, focus: 0 });
+  assert.deepEqual(h.calls.at(-1), ["topmost", "flowcell-button-editor", false]);
+  await h.finishListening();
+  assert.deepEqual(h.unlistens(), { shown: 1, focus: 1 });
+  h.shown();
+  h.focus(true);
+  assert.equal(h.calls.length, 5, "late listener delivery must leave the editor in normal window order");
+});
+
+test("placement editing does not register playback listeners or change window order", () => {
+  const h = animationPageTopmostHarness("placement");
+  assert.equal(h.cleanup, undefined);
+  assert.deepEqual(h.calls, []);
+});
+
+test("playback notifies the Animation page after its native window is shown", () => {
+  const playback = readFileSync(join(frontendRoot, "src", "button", "animations", "ButtonAnimationWindowPage.tsx"), "utf8");
+  const windows = readFileSync(join(frontendRoot, "src", "button", "animations", "buttonAnimationWindows.ts"), "utf8");
+  assert.match(playback, /await currentWindow\.show\(\)\.catch\(\(\) => \{\}\);\s*await publishButtonAnimationWindowShown\(\)\.catch\(\(\) => \{\}\);/);
+  assert.match(windows, /listenForButtonAnimationWindowShown\(handler: \(\) => void\): Promise<UnlistenFn> \{\s*return listen\(BUTTON_ANIMATION_SHOWN_EVENT, handler\);/);
+  assert.match(windows, /publishButtonAnimationWindowShown\(\): Promise<void> \{\s*return emit\(BUTTON_ANIMATION_SHOWN_EVENT\);/);
 });
 
 test("Editor workspace stays in Edit mode without an Edit/Run switch", () => {

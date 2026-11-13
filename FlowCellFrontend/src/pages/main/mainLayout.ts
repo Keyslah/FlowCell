@@ -558,7 +558,7 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Fan Options",
-      tooltip: "Edit the selected panel's named fan setups in Buttons Editor.",
+      tooltip: "Choose a saved Fan style for the selected panel.",
       actionId: "edit-fan-setups",
       allowRename: false,
       disabled: options.fanOptionsDisabled ?? true
@@ -630,7 +630,7 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Pop",
-      tooltip: "Open this panel's last-used Pop-out file, or its default Pop-out.",
+      tooltip: "Open the selected Buttons or panel with its default Pop-out.",
       actionId: "pop-panel-script",
       allowRename: false,
       disabled: options.popDisabled ?? true

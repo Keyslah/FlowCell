@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod button_document_transport;
 mod button_state;
 mod krita_brushes;
 mod commands;

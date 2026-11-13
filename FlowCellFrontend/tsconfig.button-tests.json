@@ -15,6 +15,9 @@
   "include": [
     "src/button/types.ts",
     "src/button/state/buttonDefaults.ts",
+    "src/button/state/buttonDefaultPopout.ts",
+    "src/button/state/buttonDocumentTransport.ts",
+    "src/button/state/ButtonDraftBus.ts",
     "src/button/state/buttonPlacementFile.ts",
     "src/button/state/buttonSettingsFile.ts",
     "src/button/state/ButtonStateRepository.ts",

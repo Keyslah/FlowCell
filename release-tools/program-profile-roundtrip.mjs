@@ -11,7 +11,7 @@ import { getEmbeddedButtonSkinFamilySources } from "../FlowCellFrontend/tests/.c
 import { emptyButtonThemeOverride } from "../FlowCellFrontend/tests/.compiled-button-system/theme/themeModel.js";
 import { isPortableTheme, planPortableThemeImport, applyPortableTheme } from "../FlowCellFrontend/tests/.compiled-button-system/theme/portableTheme.js";
 import { prepareThemeSurfaces } from "../FlowCellFrontend/tests/.compiled-button-system/theme/portableThemeService.js";
-import { decodeProgramAppearance } from "../FlowCellFrontend/tests/.compiled-button-system/pages/program-setup/programDefaultTheme.js";
+import { buildProgramSetupDocument, decodeProgramAppearance } from "../FlowCellFrontend/tests/.compiled-button-system/pages/program-setup/programDefaultTheme.js";
 import { assertSelfContainedProgramAppearance } from "./program-profile-assets.mjs";
 
 // Uses the same compiled production model as test:button. No host process,
@@ -60,12 +60,21 @@ function sourcePackage(programRoot, source, sourceOverrides = new Map()) {
 }
 
 /** Build fresh install DTOs from actual package files, then use the production reconciler. */
-export function createProgramProfileRecipient(programRoot, archive, stagedProgram, sourceOverrides = new Map()) {
+export function createProgramProfileRecipient(programRoot, archive, stagedProgram, sourceOverrides = new Map(), { includeAllSources = false } = {}) {
   const program = stagedProgram ?? readJson(join(programRoot, "flowcell.program.json"));
   const installs = [];
+  const installDescriptors = [];
   const descriptors = [];
   const seen = new Set();
-  for (const dependency of archive.dependencies) {
+  const dependencies = includeAllSources ? program.bundledSources.map((source) => {
+    const captured = archive.dependencies.find((dependency) => dependency.sourceId === source.id);
+    if (captured) return captured;
+    const { manifest } = sourcePackage(programRoot, source, sourceOverrides);
+    return { programName: program.label, programId: program.programId, panelName: source.panelName,
+      sourceId: source.id, sourceVersion: source.version, sourceName: source.displayLabel ?? source.id,
+      importKind: sourceKind(source.importKind), slots: (manifest?.children ?? []).map((child) => child.slot) };
+  }) : archive.dependencies;
+  for (const dependency of dependencies) {
     assert.ok(!seen.has(dependency.sourceId), `${dependency.sourceId}: duplicate source dependency.`);
     seen.add(dependency.sourceId);
     const sources = program.bundledSources.filter((entry) => entry.id === dependency.sourceId);
@@ -106,14 +115,82 @@ export function createProgramProfileRecipient(programRoot, archive, stagedProgra
     const executionTarget = toolset ? null : bindSourceTarget(manifest?.page ? { kind: "core-action", actionId: "open-installed-page",
       payload: { pageId: manifest.page.id } } : manifest?.executionTarget) ?? { kind: "panel-script", programName: program.label,
       panelName: dependency.panelName, fileName: sourceIdentity.displayFileName, events: manifest?.events ?? null };
-    installs.push(normalizeLegacyInstallResult({ ownerButtonId, sourceIdentity, owner: {
+    const installDescriptor = { ownerButtonId, sourceIdentity, owner: {
       label: manifest?.label ?? source.displayLabel ?? basename(sourcePath), tooltip: manifest?.tooltip ?? "", executionTarget },
-      layout, events: manifest?.events, children, ...(manifest?.page?.themeContribution ? { themeContributionOnly: true } : {}) }));
+      layout, events: manifest?.events, children, ...(manifest?.page?.themeContribution ? { themeContributionOnly: true } : {}) };
+    installDescriptors.push(installDescriptor);
+    installs.push(normalizeLegacyInstallResult(installDescriptor));
     descriptors.push({ ownerButtonId, programName: program.label, programId: program.programId,
       panelName: dependency.panelName, sourceId: source.id, sourceVersion: source.version,
       sourceName: basename(sourcePath), importKind: sourceKind(source.importKind), slots: children.map((child) => child.slot) });
   }
-  return { document: mergeLegacyInstallsIntoDocument(createButtonStateDocument(), installs), descriptors, program };
+  return { document: mergeLegacyInstallsIntoDocument(createButtonStateDocument(), installs), descriptors, installDescriptors, program };
+}
+
+/** Exercise the same setup planner for every selectable source, including uncaptured scripts. */
+export async function verifyProgramSelectedSourcesRoundTrip({ programRoot, appearance, program: stagedProgram, sourceOverrides = new Map() }) {
+  const program = stagedProgram ?? readJson(join(programRoot, "flowcell.program.json"));
+  const file = appearance ?? readJson(packagePath(programRoot, program.defaultTheme));
+  const archive = decodeProgramAppearance(file);
+  const captured = createProgramProfileRecipient(programRoot, archive, program, sourceOverrides);
+  const selected = createProgramProfileRecipient(programRoot, archive, program, sourceOverrides, { includeAllSources: true });
+  const panels = [...new Set([
+    ...(program.panels ?? []).map((panel) => panel.label),
+    ...program.bundledSources.map((source) => source.panelName)
+  ])];
+  const build = (recipient) => buildProgramSetupDocument(createButtonStateDocument(), {
+    programName: program.label, panels, descriptors: recipient.installDescriptors,
+    themeDescriptors: recipient.descriptors, defaultTheme: file, defaultThemeReceipt: "0".repeat(64)
+  });
+  const baseline = await build(captured);
+  const all = await build(selected);
+  for (const descriptor of selected.installDescriptors) {
+    assert.ok(all.document.buttons[descriptor.ownerButtonId], `${descriptor.ownerButtonId}: selected source has no Button.`);
+  }
+  const baselinePlan = planPortableThemeImport(baseline.document, archive, archive.target, captured.descriptors);
+  const allPlan = planPortableThemeImport(all.document, archive, archive.target, selected.descriptors);
+  equal(baselinePlan.issues, [], `${program.label}: captured setup cannot be mapped back to its theme.`);
+  equal(allPlan.issues, [], `${program.label}: all-source setup cannot be mapped back to its theme.`);
+  // Adding another catalog script must not move or restyle an authored occurrence.
+  // Pop/Fan placements and skins receive new UUIDs on each build: compare each
+  // portable occurrence through its source/surface mapping, never by those IDs.
+  for (const appearance of archive.theme.buttons) {
+    const placement = baseline.document.placements[baselinePlan.placementIds[appearance.placementId]];
+    const actual = all.document.placements[allPlan.placementIds[appearance.placementId]];
+    assert.ok(placement && actual, `${program.label}: selecting all scripts omitted '${appearance.placementId}'.`);
+    const button = baseline.document.buttons[placement.buttonId];
+    const { id: _expectedId, buttonId: _expectedButtonId, surfaceId: _expectedSurfaceId,
+      skinOverrideId: expectedSkinId, ...expectedPlacement } = placement;
+    const { id: _actualId, buttonId: _actualButtonId, surfaceId: _actualSurfaceId,
+      skinOverrideId: actualSkinId, ...actualPlacement } = actual;
+    equal(actualPlacement, expectedPlacement, `${program.label}: selecting all scripts moved or restyled '${placement.id}'.`);
+    const actualButton = all.document.buttons[actual.buttonId];
+    equal(resolveButtonPlacementPresentation(actualButton, actual), resolveButtonPlacementPresentation(button, placement),
+      `${program.label}: selecting all scripts changed '${placement.id}' presentation.`);
+    const expectedSkin = baseline.document.skins[expectedSkinId ?? button.defaultSkinId];
+    const actualSkin = all.document.skins[actualSkinId ?? actualButton.defaultSkinId];
+    for (const section of BUTTON_SKIN_SECTION_ORDER) equal(actualSkin[section], expectedSkin[section],
+      `${program.label}: selecting all scripts changed '${placement.id}' skin ${section}.`);
+    equal(getEmbeddedButtonSkinFamilySources(actualSkin), getEmbeddedButtonSkinFamilySources(expectedSkin),
+      `${program.label}: selecting all scripts changed '${placement.id}' skin variants.`);
+  }
+  for (const surface of archive.surfaces) {
+    const expected = baseline.document.surfaces[baselinePlan.surfaceIds[surface.id]];
+    const actual = all.document.surfaces[allPlan.surfaceIds[surface.id]];
+    assert.ok(expected && actual, `${program.label}: selecting all scripts omitted surface '${surface.id}'.`);
+    for (const key of ["kind", "visualOverflowAllowance", "uniformButtonSize"]) {
+      equal(actual[key], expected[key], `${program.label}: selecting all scripts changed surface '${surface.id}' ${key}.`);
+    }
+    for (const key of ["width", "height"]) {
+      if (actual.placementIds.length > expected.placementIds.length) {
+        assert.ok(actual[key] >= expected[key], `${program.label}: adding scripts shrank surface '${surface.id}' ${key}.`);
+      } else {
+        equal(actual[key], expected[key], `${program.label}: selecting all scripts changed surface '${surface.id}' ${key}.`);
+      }
+    }
+  }
+  return { programId: program.programId, selectedSources: selected.installDescriptors.length,
+    document: all.document, descriptors: selected.descriptors };
 }
 
 /** Fail before packaging if a fresh recipient cannot reproduce every captured occurrence. */

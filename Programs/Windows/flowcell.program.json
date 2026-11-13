@@ -196,7 +196,7 @@
     },
     {
       "id": "windows.toggle-flowcell-windows",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "panelName": "Utility",
       "sourcePath": "Windows Git Scripts/Utility/toggle_flowcell_windows.ps1",
       "importKind": "script",

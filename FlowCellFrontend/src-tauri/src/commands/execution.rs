@@ -2203,6 +2203,7 @@ pub(crate) fn windows_child_process_path(path: &Path) -> PathBuf {
 pub(crate) fn run_windows_panel_script_file_with_window_mode(
     script_path: &Path,
     hide_window: bool,
+    source_window_handle: Option<isize>,
 ) -> Result<(), String> {
     // Installed sources are canonicalized and ownership-checked before this
     // runner receives them. Windows PowerShell 5.1 cannot provider-resolve the
@@ -2271,6 +2272,7 @@ pub(crate) fn run_windows_panel_script_file_with_window_mode(
         command.creation_flags(CREATE_NO_WINDOW);
     }
 
+    configure_windows_script_source_window(&mut command, source_window_handle);
     command
         .env("FLOWCELL_SESSION_ID", {
             static SESSION: OnceLock<String> = OnceLock::new();
@@ -2295,8 +2297,20 @@ pub(crate) fn run_windows_panel_script_file_with_window_mode(
         .map_err(|error| format!("Failed to run {}: {error}", script_path.display()))
 }
 
-pub(crate) fn run_windows_panel_script_file(script_path: &Path) -> Result<(), String> {
-    run_windows_panel_script_file_with_window_mode(script_path, true)
+fn configure_windows_script_source_window(command: &mut Command, source_window_handle: Option<isize>) {
+    // The invoking FlowCell surface is independent from the external target
+    // restored for script actions. Keep it local to this child process.
+    match source_window_handle.filter(|handle| *handle != 0) {
+        Some(handle) => { command.env("FLOWCELL_SOURCE_HWND", handle.to_string()); }
+        None => { command.env_remove("FLOWCELL_SOURCE_HWND"); }
+    }
+}
+
+pub(crate) fn run_windows_panel_script_file(
+    script_path: &Path,
+    source_window_handle: Option<isize>,
+) -> Result<(), String> {
+    run_windows_panel_script_file_with_window_mode(script_path, true, source_window_handle)
 }
 
 pub(crate) fn run_blender_bridge_action_direct(action: &str, data: Value) -> Result<Value, String> {
@@ -2463,6 +2477,7 @@ pub(crate) fn run_panel_script_response_impl(
     panel_name: String,
     file_name: String,
     modifiers: Option<program_sources::execute::ButtonModifiers>,
+    source_window_handle: Option<isize>,
 ) -> Result<Value, String> {
     let validated_file_name = validate_panel_script_file_name(&file_name)?;
     if let Some(resolution) = program_sources::execute::resolve_active_source_record(
@@ -2470,7 +2485,7 @@ pub(crate) fn run_panel_script_response_impl(
         &panel_name,
         &validated_file_name,
     )? {
-        return program_sources::execute::run_active_source(&resolution, modifiers);
+        return program_sources::execute::run_active_source(&resolution, modifiers, source_window_handle);
     }
     Err(format!(
         "Button source '{}' is not installed in the active Button system. Complete migration before running it.",
@@ -2481,13 +2496,18 @@ pub(crate) fn run_panel_script_response_impl(
 #[tauri::command]
 pub(crate) async fn run_panel_script_response(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     program_name: String,
     panel_name: String,
     file_name: String,
     modifiers: Option<program_sources::execute::ButtonModifiers>,
 ) -> Result<Value, String> {
+    #[cfg(windows)]
+    let source_window_handle = Some(window.hwnd().map_err(|error| error.to_string())?.0 as isize);
+    #[cfg(not(windows))]
+    let source_window_handle = { let _ = window; None };
     tauri::async_runtime::spawn_blocking(move || {
-        run_panel_script_response_impl(&app, program_name, panel_name, file_name, modifiers)
+        run_panel_script_response_impl(&app, program_name, panel_name, file_name, modifiers, source_window_handle)
     })
     .await
     .map_err(|error| format!("Panel script task failed: {error}"))?
@@ -2571,10 +2591,13 @@ mod tests {
         read_fusion_bridge_runtime_process_ids, resolve_macro_recorder_script_path,
         wait_for_blender_bridge_response, wait_for_fusion_bridge_response, windows_child_process_path,
         flowcell_backend_helper_arguments, autohotkey_arguments_hex, parse_blender_setup_output,
+        configure_windows_script_source_window,
     };
     use serde_json::json;
     use std::fs;
+    use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[cfg(windows)]
@@ -2762,6 +2785,29 @@ mod tests {
     fn windows_child_process_paths_preserve_ordinary_paths() {
         let path = Path::new(r"D:\FlowCell\Programs\Windows\action.ps1");
         assert_eq!(windows_child_process_path(path), path);
+    }
+
+    #[test]
+    fn windows_script_source_window_is_independent_from_the_action_target() {
+        let mut command = Command::new("unused-test-command");
+        command.env("FLOWCELL_TARGET_HWND", "901");
+        configure_windows_script_source_window(&mut command, Some(202));
+        let environment: BTreeMap<_, _> = command.get_envs().collect();
+        assert_eq!(environment.get(std::ffi::OsStr::new("FLOWCELL_SOURCE_HWND")),
+            Some(&Some(std::ffi::OsStr::new("202"))));
+        assert_eq!(environment.get(std::ffi::OsStr::new("FLOWCELL_TARGET_HWND")),
+            Some(&Some(std::ffi::OsStr::new("901"))));
+    }
+
+    #[test]
+    fn windows_script_without_source_window_removes_stale_inherited_context() {
+        for source_window_handle in [None, Some(0)] {
+            let mut command = Command::new("unused-test-command");
+            command.env("FLOWCELL_SOURCE_HWND", "stale-host");
+            configure_windows_script_source_window(&mut command, source_window_handle);
+            let environment: BTreeMap<_, _> = command.get_envs().collect();
+            assert_eq!(environment.get(std::ffi::OsStr::new("FLOWCELL_SOURCE_HWND")), Some(&None));
+        }
     }
 
     #[test]

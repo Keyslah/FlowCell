@@ -27,6 +27,8 @@ import { resolveButtonWindowEnvelope } from "../windows/buttonWindowGeometry.js"
 import { normalizeProgramPopoutColorOverride, normalizeProgramPopoutThemeLock } from "../../theme/programPopoutTheme.js";
 import { BUTTON_PRESENTATION_OVERRIDE_KEYS } from "./buttonPresentation.js";
 import { isButtonTextGlowCurve, isButtonTextGlowSetting } from "../skins/buttonTextGlow.js";
+import { isBundledMainPageConcreteSkin } from "../skins/chippedConcreteButtonSkin.js";
+import { DEFAULT_BUTTON_SKIN } from "../skins/defaultButtonSkin.js";
 
 export const BUTTON_SETTINGS_FILE_FORMAT = "flowcell-button-settings/v1" as const;
 export const BUTTON_SETTINGS_FILE_EXTENSION = ".json" as const;
@@ -240,7 +242,20 @@ export function normalizeButtonSettingsFile(value: unknown): unknown {
     behavior.animation = { ...behavior.animation, spinEnabled: false };
     changed = true;
   }
-  return changed ? { ...value, behavior } : value;
+  let entries = value.entries;
+  if (["regular-popout", "tool-set-popout", "fan"].includes(String(behavior.kind)) && Array.isArray(entries)) {
+    const isOwner = (entry: Record<string, unknown>) => behavior.kind === "fan"
+      ? entry.buttonId === behavior.panelOwnerButtonId
+      : entry.placementId === behavior.ownerPlacementId;
+    const contentSkin = entries.find((entry) => isObject(entry) && !isOwner(entry) &&
+      isObject(entry.skin) && !isBundledMainPageConcreteSkin(entry.skin))?.skin ?? DEFAULT_BUTTON_SKIN;
+    entries = entries.map((entry) => {
+      if (!isObject(entry) || !isOwner(entry) || !isBundledMainPageConcreteSkin(entry.skin)) return entry;
+      changed = true;
+      return { ...entry, skin: structuredClone(contentSkin) };
+    });
+  }
+  return changed ? { ...value, behavior, entries } : value;
 }
 
 function hasExactKeys(

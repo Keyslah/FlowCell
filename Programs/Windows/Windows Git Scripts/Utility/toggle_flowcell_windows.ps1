@@ -1,4 +1,4 @@
-# Description: Toggle minimizing or restoring the saved FlowCell utility windows.
+# Description: Toggle FlowCell popouts, fans and pages, leaving Main and the launching window unchanged.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -29,13 +29,6 @@ public static class FlowCellWindowToggleNative {
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
 
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool BringWindowToTop(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool SetForegroundWindow(IntPtr hWnd);
 }
 "@
 
@@ -91,7 +84,7 @@ function Test-IsFlowCellWindowTitle([string]$Title) {
         return $false
     }
 
-    return $Title -eq 'FlowCell' -or $Title.StartsWith('FlowCell - ', [System.StringComparison]::OrdinalIgnoreCase)
+    return $Title.StartsWith('FlowCell - ', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Get-WindowTitle([IntPtr]$Handle) {
@@ -120,7 +113,6 @@ function Get-OpenFlowCellWindows {
                 Handle = $hWnd
                 HandleKey = $hWnd.ToString()
                 Title = $title
-                IsMain = ($title -eq 'FlowCell')
                 IsMinimized = $isMinimized
             })
 
@@ -131,7 +123,7 @@ function Get-OpenFlowCellWindows {
 
     return @(
         $script:FlowCellWindowToggleMatches |
-            Sort-Object @{ Expression = { if ($_.IsMain) { 0 } else { 1 } } }, @{ Expression = { $_.Title.ToLowerInvariant() } }
+            Sort-Object @{ Expression = { $_.Title.ToLowerInvariant() } }
     )
 }
 
@@ -208,7 +200,7 @@ function Resolve-SavedFlowCellWindows($OpenWindows, $State) {
 
         if ($openWindowsByHandle.ContainsKey($handleKey)) {
             $window = $openWindowsByHandle[$handleKey]
-            if (-not $window.IsMain) {
+            if ($window.Title -eq [string]$entry.title) {
                 $matches += $window
             }
         }
@@ -217,51 +209,28 @@ function Resolve-SavedFlowCellWindows($OpenWindows, $State) {
     return @($matches)
 }
 
-function Get-SecondaryFlowCellWindows($Windows) {
-    return @(@($Windows) | Where-Object { -not $_.IsMain })
+function Get-ToggleableFlowCellWindows($Windows) {
+    # The runner supplies the actual calling webview, even when the click does
+    # not activate it. Foreground-window guesses can hide the toggle itself.
+    $sourceHandle = 0L
+    [void][long]::TryParse($env:FLOWCELL_SOURCE_HWND, [ref]$sourceHandle)
+    return @(@($Windows) | Where-Object {
+        $null -ne $_ -and (Test-IsFlowCellWindowTitle -Title $_.Title) -and
+        ($sourceHandle -le 0 -or $_.HandleKey -ne [string]$sourceHandle)
+    })
 }
 
-function Get-FlowCellMainWindow($Windows) {
-    return @($Windows | Where-Object { $_.IsMain }) | Select-Object -First 1
-}
-
-function Focus-FlowCellWindow($Window) {
-    if ($null -eq $Window) {
-        return
-    }
-
-    $showMode = if ($Window.IsMinimized) { 9 } else { 5 }
-    [void][FlowCellWindowToggleNative]::ShowWindowAsync($Window.Handle, $showMode)
-    [void][FlowCellWindowToggleNative]::BringWindowToTop($Window.Handle)
-    [void][FlowCellWindowToggleNative]::SetForegroundWindow($Window.Handle)
-}
-
-function Get-PreferredFocusWindow($Primary, $Fallback) {
-    if ($null -ne $Primary) {
-        return $Primary
-    }
-
-    return $Fallback
-}
-
-function Restore-FlowCellWindows($Windows, $FocusWindow) {
+function Restore-FlowCellWindows($Windows) {
     $windowList = @($Windows)
     if ($windowList.Count -eq 0) {
         return
     }
 
     foreach ($window in $windowList) {
-        $showMode = if ($window.IsMinimized) { 9 } else { 5 }
-        [void][FlowCellWindowToggleNative]::ShowWindowAsync($window.Handle, $showMode)
+        if ($window.IsMinimized) {
+            [void][FlowCellWindowToggleNative]::ShowWindowAsync($window.Handle, 9)
+        }
     }
-
-    Start-Sleep -Milliseconds 80
-
-    if ($null -eq $FocusWindow) {
-        $FocusWindow = $windowList | Select-Object -First 1
-    }
-
-    Focus-FlowCellWindow -Window $FocusWindow
 }
 
 function Minimize-FlowCellWindows($Windows) {
@@ -276,19 +245,12 @@ function Minimize-FlowCellWindows($Windows) {
 }
 
 try {
-    $openWindows = @(Get-OpenFlowCellWindows)
-    if ($openWindows.Count -eq 0) {
-        throw 'No FlowCell windows are currently open.'
-    }
-
-    $mainWindow = Get-FlowCellMainWindow $openWindows
-    $secondaryWindows = @(Get-SecondaryFlowCellWindows $openWindows)
+    $secondaryWindows = @(Get-ToggleableFlowCellWindows (Get-OpenFlowCellWindows))
     $savedState = Read-FlowCellToggleState
-    $savedWindows = @(Resolve-SavedFlowCellWindows $openWindows $savedState)
+    $savedWindows = @(Resolve-SavedFlowCellWindows $secondaryWindows $savedState)
 
     if ($savedWindows.Count -gt 0) {
-        $restoreFocusWindow = Get-PreferredFocusWindow $mainWindow ($savedWindows | Select-Object -First 1)
-        Restore-FlowCellWindows $savedWindows $restoreFocusWindow
+        Restore-FlowCellWindows $savedWindows
         Clear-FlowCellToggleState
         Write-FlowCellStatus ('Restored {0} FlowCell utility window(s).' -f $savedWindows.Count)
         return
@@ -303,8 +265,7 @@ try {
     if ($windowsToMinimize.Count -eq 0) {
         $minimizedSecondaryWindows = @($secondaryWindows | Where-Object { $_.IsMinimized })
         if ($minimizedSecondaryWindows.Count -gt 0) {
-            $restoreFocusWindow = Get-PreferredFocusWindow $mainWindow ($minimizedSecondaryWindows | Select-Object -First 1)
-            Restore-FlowCellWindows $minimizedSecondaryWindows $restoreFocusWindow
+            Restore-FlowCellWindows $minimizedSecondaryWindows
             Clear-FlowCellToggleState
             Write-FlowCellStatus ('Restored {0} minimized FlowCell utility window(s).' -f $minimizedSecondaryWindows.Count)
             return
@@ -316,7 +277,6 @@ try {
 
     Minimize-FlowCellWindows $windowsToMinimize
     Write-FlowCellToggleState $windowsToMinimize
-    Focus-FlowCellWindow -Window $mainWindow
     Write-FlowCellStatus ('Minimized {0} FlowCell utility window(s). Run the button again to restore them.' -f $windowsToMinimize.Count)
 }
 catch {

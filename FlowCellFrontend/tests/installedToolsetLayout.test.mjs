@@ -5,7 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 import ts from "typescript";
 import { cloneButtonDocument, createButtonStateDocument, createStableButtonId } from "./.compiled-button-system/button/state/buttonDefaults.js";
-import { DEFAULT_BUTTON_SKIN_ID } from "./.compiled-button-system/button/skins/defaultButtonSkin.js";
+import { DEFAULT_BUTTON_SKIN, DEFAULT_BUTTON_SKIN_ID, getDefaultButtonSize } from "./.compiled-button-system/button/skins/defaultButtonSkin.js";
+import { withNeutralSkinMeasurements } from "./neutralSkinDomFixture.mjs";
+import { validateButtonStateDocument } from "./.compiled-button-system/button/state/buttonStateValidation.js";
+import { buildButtonSettingsFile, buildTransientButtonPopoutSettingsDocument } from "./.compiled-button-system/button/state/buttonSettingsFile.js";
 import { createButtonSourceIdentity } from "./.compiled-button-system/button/state/sourceIdentity.js";
 import { mergeLegacyInstallsIntoDocument } from "./.compiled-button-system/button/state/ButtonStateRepository.js";
 import { applyInstalledSourceUpdate } from "./.compiled-button-system/button/state/sourceUpdateOperations.js";
@@ -26,7 +29,7 @@ const parsed = ts.createSourceFile(editorPath, readFileSync(editorPath, "utf8"),
 const names = ["createButtonRecord", "addPlacement", "createSurface", "addInstalledToolSet"];
 const selected = parsed.statements.filter((node) => ts.isFunctionDeclaration(node) && names.includes(node.name?.text)).map((node) => node.getText(parsed)).join("\n");
 const compiled = ts.transpileModule(selected, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-const dependencies = { DEFAULT_BUTTON_SKIN_ID, CHIPPED_CONCRETE_BUTTON_SKIN_ID, cloneButtonDocument, createStableButtonId, validateInstalledButtonLayout, resolveInstalledToolFields, assignInstalledToolSetSkins,
+const dependencies = { DEFAULT_BUTTON_SKIN, DEFAULT_BUTTON_SKIN_ID, getDefaultButtonSize, CHIPPED_CONCRETE_BUTTON_SKIN_ID, cloneButtonDocument, createStableButtonId, validateInstalledButtonLayout, resolveInstalledToolFields, assignInstalledToolSetSkins,
   buttonSpacingPixelsFromMillimeters, createStarterButtonLayout, findFirstAvailableButtonPosition, validateExactButtonLayoutGeometry, defaultPanelButtonSize };
 const addInstalledToolSet = new Function(...Object.keys(dependencies), `${compiled}\nreturn addInstalledToolSet;`)(...Object.values(dependencies));
 
@@ -53,6 +56,98 @@ function regularInstall(id, label) {
     label, tooltip: "", children: []
   };
 }
+
+test("tool sets without authored geometry retain natural skin sizing when starting and growing", () => {
+  for (const manual of [false, true]) {
+    const install = fixture();
+    delete install.layout;
+    const document = manual ? createButtonStateDocument()
+      : mergeLegacyInstallsIntoDocument(createButtonStateDocument(), [install]);
+    if (manual) addInstalledToolSet(document, install, Object.keys(document.surfaces)[0]);
+    const unit = Object.values(document.popoutUnits)[0];
+    const surface = document.surfaces[unit.surfaceId];
+    assert.equal(surface.uniformButtonSize, null, "default grids remain customizable");
+    install.children.push({ ...install.children[0], slot: "fourth", label: "Fourth action with a long label" });
+    install.layout = { updatePolicy: { appendMissingChildSlots: true } };
+    applyInstalledSourceUpdate(document, install);
+    assert.deepEqual(unit.childPlacementIds.map((id) => {
+      const { x, y, width, height, matchHitboxToSkin } = document.placements[id];
+      return { x, y, width, height, matchHitboxToSkin };
+    }), install.children.map((_, index) => ({ x: 8 + index * 144, y: 8, width: 144, height: 42, matchHitboxToSkin: true })));
+  }
+});
+
+test("fallback toolset contents pack unequal measured label widths without changing authored geometry", () => {
+  withNeutralSkinMeasurements({ first: 52, second: 104, third: 156 }, () => {
+    const document = createButtonStateDocument();
+    const install = fixture();
+    delete install.layout;
+    addInstalledToolSet(document, install, Object.keys(document.surfaces)[0]);
+    const unit = Object.values(document.popoutUnits)[0];
+    assert.deepEqual(unit.childPlacementIds.map((id) => {
+      const { x, y, width, height, matchHitboxToSkin } = document.placements[id];
+      return { x, y, width, height, matchHitboxToSkin };
+    }), [42, 84, 126].map((width, index) => ({ x: [8, 50, 134][index], y: 8,
+      width, height: 42, matchHitboxToSkin: true })));
+    const custom = createButtonStateDocument();
+    custom.skins[custom.settings.defaultSkinId].structure = '<div data-core>Custom geometry</div>';
+    addInstalledToolSet(custom, install, Object.keys(custom.surfaces)[0]);
+    const customUnit = Object.values(custom.popoutUnits)[0];
+    assert.ok(customUnit.childPlacementIds.every((id) => custom.placements[id].width === 144),
+      "neutral measurements must not be applied to custom skins");
+  });
+});
+
+test("measured toolset additions preserve old default and authored children without overlaps", () => {
+  for (const moved of [false, true]) {
+    const install = fixture();
+    delete install.layout;
+    const document = mergeLegacyInstallsIntoDocument(createButtonStateDocument(), [install]);
+    const unit = Object.values(document.popoutUnits)[0];
+    if (moved) {
+      document.placements[unit.childPlacementIds[0]].x = 440;
+      document.surfaces[unit.surfaceId].width = 592;
+    }
+    const existing = unit.childPlacementIds.map((id) => structuredClone(document.placements[id]));
+    install.children.push({ ...install.children[0], slot: "fourth", label: "fourth" });
+    install.layout = { updatePolicy: { appendMissingChildSlots: true } };
+    withNeutralSkinMeasurements({ first: 52, second: 52, third: 52, fourth: 52 }, () => {
+      applyInstalledSourceUpdate(document, install);
+    });
+    assert.deepEqual(unit.childPlacementIds.slice(0, 3).map((id) => document.placements[id]), existing);
+    const added = document.placements[unit.childPlacementIds[3]];
+    assert.deepEqual([added.x, added.y, added.width, added.height], moved ? [8, 50, 42, 42] : [440, 8, 42, 42]);
+    assert.deepEqual(validateButtonStateDocument(document).issues, []);
+  }
+});
+
+test("the latest rearrangement remains authoritative after adding, updating, saving and reopening", () => {
+  const install = fixture();
+  delete install.layout;
+  const document = mergeLegacyInstallsIntoDocument(createButtonStateDocument(), [install]);
+  const unit = Object.values(document.popoutUnits)[0];
+  Object.assign(document.placements[unit.childPlacementIds[0]], { x: 24, y: 64 });
+  install.children.push({ ...install.children[0], slot: "fourth", label: "fourth" });
+  install.layout = { updatePolicy: { appendMissingChildSlots: true } };
+  withNeutralSkinMeasurements({ fourth: 52 }, () => applyInstalledSourceUpdate(document, install));
+  Object.assign(document.placements[unit.childPlacementIds[3]], { x: 210, y: 70 });
+  const layout = (state, targetUnit) => targetUnit.childPlacementIds.map((id) => {
+    const placement = state.placements[id];
+    return { slot: state.buttons[placement.buttonId].metadata.toolSetSlot,
+      x: placement.x, y: placement.y, width: placement.width, height: placement.height };
+  });
+  const latest = layout(document, unit);
+  install.layout = { width: 500, height: 120, placements: Object.fromEntries(install.children.map((child, index) =>
+    [child.slot, { x: 8 + index * 144, y: 8, width: index === 3 ? 42 : 144, height: 42 }])) };
+  applyInstalledSourceUpdate(document, install);
+  assert.deepEqual(layout(document, unit), latest, "source refresh must not restore its original starter positions");
+  const context = { programName: "Example", panelName: "Tools" };
+  const saved = JSON.parse(JSON.stringify(buildButtonSettingsFile(document, unit.surfaceId, context)));
+  const restoredState = JSON.parse(JSON.stringify(document));
+  const reopened = buildTransientButtonPopoutSettingsDocument(restoredState, saved, context, "latest-arrangement");
+  assert.deepEqual(layout(reopened.document, reopened.document.popoutUnits[reopened.popoutUnitId]), latest);
+  assert.deepEqual(validateButtonStateDocument(reopened.document).issues, []);
+});
 
 test("Smart Axis packages the exact working Final Skull Live skin release", () => {
   const root = join(import.meta.dirname, "../../Programs/Blender");

@@ -28,6 +28,7 @@ import {
 import {
   hideCurrentButtonActivationAnimationWindow,
   listenForButtonAnimationWindowContextUpdates,
+  publishButtonAnimationWindowShown,
   publishButtonAnimationWindowReady
 } from "./buttonAnimationWindows";
 import "./buttonAnimationWindow.css";
@@ -121,6 +122,7 @@ export default function ButtonAnimationWindowPage({
     await currentWindow.setAlwaysOnTop(true).catch(() => {});
     if (activeRequestIdRef.current !== requestId) return;
     await currentWindow.show().catch(() => {});
+    await publishButtonAnimationWindowShown().catch(() => {});
     if (activeRequestIdRef.current !== requestId || !imageRef.current || !stageRef.current) return;
     fadeAnimationRef.current = stageRef.current.animate(
       buildButtonAnimationFadeFrames(playbackContext),

@@ -9,7 +9,7 @@ import {
   subscribeButtonDrafts
 } from "../state/ButtonDraftBus";
 import { loadButtonStateDocument } from "../state/ButtonStateRepository";
-import { withCanonicalProgramPopoutThemes } from "./buttonWindowThemeDocument";
+import { withCanonicalPanelFanMotion, withCanonicalProgramPopoutThemes } from "./buttonWindowThemeDocument";
 import { withAddedCanonicalPanelButtons } from "../state/panelPopoutReconciliation";
 
 export interface ButtonWindowDocumentState {
@@ -33,9 +33,10 @@ export function useButtonWindowDocument(
 
   useEffect(() => {
     let cancelled = false;
-    let acceptedDocumentVersion = 0;
     let savedLoadVersion = 0;
     let canonicalDocument: ButtonStateDocument | null = null;
+    let activeDraftDocument: ButtonStateDocument | null = null;
+    let awaitingFirstDraft = Boolean(draftSessionId);
     const cleanups: Array<() => void> = [];
     const requesterLabel = getCurrentWindow().label;
     const requestId = createButtonDraftRequestId(requesterLabel);
@@ -51,21 +52,35 @@ export function useButtonWindowDocument(
     };
 
     const acceptDocument = (document: ButtonStateDocument) => {
-      acceptedDocumentVersion += 1;
       if (!cancelled) {
-        setState({ document, loading: false, error: null });
+        setState({ document: withCanonicalPanelFanMotion(document, canonicalDocument), loading: false, error: null });
       }
     };
 
-    const acceptDraft = (document: ButtonStateDocument) => {
+    const renderDraft = (document: ButtonStateDocument) => {
       acceptDocument(withCanonicalProgramPopoutThemes(
         withAddedCanonicalPanelButtons(document, canonicalDocument), canonicalDocument
       ));
     };
 
+    const acceptDraft = (document: ButtonStateDocument) => {
+      if (cancelled) return;
+      activeDraftDocument = document;
+      awaitingFirstDraft = false;
+      renderDraft(document);
+    };
+
+    const acceptCanonicalDocument = (document: ButtonStateDocument) => {
+      canonicalDocument = document;
+      if (activeDraftDocument) {
+        renderDraft(activeDraftDocument);
+      } else if (!awaitingFirstDraft) {
+        acceptDocument(document);
+      }
+    };
+
     const loadSavedDocument = async () => {
       const loadVersion = ++savedLoadVersion;
-      const acceptedVersionAtStart = acceptedDocumentVersion;
       const document = await loadButtonStateDocument();
       if (
         cancelled ||
@@ -73,17 +88,16 @@ export function useButtonWindowDocument(
       ) {
         return;
       }
-      // A draft may arrive before the initial disk read. Keep its layout while
-      // taking the authoritative program rules from the saved document.
-      if (canonicalDocument && document.revision < canonicalDocument.revision) return;
-      canonicalDocument = document;
-      if (acceptedVersionAtStart !== acceptedDocumentVersion) {
-        setState((current) => current.document
-          ? { ...current, document: withCanonicalProgramPopoutThemes(current.document, document) }
-          : current);
-        return;
-      }
-      acceptDocument(document);
+      // Canonical state supplies shared rules; a transient setup exists only in
+      // its draft. Keep waiting for that draft, or retain it across this read.
+      acceptCanonicalDocument(canonicalDocument && document.revision < canonicalDocument.revision
+        ? canonicalDocument : document);
+    };
+
+    const cancelDraft = () => {
+      activeDraftDocument = null;
+      awaitingFirstDraft = false;
+      return loadSavedDocument();
     };
 
     const requestActiveDraft = () => draftSessionId
@@ -93,8 +107,7 @@ export function useButtonWindowDocument(
     void (async () => {
       try {
         addCleanup(await subscribeButtonCommits(async (document) => {
-          canonicalDocument = document;
-          acceptDocument(document);
+          acceptCanonicalDocument(document);
           await requestActiveDraft();
         }));
 
@@ -104,7 +117,7 @@ export function useButtonWindowDocument(
             requestId
           }));
           addCleanup(
-            await subscribeButtonDraftCancel(draftSessionId, loadSavedDocument)
+            await subscribeButtonDraftCancel(draftSessionId, cancelDraft)
           );
         }
 

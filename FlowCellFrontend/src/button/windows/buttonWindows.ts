@@ -816,6 +816,8 @@ export async function openButtonPopoutWindow(args: {
         buttonPopoutChoiceId: settingsBackedLayout?.choiceId,
         snapshotBounds: contentBounds
       });
+    } else {
+      unregisterLayoutWindow(windowLabel);
     }
     let target = await WebviewWindow.getByLabel(windowLabel);
     const existed = Boolean(target);
@@ -925,6 +927,7 @@ export async function openButtonFanWindow(args: {
   draftSessionId?: string;
   collapsedBounds?: FlowCellBounds | null;
   reveal?: boolean;
+  registerInLayout?: boolean;
 }): Promise<void> {
   const windowLabel = buildButtonFanWindowLabel(args.panelOwnerButtonId);
   const pendingRetirement =
@@ -958,7 +961,7 @@ export async function openButtonFanWindow(args: {
       restoreBounds: isUsableBounds(args.collapsedBounds) ? contentBounds : undefined
     };
     const placement = (await resolveButtonCanvasPlacement(contentBounds)).placement;
-    registerLayoutWindow({
+    if (args.registerInLayout !== false) registerLayoutWindow({
       windowLabel,
       kind: "button-fan",
       buttonCloseControlOffset: args.closeControlOffset,
@@ -969,6 +972,7 @@ export async function openButtonFanWindow(args: {
       buttonDraftSessionId: args.draftSessionId,
       snapshotBounds: contentBounds
     });
+    else unregisterLayoutWindow(windowLabel);
     let target = await WebviewWindow.getByLabel(windowLabel);
     const existed = Boolean(target);
     let shown = false;

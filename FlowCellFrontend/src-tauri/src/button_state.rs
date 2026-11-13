@@ -1767,7 +1767,9 @@ async fn run_button_state_blocking<T: Send + 'static>(
 
 #[tauri::command]
 pub(crate) async fn load_button_state() -> Result<Option<Value>, String> {
-    run_button_state_blocking("load", load_button_state_sync).await
+    run_button_state_blocking("load", || {
+        load_button_state_sync().map(|document| document.map(crate::button_document_transport::pack_button_document))
+    }).await
 }
 
 pub(crate) fn load_button_state_sync() -> Result<Option<Value>, String> {
@@ -1839,9 +1841,12 @@ pub(crate) fn canonical_state_references_source_owner_while_source_locked(
 #[tauri::command]
 pub(crate) async fn commit_button_state(
     app: tauri::AppHandle,
-    request: CommitButtonStateRequest,
+    mut request: CommitButtonStateRequest,
 ) -> Result<(), String> {
-    run_button_state_blocking("commit", move || commit_button_state_sync(app, request)).await
+    run_button_state_blocking("commit", move || {
+        request.document = crate::button_document_transport::unpack_button_document(request.document)?;
+        commit_button_state_sync(app, request)
+    }).await
 }
 
 fn commit_button_state_sync(

@@ -307,13 +307,19 @@ optional activation animation assignment. The left-pane `Animation` control
 opens a dedicated Animation page. That page preserves the complete feature: its
 selector offers `No animation` and every registered preset, Apply clears or assigns the
 selection, and an assigned preset retains Position and size setup, Save position
-and size, and Close setup controls. A top-right X returns to placement editing and
+and size, and Close setup controls. All presets default to once every 20 presses;
+an explicitly saved frequency overrides that default. A top-right X returns to placement editing and
 closes an open setup presenter without clearing the saved assignment. Animation
 Apply and bounds saves commit only the Button's animation field, retaining any
 unsaved arrangement; full Button Settings also save and restore the current
 animation assignment. The transparent setup presenter keeps its
 temporary resize hit regions invisible, so the sprite remains the only rendered
-content while positioning. Saving bounds writes whole physical desktop pixels
+content while positioning. Applying only a frequency change saves the timing
+without opening, replaying, or refocusing that presenter. While the Animation
+page is open, selecting it keeps its controls above the preview; runtime playback
+also raises those controls without taking focus. Explicit positioning can bring
+the preview forward for dragging and resizing. Closing the Animation page restores
+normal Editor stacking. Saving bounds writes whole physical desktop pixels
 to the Button record before applying native placement, preserving centered
 half-pixel defaults and older fractional bounds. Runtime playback remains
 cursor-ignored and renders only the transparent sprite. `Plus Rise` rises

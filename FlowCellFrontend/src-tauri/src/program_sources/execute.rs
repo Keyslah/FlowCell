@@ -667,6 +667,7 @@ fn button_bridge_data(record: &ActiveSourceRecord, modifiers: Option<ButtonModif
 pub(crate) fn run_active_source(
     resolution: &ActiveSourceResolution,
     modifiers: Option<ButtonModifiers>,
+    source_window_handle: Option<isize>,
 ) -> Result<Value, String> {
     let record = &resolution.record;
     if !record.children.is_empty() {
@@ -674,7 +675,7 @@ pub(crate) fn run_active_source(
     }
     let source_path = PathBuf::from(&record.source_path);
     if super::records::is_portable_windows_execution(record.runner_data.as_ref()) {
-        crate::run_windows_panel_script_file(&source_path)?;
+        crate::run_windows_panel_script_file(&source_path, source_window_handle)?;
         return Ok(json!({ "message": format!("Started {}.", record.label) }));
     }
     let manifest = load_program_manifest(&record.program_name)?;
@@ -683,7 +684,7 @@ pub(crate) fn run_active_source(
     }
     match record.runner.as_str() {
         "windows-script" => {
-            crate::run_windows_panel_script_file(&source_path)?;
+            crate::run_windows_panel_script_file(&source_path, source_window_handle)?;
             Ok(json!({ "message": format!("Started {}.", record.label) }))
         }
         "illustrator-direct" => {

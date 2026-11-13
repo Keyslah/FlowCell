@@ -8,7 +8,7 @@ import { embedLocalButtonSkinFamilies } from "../FlowCellFrontend/tests/.compile
 import { listThemePlacements } from "../FlowCellFrontend/tests/.compiled-button-system/theme/themeModel.js";
 import { capturePortableTheme } from "../FlowCellFrontend/tests/.compiled-button-system/theme/portableTheme.js";
 import { encodeProgramDefaultTheme } from "../FlowCellFrontend/tests/.compiled-button-system/pages/program-setup/programDefaultTheme.js";
-import { createProgramProfileRecipient, verifyProgramProfileRoundTrip } from "./program-profile-roundtrip.mjs";
+import { createProgramProfileRecipient, verifyProgramProfileRoundTrip, verifyProgramSelectedSourcesRoundTrip } from "./program-profile-roundtrip.mjs";
 import { assertSelfContainedProgramAppearance } from "./program-profile-assets.mjs";
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -303,6 +303,7 @@ export async function prepareProgramProfile({ programRoot, localRoot, outputRoot
   staged.defaultPanels = staged.panels.filter((panel) => panel.defaultSelected).map((panel) => panel.label);
   // Verification accepts the would-be staged manifest, even in read-only mode.
   const roundtrip = verifyProgramProfileRoundTrip({ programRoot, appearance: packed, program: staged, sourceOverrides });
+  await verifyProgramSelectedSourcesRoundTrip({ programRoot, appearance: packed, program: staged, sourceOverrides });
   same(filesUnder(recordsRoot).filter((path) => path.endsWith(".flowcell-source.json")), recordFiles,
     `${program.label}: source records changed during capture.`);
   same(filesUnder(libraryRoot), paths, `${program.label}: the skin library changed during capture.`);

@@ -6,6 +6,7 @@ import type {
   ButtonWindowFitMode
 } from "../types.js";
 import { cloneButtonDocument } from "./buttonDefaults.js";
+import { packButtonDocumentTransport, unpackButtonDocumentTransport } from "./buttonDocumentTransport.js";
 
 const DRAFT_EVENT = "flowcell:button-draft";
 const DRAFT_REQUEST_EVENT = "flowcell:button-draft-request";
@@ -15,7 +16,7 @@ const RESTING_WINDOW_BOUNDS_EVENT = "flowcell:button-resting-window-bounds";
 
 interface DraftPayload {
   sessionId: string;
-  document: ButtonStateDocument;
+  document: unknown;
   requesterLabel?: string;
   requestId?: string;
 }
@@ -31,7 +32,7 @@ interface DraftCancelPayload {
 }
 
 interface CommitPayload {
-  document: ButtonStateDocument;
+  document: unknown;
 }
 
 export type ButtonRestingWindowBoundsUpdate =
@@ -71,7 +72,7 @@ export function publishButtonDraft(
   sessionId: string,
   document: ButtonStateDocument
 ): Promise<void> {
-  return emit(DRAFT_EVENT, { sessionId, document: cloneButtonDocument(document) } satisfies DraftPayload);
+  return emit(DRAFT_EVENT, { sessionId, document: packButtonDocumentTransport(document) } satisfies DraftPayload);
 }
 
 export function publishButtonDraftToWindow(
@@ -82,7 +83,7 @@ export function publishButtonDraftToWindow(
   return emit(DRAFT_EVENT, {
     sessionId,
     requesterLabel,
-    document: cloneButtonDocument(document)
+    document: packButtonDocumentTransport(document)
   } satisfies DraftPayload);
 }
 
@@ -119,7 +120,7 @@ export function subscribeButtonDrafts(
     ) {
       return;
     }
-    return handler(cloneButtonDocument(event.payload.document));
+    return handler(cloneButtonDocument(unpackButtonDocumentTransport(event.payload.document) as ButtonStateDocument));
   });
 }
 
@@ -133,19 +134,21 @@ export function registerButtonDraftResponder(
       sessionId,
       requesterLabel: event.payload.requesterLabel,
       requestId: event.payload.requestId,
-      document: cloneButtonDocument(getDocument())
+      document: packButtonDocumentTransport(getDocument())
     } satisfies DraftPayload);
   });
 }
 
 export function publishButtonCommit(document: ButtonStateDocument): Promise<void> {
-  return emit(COMMIT_EVENT, { document: cloneButtonDocument(document) } satisfies CommitPayload);
+  return emit(COMMIT_EVENT, { document: packButtonDocumentTransport(document) } satisfies CommitPayload);
 }
 
 export function subscribeButtonCommits(
   handler: (document: ButtonStateDocument) => void | Promise<void>
 ): Promise<UnlistenFn> {
-  return listen<CommitPayload>(COMMIT_EVENT, (event) => handler(cloneButtonDocument(event.payload.document)));
+  return listen<CommitPayload>(COMMIT_EVENT, (event) => handler(
+    cloneButtonDocument(unpackButtonDocumentTransport(event.payload.document) as ButtonStateDocument)
+  ));
 }
 
 export function publishButtonDraftCancel(sessionId: string): Promise<void> {
