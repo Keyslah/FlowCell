@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ThemeTarget } from "../../theme/themeModel.js";
 import { archiveSourceDescriptors, chooseThemeFile, listThemeLibrary, readTheme, type ReadThemeResult, type ThemeLibraryEntry } from "../../theme/themeFile.js";
 import { previewPortableThemeImport } from "../../theme/portableThemeService.js";
+
+type ThemeLibrarySource = "supplied" | "local";
 
 /** Raster-only embedded previews cannot execute theme markup or fetch external resources. */
 export function portableThemeThumbnail(theme: unknown): string | null {
@@ -30,6 +32,8 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
   onApply(theme: ReadThemeResult): Promise<void>;
   onReview?(theme: ReadThemeResult): Promise<string[]>;
 }) {
+  const libraryId = useId();
+  const [library, setLibrary] = useState<ThemeLibrarySource>("supplied");
   const [entries, setEntries] = useState<ThemeLibraryEntry[]>([]);
   const [selected, setSelected] = useState<ReadThemeResult | null>(null);
   const [issues, setIssues] = useState<string[]>([]);
@@ -41,11 +45,18 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
   useEffect(() => {
     let disposed = false;
     inspection.current += 1;
+    setLibrary("supplied"); setEntries([]);
     setSelected(null); setIssues([]); setRequirements([]); setError(""); setOperation(null);
     void listThemeLibrary(target).then((items) => { if (!disposed) setEntries(items); })
       .catch((reason) => { if (!disposed) setError(`Theme library could not be opened: ${String(reason)}`); });
     return () => { disposed = true; inspection.current += 1; };
   }, [target, mode]);
+  const selectLibrary = (next: ThemeLibrarySource) => {
+    if (operation === "applying" || next === library) return;
+    inspection.current += 1;
+    setLibrary(next);
+    setSelected(null); setIssues([]); setRequirements([]); setError(""); setOperation(null);
+  };
   const inspect = async (load: () => Promise<ReadThemeResult | null>) => {
     const generation = ++inspection.current;
     setOperation("inspecting"); setError(""); setSelected(null); setIssues([]); setRequirements([]);
@@ -70,6 +81,7 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
   };
   const colors = selected ? [...new Set(JSON.stringify(selected.theme ?? selected.legacy).match(/#[0-9a-f]{6}(?:[0-9a-f]{2})?\b/gi) ?? [])].slice(0, 12) : [];
   const thumbnail = portableThemeThumbnail(selected?.portable);
+  const visibleEntries = entries.filter((entry) => entry.supplied === (library === "supplied"));
   return <div className="theme-library-backdrop">
     <section className="theme-library-dialog" role="dialog" aria-modal="true" aria-label={mode === "import" ? "Import Theme" : "Open Theme"}>
       <header><h2>{mode === "import" ? "Import Theme" : "Open Theme"}</h2><button type="button" onClick={() => {
@@ -77,14 +89,26 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
         onClose();
       }} disabled={operation === "applying"}>Close</button></header>
       <p>{target.kind === "program" ? target.programName : "Main"} themes</p>
-      <div className="theme-library-columns">
+      <div className="theme-library-tabs" role="tablist" aria-label="Theme library">
+        {(["supplied", "local"] as const).map((source) => <button key={source} type="button" role="tab"
+          id={`${libraryId}-${source}`} aria-controls={`${libraryId}-panel`} aria-selected={library === source}
+          tabIndex={library === source ? 0 : -1} disabled={operation === "applying"}
+          onClick={() => selectLibrary(source)} onKeyDown={(event) => {
+            const next = event.key === "Home" ? "supplied" : event.key === "End" ? "local"
+              : event.key === "ArrowLeft" || event.key === "ArrowRight" ? (source === "supplied" ? "local" : "supplied") : null;
+            if (!next) return;
+            event.preventDefault();
+            selectLibrary(next);
+            event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next === "supplied" ? 0 : 1]?.focus();
+          }}>{source === "supplied" ? "Supplied" : "Local"}</button>)}
+      </div>
+      <div className="theme-library-columns" role="tabpanel" id={`${libraryId}-panel`} aria-labelledby={`${libraryId}-${library}`}>
         <div className="theme-library-list">
-          {entries.map((entry) => <div key={entry.path}>
-            <button type="button" disabled={pending} title={entry.supplied ? "Supplied theme" : "Saved theme"} onClick={() => void inspect(() => readTheme(entry.path, target))}>{entry.name}</button>
-            <small>{entry.supplied ? "Supplied theme" : "Saved theme"}</small>
+          {visibleEntries.map((entry) => <div key={entry.path}>
+            <button type="button" disabled={pending} onClick={() => void inspect(() => readTheme(entry.path, target))}>{entry.name}</button>
           </div>)}
-          {!entries.length && <p>No themes in this library.</p>}
-          <button type="button" disabled={pending} onClick={() => void inspect(() => chooseThemeFile(target))}>Choose local theme file or archive…</button>
+          {!visibleEntries.length && <p>No {library} themes in this library.</p>}
+          {library === "local" && <button type="button" disabled={pending} onClick={() => void inspect(() => chooseThemeFile(target))}>Choose local theme file or archive…</button>}
         </div>
         <div className="theme-library-review">
           {selected ? <>
