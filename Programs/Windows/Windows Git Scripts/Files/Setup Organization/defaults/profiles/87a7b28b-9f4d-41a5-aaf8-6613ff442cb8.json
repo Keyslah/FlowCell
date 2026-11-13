@@ -1,0 +1,84 @@
+{
+    "schemaVersion":  3,
+    "format":  "flowcell.windows.setup-organization.profile.v3",
+    "profileId":  "87a7b28b-9f4d-41a5-aaf8-6613ff442cb8",
+    "name":  "Project",
+    "recycleOtherFolders":  true,
+    "recyclePreviousIgnoredFolders":  true,
+    "folders":  [
+                    {
+                        "path":  "00 Assets",
+                        "groupIds":  [
+
+                                     ],
+                        "fileTypes":  [
+
+                                      ],
+                        "ignored":  false,
+                        "catchAll":  false
+                    },
+                    {
+                        "path":  "00 Assets/01 Images",
+                        "groupIds":  [
+                                         "images"
+                                     ],
+                        "fileTypes":  [
+
+                                      ],
+                        "ignored":  false,
+                        "catchAll":  false
+                    },
+                    {
+                        "path":  "00 Assets/02 3D",
+                        "groupIds":  [
+                                         "3d"
+                                     ],
+                        "fileTypes":  [
+
+                                      ],
+                        "ignored":  false,
+                        "catchAll":  false
+                    },
+                    {
+                        "path":  "00 Assets/03 SVG",
+                        "groupIds":  [
+                                         "svg"
+                                     ],
+                        "fileTypes":  [
+
+                                      ],
+                        "ignored":  false,
+                        "catchAll":  false
+                    },
+                    {
+                        "path":  "00 Assets/Loose files",
+                        "groupIds":  [
+
+                                     ],
+                        "fileTypes":  [
+
+                                      ],
+                        "ignored":  false,
+                        "catchAll":  true
+                    }
+                ],
+    "programFolders":  [
+                           {
+                               "groupId":  "blender",
+                               "createInRoot":  true,
+                               "profileId":  "67b60970-d8f5-4b54-8f5f-47f081ef4f07"
+                           },
+                           {
+                               "groupId":  "fusion-360",
+                               "createInRoot":  true,
+                               "profileId":  "67b60970-d8f5-4b54-8f5f-47f081ef4f07"
+                           },
+                           {
+                               "groupId":  "illustrator",
+                               "createInRoot":  true,
+                               "profileId":  "67b60970-d8f5-4b54-8f5f-47f081ef4f07"
+                           }
+                       ],
+    "createdAt":  "2026-08-03T17:35:36.7679507+00:00",
+    "updatedAt":  "2026-08-04T00:51:23.8021613+00:00"
+}

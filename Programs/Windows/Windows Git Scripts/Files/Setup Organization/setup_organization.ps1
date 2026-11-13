@@ -408,6 +408,62 @@ function Write-AtomicJsonFile {
     Move-Item -LiteralPath $temporary -Destination $Path -Force
 }
 
+function Initialize-SetupOrganizationDefaults {
+    $dataRoot = [System.IO.Path]::GetFullPath((Get-ProgramDataRoot))
+    # An existing namespace belongs to its user, including deliberately empty
+    # or partially configured data. Never replace it or resurrect deleted items.
+    if (Test-Path -LiteralPath $dataRoot) { return }
+
+    $defaults = Join-Path $PSScriptRoot 'defaults'
+    $files = @(
+        'file-groups.json',
+        'profiles/67b60970-d8f5-4b54-8f5f-47f081ef4f07.json',
+        'profiles/87a7b28b-9f4d-41a5-aaf8-6613ff442cb8.json'
+    )
+    foreach ($relative in $files) {
+        $source = Join-Path $defaults $relative
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "The packaged Setup Organization defaults are incomplete: $relative"
+        }
+        Assert-NoReparsePointInPath -Path $source -Label 'Packaged organization defaults'
+    }
+
+    $parent = Split-Path -Parent $dataRoot
+    [System.IO.Directory]::CreateDirectory($parent) | Out-Null
+    Assert-NoReparsePointInPath -Path $parent -Label 'Organization data parent'
+    $temporary = Join-Path $parent ('.setup-organization-defaults-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        [System.IO.Directory]::CreateDirectory((Join-Path $temporary 'profiles')) | Out-Null
+        foreach ($relative in $files) {
+            [System.IO.File]::Copy((Join-Path $defaults $relative), (Join-Path $temporary $relative))
+        }
+        Write-AtomicJsonFile -Path (Join-Path $temporary 'defaults-applied.json') -Value ([ordered]@{
+            schemaVersion = 1
+            format = 'flowcell.windows.setup-organization.defaults-applied.v1'
+            appliedAt = [DateTimeOffset]::UtcNow.ToString('o')
+        })
+        try {
+            # Publish all linked profiles and groups together. A simultaneous
+            # first request can win; it must never be overwritten or merged.
+            [System.IO.Directory]::Move($temporary, $dataRoot)
+        }
+        catch [System.IO.IOException] {
+            if (-not (Test-Path -LiteralPath $dataRoot -PathType Container)) { throw }
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary) {
+            $resolvedTemporary = [System.IO.Path]::GetFullPath($temporary)
+            if ((Split-Path -Parent $resolvedTemporary) -ne $parent -or
+                [System.IO.Path]::GetFileName($resolvedTemporary) -notlike '.setup-organization-defaults-*') {
+                throw 'Unsafe organization defaults temporary path.'
+            }
+            # Only this invocation's unpublished, short-lived staging data.
+            Remove-Item -LiteralPath $resolvedTemporary -Recurse -Force
+        }
+    }
+}
+
 # ---------------------------------------------------------------- file groups
 
 function Read-FileGroups {
@@ -1657,6 +1713,11 @@ try {
         -Required @('operation') `
         -Label 'Capability request'
     $operation = Get-RequiredString -Object $request -Name 'operation' -Label 'Capability request' -MaximumLength 64
+    if ($operation -in @('load-folder-tree', 'list-profiles', 'load-profile', 'prepare-target',
+        'prepare-existing-target', 'save-profile', 'delete-profile', 'list-file-groups',
+        'save-file-group', 'delete-file-group', 'list-panels', 'list-installed-buttons', 'stage-generated-button')) {
+        Initialize-SetupOrganizationDefaults
+    }
     $response = switch ($operation) {
         'load-folder-tree' { Invoke-LoadFolderTree -Request $request; break }
         'list-profiles' { Invoke-ListProfiles; break }

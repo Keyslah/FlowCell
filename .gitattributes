@@ -5,6 +5,8 @@
 *.md text eol=lf
 *.txt text eol=lf
 *.json text eol=lf
+# Preserve the authored Setup Organization snapshot byte-for-byte.
+"Programs/Windows/Windows Git Scripts/Files/Setup Organization/defaults/**" -text !eol whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 *.yml text eol=lf
 *.yaml text eol=lf
 *.xml text eol=lf

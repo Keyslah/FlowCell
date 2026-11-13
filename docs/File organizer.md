@@ -10,6 +10,12 @@ click the button, and its files get sorted into that layout.
 In FlowCell, go to the **Windows** program, open the **Files** panel, and click
 **Setup Organization**.
 
+A fresh setup includes **Program Tree** and **Project**, with their saved folder
+rules and settings. It also includes all 6 groups: **Images**, **3D**, **SVG**,
+**Blender**, **Illustrator**, and **Fusion 360**. Project's 3 program folders use
+the saved Program Tree profile. Existing profiles and groups stay unchanged when
+the package is updated; deleted entries are not recreated.
+
 ## Set it up
 
 The numbers match the screenshot.

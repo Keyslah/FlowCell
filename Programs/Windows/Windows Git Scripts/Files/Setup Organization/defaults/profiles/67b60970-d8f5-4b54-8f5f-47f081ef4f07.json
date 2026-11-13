@@ -1,0 +1,46 @@
+{
+    "schemaVersion":  3,
+    "format":  "flowcell.windows.setup-organization.profile.v3",
+    "profileId":  "67b60970-d8f5-4b54-8f5f-47f081ef4f07",
+    "name":  "Program Tree",
+    "folders":  [
+                    {
+                        "path":  "02 snapshots",
+                        "groupIds":  [
+
+                                     ],
+                        "fileTypes":  [
+
+                                      ],
+                        "ignored":  true,
+                        "catchAll":  false
+                    },
+                    {
+                        "path":  "03 archive",
+                        "groupIds":  [
+
+                                     ],
+                        "fileTypes":  [
+
+                                      ],
+                        "ignored":  true,
+                        "catchAll":  false
+                    },
+                    {
+                        "path":  "04 trash",
+                        "groupIds":  [
+
+                                     ],
+                        "fileTypes":  [
+
+                                      ],
+                        "ignored":  true,
+                        "catchAll":  false
+                    }
+                ],
+    "programFolders":  [
+
+                       ],
+    "createdAt":  "2026-08-03T19:49:08.9892862+00:00",
+    "updatedAt":  "2026-08-03T19:49:08.9892862+00:00"
+}

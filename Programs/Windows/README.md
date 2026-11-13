@@ -37,8 +37,9 @@ contains 8 Files tools and 8 Utility tools, including Setup Organization, Window
 Grid, clipboard text, backups and Git actions, screen captures, monitor controls,
 Chrome workspaces and the FlowCell window toggle. Startup starts empty and accepts
 the user's own assignments. Codex Micro remains a separately assignable catalog;
-generated organizer profile Buttons are created through Setup Organization rather
-than shipping another user's profiles. The exact enabled set is stored under
+generated organizer profile Buttons are created through Setup Organization, which
+ships the authored Program Tree and Project profiles and all 6 file/program groups.
+The exact enabled set is stored under
 `flowcellbackend/local/program-registration/windows.json`; startup synchronizes
 only that set. Add Panel can create an empty managed Windows Panel or copy one
 validated external folder without modifying the source.
@@ -65,6 +66,15 @@ generated Button removes its complete owner lifecycle while leaving the shared
 profile available. Deleting Setup Organization removes its page owner and all
 Button-owned state while retaining the tracked catalog and explicitly shared
 profiles. See [`../../docs/File organizer.md`](../../docs/File%20organizer.md).
+
+A fresh Setup Organization data folder starts with the exact packaged Program
+Tree and Project profiles, including their folder rules, cleanup settings and
+linked program folders. The 6 saved groups are Images, 3D, SVG, Blender,
+Illustrator and Fusion 360, with all 87 extension entries. These immutable
+snapshots live in the source package's `defaults/` folder and ship in the Windows
+catalog. Initialization publishes the complete set together once; an existing
+shared data folder is preserved, and deleting a profile or group does not restore
+it on the next launch.
 
 ## Utility Notes
 

@@ -35,6 +35,39 @@ try {
     Assert ($manifest.programId -ceq 'windows') 'Real Windows manifest is present.'
     Assert (@($manifest.panels | Where-Object { $_.label -in @('Files','Utility','Startup') }).Count -eq 3) 'All three panel choices are bundled.'
     Assert ($actual.Files -gt 10 -and $actual.CatalogFiles -gt 10) 'The full Windows catalog is bundled.'
+    $organizer = @($manifest.bundledSources | Where-Object { $_.id -ceq 'windows.setup-organization' })
+    Assert ($organizer.Count -eq 1 -and $organizer[0].version -ceq '1.3.4') 'Setup Organization version 1.3.4 is bundled.'
+    $defaultsRelative = 'Windows Git Scripts/Files/Setup Organization/defaults'
+    $stagedDefaults = Join-Path $actual.Destination $defaultsRelative
+    $sourceDefaults = Join-Path $sourceRoot ('Programs/Windows/' + $defaultsRelative)
+    $expectedDefaults = @(
+        'file-groups.json',
+        'profiles/67b60970-d8f5-4b54-8f5f-47f081ef4f07.json',
+        'profiles/87a7b28b-9f4d-41a5-aaf8-6613ff442cb8.json'
+    )
+    $stagedDefaultFiles = @(Get-ChildItem -LiteralPath $stagedDefaults -File -Recurse | ForEach-Object {
+        $_.FullName.Substring($stagedDefaults.Length + 1).Replace('\', '/')
+    })
+    Assert ($stagedDefaultFiles.Count -eq 3 -and @(Compare-Object $expectedDefaults $stagedDefaultFiles -CaseSensitive).Count -eq 0) 'Exactly the three saved Setup Organization default snapshots are staged.'
+    foreach ($relative in $expectedDefaults) {
+        $sourceBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $sourceDefaults $relative)))
+        $stagedBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $stagedDefaults $relative)))
+        Assert ($stagedBytes -ceq $sourceBytes) "Setup Organization snapshot is byte-identical: $relative"
+    }
+    $expectedProfiles = @{
+        '67b60970-d8f5-4b54-8f5f-47f081ef4f07' = 'Program Tree'
+        '87a7b28b-9f4d-41a5-aaf8-6613ff442cb8' = 'Project'
+    }
+    $profiles = @(Get-ChildItem -LiteralPath (Join-Path $stagedDefaults 'profiles') -File)
+    Assert ($profiles.Count -eq 2) 'Exactly two saved organization profiles are staged.'
+    foreach ($profileFile in $profiles) {
+        $profile = Get-Content -LiteralPath $profileFile.FullName -Raw | ConvertFrom-Json
+        Assert ($profile.profileId -ceq $profileFile.BaseName -and $profile.name -ceq $expectedProfiles[$profileFile.BaseName]) "Saved profile identity and name are preserved: $($profileFile.BaseName)"
+    }
+    $fileGroups = Get-Content -LiteralPath (Join-Path $stagedDefaults 'file-groups.json') -Raw | ConvertFrom-Json
+    Assert (@($fileGroups.groups).Count -eq 6) 'All six saved file groups are staged.'
+    $extensionCount = (@($fileGroups.groups | ForEach-Object { @($_.fileTypes).Count }) | Measure-Object -Sum).Sum
+    Assert ($extensionCount -eq 87) 'All 87 saved file-group extension entries are staged.'
     $baseline = Get-Content -LiteralPath (Join-Path $actual.Destination 'SupportScripts/catalog-baseline.json') -Raw | ConvertFrom-Json
     $mismatches = @($baseline.files.PSObject.Properties | Where-Object {
         (Get-FileHash -LiteralPath (Join-Path $actual.Destination ($manifest.gitScriptsFolder + '/' + $_.Name)) -Algorithm SHA256).Hash -ine $_.Value

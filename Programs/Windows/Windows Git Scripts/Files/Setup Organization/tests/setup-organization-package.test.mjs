@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -25,6 +25,12 @@ const manifestPath = path.join(packageRoot, "flowcell.script.json");
 const dispatcherPath = path.join(packageRoot, "setup_organization.ps1");
 const templatePath = path.join(packageRoot, "templates", "organize_folder.ps1.template");
 const pagePath = path.join(packageRoot, "page", "page.js");
+const defaultsRoot = path.join(packageRoot, "defaults");
+const defaultProfileIds = [
+  "67b60970-d8f5-4b54-8f5f-47f081ef4f07",
+  "87a7b28b-9f4d-41a5-aaf8-6613ff442cb8"
+];
+const defaultFiles = ["file-groups.json", ...defaultProfileIds.map((id) => `profiles/${id}.json`)];
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 
 const actionById = new Map(manifest.page.actions.map((action) => [action.id, action]));
@@ -159,6 +165,7 @@ test("every page request and response uses the supported strict schema subset", 
 
 test("package resources are self-contained and sandbox-compatible", () => {
   assert.deepEqual(collectFiles(packageRoot), [
+    ...defaultFiles.map((relative) => `defaults/${relative}`),
     "flowcell.script.json",
     "formats/profile.v3.schema.json",
     "formats/project-marker.v1.schema.json",
@@ -178,7 +185,8 @@ test("package resources are self-contained and sandbox-compatible", () => {
     "formats/profile.v3.schema.json",
     "formats/project-marker.v1.schema.json",
     "formats/stage.v1.schema.json",
-    "templates/organize_folder.ps1.template"
+    "templates/organize_folder.ps1.template",
+    ...defaultFiles.map((relative) => `defaults/${relative}`)
   ]) {
     const absolute = path.resolve(packageRoot, relative);
     assert.ok(absolute.startsWith(`${path.resolve(packageRoot)}${path.sep}`));
@@ -538,6 +546,11 @@ function createIsolatedDispatcher(workspace) {
   const isolatedTemplate = path.join(isolatedPackageRoot, "templates", "organize_folder.ps1.template");
   writeFileSync(isolatedDispatcher, readFileSync(dispatcherPath, "utf8"), "utf8");
   writeFileSync(isolatedTemplate, readFileSync(templatePath, "utf8"), "utf8");
+  for (const relative of defaultFiles) {
+    const destination = path.join(isolatedPackageRoot, "defaults", relative);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    writeFileSync(destination, readFileSync(path.join(defaultsRoot, relative)));
+  }
   return { isolatedDispatcher, isolatedPackageRoot };
 }
 
@@ -546,6 +559,225 @@ function runSetupOperation(dispatcher, payload) {
     "-FlowCellCapability", "windows.setup-organization", "-ArgsJson", JSON.stringify(payload)
   ]);
 }
+
+function defaultsFixture(workspace) {
+  const fixture = createIsolatedDispatcher(workspace);
+  const localRoot = path.join(workspace, "Installed local data");
+  return {
+    ...fixture,
+    dataRoot: path.join(localRoot, "program-data", "windows", "setup-organization"),
+    env: { ...process.env, FLOWCELL_LOCAL_ROOT: localRoot, FLOWCELL_PROGRAMS_ROOT: path.join(workspace, "Programs") }
+  };
+}
+
+function defaultsRequest(fixture, operation, capability = "windows.setup-organization") {
+  return {
+    args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture.isolatedDispatcher,
+      "-FlowCellCapability", capability, "-ArgsJson", JSON.stringify(typeof operation === "string" ? { operation } : operation)],
+    options: { encoding: "utf8", env: fixture.env, windowsHide: true, timeout: 45000, maxBuffer: 1024 * 1024 }
+  };
+}
+
+function runDefaultsRequest(fixture, operation, capability) {
+  const { args, options } = defaultsRequest(fixture, operation, capability);
+  return spawnSync("powershell.exe", args, options);
+}
+
+function successfulDefaultsRequest(fixture, operation) {
+  const result = runDefaultsRequest(fixture, operation);
+  assert.equal(result.status, 0, result.error?.message || result.stderr || result.stdout);
+  return JSON.parse(result.stdout.trim());
+}
+
+function assertSeedBytes(fixture) {
+  assert.deepEqual(collectFiles(fixture.dataRoot), [...defaultFiles, "defaults-applied.json"].sort());
+  for (const relative of defaultFiles) {
+    assert.deepEqual(readFileSync(path.join(fixture.dataRoot, relative)), readFileSync(path.join(defaultsRoot, relative)),
+      `${relative}: initializing defaults must preserve the shipped bytes`);
+  }
+  assert.equal(typeof JSON.parse(readFileSync(path.join(fixture.dataRoot, "defaults-applied.json"), "utf8")), "object");
+  assert.deepEqual(readdirSync(path.dirname(fixture.dataRoot)), ["setup-organization"], "no staging directories remain");
+}
+
+test("shipped Setup Organization defaults retain 2 linked profiles and 6 file groups", () => {
+  assert.deepEqual(collectFiles(defaultsRoot), defaultFiles);
+  const groups = JSON.parse(readFileSync(path.join(defaultsRoot, "file-groups.json"), "utf8")).groups;
+  assert.deepEqual(groups.map(({ groupId, label, fileTypes, isProgram }) => [groupId, label, fileTypes.length, isProgram]), [
+    ["images", "Images", 31, false], ["3d", "3D", 39, false], ["blender", "Blender", 6, true],
+    ["illustrator", "Illustrator", 6, true], ["fusion-360", "Fusion 360", 4, true], ["svg", "SVG", 1, false]
+  ]);
+  assert.equal(groups.reduce((count, group) => count + group.fileTypes.length, 0), 87);
+  const [programTree, project] = defaultProfileIds.map((id) => JSON.parse(readFileSync(path.join(defaultsRoot, "profiles", `${id}.json`), "utf8")));
+  assert.deepEqual([programTree.profileId, programTree.name, project.profileId, project.name],
+    [defaultProfileIds[0], "Program Tree", defaultProfileIds[1], "Project"]);
+  assert.deepEqual(programTree.folders.map(({ path: folder, ignored }) => [folder, ignored]),
+    [["02 snapshots", true], ["03 archive", true], ["04 trash", true]]);
+  assert.deepEqual(programTree.programFolders, []);
+  assert.equal(project.folders.length, 5);
+  assert.deepEqual(project.programFolders.map(({ groupId, profileId, createInRoot }) => [groupId, profileId, createInRoot]),
+    ["blender", "fusion-360", "illustrator"].map((id) => [id, programTree.profileId, true]));
+  for (const folder of project.folders) {
+    for (const groupId of folder.groupIds) assert.ok(groups.some((group) => group.groupId === groupId));
+  }
+});
+
+for (const firstOperation of ["list-profiles", "list-file-groups"]) {
+  test(`Setup Organization defaults initialize on first ${firstOperation} with exact snapshot bytes`, { skip: process.platform !== "win32" }, () => {
+    const workspace = mkdtempSync(path.join(tempRoot, "setup-org-defaults-fresh-"));
+    try {
+      const fixture = defaultsFixture(workspace);
+      assert.equal(existsSync(fixture.dataRoot), false);
+      successfulDefaultsRequest(fixture, firstOperation);
+      assertSeedBytes(fixture);
+      const receipt = readFileSync(path.join(fixture.dataRoot, "defaults-applied.json"));
+      const profiles = successfulDefaultsRequest(fixture, "list-profiles").profiles;
+      assert.deepEqual(profiles.map(({ profileId, name, folderCount, assignedCount }) => [profileId, name, folderCount, assignedCount]),
+        [[defaultProfileIds[0], "Program Tree", 3, 0], [defaultProfileIds[1], "Project", 5, 3]]);
+      assert.equal(successfulDefaultsRequest(fixture, "list-file-groups").groups.length, 6);
+      assertSeedBytes(fixture);
+      assert.deepEqual(readFileSync(path.join(fixture.dataRoot, "defaults-applied.json")), receipt, "repeat reads do not reseed or rewrite the receipt");
+      assert.equal(existsSync(path.join(workspace, "flowcellbackend", "local")), false, "FLOWCELL_LOCAL_ROOT owns the seeded data");
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+}
+
+test("Setup Organization defaults never supplement an existing empty namespace", { skip: process.platform !== "win32" }, () => {
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-defaults-empty-"));
+  try {
+    const fixture = defaultsFixture(workspace);
+    mkdirSync(fixture.dataRoot, { recursive: true });
+    assert.deepEqual(successfulDefaultsRequest(fixture, "list-profiles").profiles, []);
+    assert.deepEqual(successfulDefaultsRequest(fixture, "list-file-groups").groups, []);
+    assert.deepEqual(readdirSync(fixture.dataRoot), []);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("Setup Organization defaults preserve customized partial data without adding missing profiles", { skip: process.platform !== "win32" }, () => {
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-defaults-custom-"));
+  try {
+    const fixture = defaultsFixture(workspace);
+    const profile = JSON.parse(readFileSync(path.join(defaultsRoot, defaultFiles[1]), "utf8"));
+    profile.name = "My customized Program Tree";
+    const groups = JSON.parse(readFileSync(path.join(defaultsRoot, "file-groups.json"), "utf8"));
+    groups.groups = [{ ...groups.groups[0], label: "My image formats", fileTypes: [".png", ".custom"] }];
+    mkdirSync(path.join(fixture.dataRoot, "profiles"), { recursive: true });
+    const originals = new Map([[defaultFiles[1], Buffer.from(JSON.stringify(profile, null, 3))],
+      ["file-groups.json", Buffer.from(JSON.stringify(groups, null, 4))], ["user-notes.txt", Buffer.from("Keep this unrelated local file.\r\n")]]);
+    for (const [relative, bytes] of originals) writeFileSync(path.join(fixture.dataRoot, relative), bytes);
+    assert.deepEqual(successfulDefaultsRequest(fixture, "list-profiles").profiles.map(({ name }) => name), [profile.name]);
+    assert.deepEqual(successfulDefaultsRequest(fixture, "list-file-groups").groups.map(({ label, fileTypes }) => [label, fileTypes]),
+      [["My image formats", [".png", ".custom"]]]);
+    assert.deepEqual(collectFiles(fixture.dataRoot), [...originals.keys()].sort());
+    for (const [relative, bytes] of originals) assert.deepEqual(readFileSync(path.join(fixture.dataRoot, relative)), bytes);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("Setup Organization defaults do not restore profiles or groups deliberately deleted after seeding", { skip: process.platform !== "win32" }, () => {
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-defaults-deleted-"));
+  try {
+    const fixture = defaultsFixture(workspace);
+    successfulDefaultsRequest(fixture, "list-profiles");
+    const receipt = readFileSync(path.join(fixture.dataRoot, "defaults-applied.json"));
+    // These files are disposable copies created by this test, never user data.
+    rmSync(path.join(fixture.dataRoot, defaultFiles[2]));
+    assert.equal(successfulDefaultsRequest(fixture, { operation: "delete-file-group", groupId: "svg" }).deleted, true);
+    assert.deepEqual(successfulDefaultsRequest(fixture, "list-profiles").profiles.map(({ profileId }) => profileId), [defaultProfileIds[0]]);
+    const groups = successfulDefaultsRequest(fixture, "list-file-groups").groups;
+    assert.equal(groups.length, 5);
+    assert.equal(groups.some(({ groupId }) => groupId === "svg"), false);
+    assert.equal(existsSync(path.join(fixture.dataRoot, defaultFiles[2])), false);
+    rmSync(path.join(fixture.dataRoot, "file-groups.json"));
+    assert.deepEqual(successfulDefaultsRequest(fixture, "list-file-groups").groups, []);
+    assert.equal(existsSync(path.join(fixture.dataRoot, "file-groups.json")), false);
+    assert.deepEqual(readFileSync(path.join(fixture.dataRoot, "defaults-applied.json")), receipt);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("Setup Organization defaults prepare a fresh Project through its linked Program Tree", { skip: process.platform !== "win32" }, () => {
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-defaults-project-"));
+  try {
+    const fixture = defaultsFixture(workspace);
+    const projectRoot = path.join(workspace, "New Project");
+    mkdirSync(projectRoot);
+    const response = successfulDefaultsRequest(fixture, { operation: "prepare-target", projectRoot,
+      profileId: defaultProfileIds[1], plannedExtension: ".blend" });
+    assert.equal(response.prepared, true);
+    assert.equal(response.profileId, defaultProfileIds[1]);
+    assert.equal(response.profileName, "Project");
+    assert.equal(response.destinationRelativePath, "Blender");
+    assert.equal(response.destinationDirectory.toLowerCase(), path.join(projectRoot, "Blender").toLowerCase());
+    const marker = JSON.parse(readFileSync(path.join(projectRoot, ".flowcell-project.json"), "utf8"));
+    assert.equal(marker.profileId, defaultProfileIds[1]);
+    assert.equal(marker.where[".blend"], "Blender");
+    assert.equal(marker.where[".png"], "00 Assets/01 Images");
+    assert.equal(marker.where[".stl"], "00 Assets/02 3D");
+    assert.equal(marker.where[".svg"], "00 Assets/03 SVG");
+    assert.equal(marker.catchAll, "00 Assets/Loose files");
+    for (const folder of ["02 snapshots", "03 archive", "04 trash"]) {
+      assert.ok(existsSync(path.join(projectRoot, "Blender", folder)), `${folder}: linked Program Tree folder was created`);
+      assert.ok(marker.ignored.includes(`Blender/${folder}`), `${folder}: linked Program Tree ignore policy was retained`);
+    }
+    assert.deepEqual(collectFiles(projectRoot), [".flowcell-project.json"], "an empty project needs no placeholder files");
+    for (const relative of defaultFiles) {
+      assert.deepEqual(readFileSync(path.join(fixture.dataRoot, relative)), readFileSync(path.join(defaultsRoot, relative)));
+    }
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+for (const [capability, operation] of [["unsupported-capability", "list-profiles"], ["windows.setup-organization", "unsupported-operation"]]) {
+  test(`Setup Organization defaults are not seeded for rejected ${capability === "unsupported-capability" ? "capability" : "operation"}`, { skip: process.platform !== "win32" }, () => {
+    const workspace = mkdtempSync(path.join(tempRoot, "setup-org-defaults-rejected-"));
+    try {
+      const fixture = defaultsFixture(workspace);
+      const result = runDefaultsRequest(fixture, operation, capability);
+      assert.equal(result.status, 1, result.error?.message || result.stderr || result.stdout);
+      assert.match(result.stderr, /Unsupported/);
+      assert.equal(existsSync(fixture.dataRoot), false);
+      assert.equal(existsSync(path.dirname(fixture.dataRoot)), false);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+}
+
+test("Setup Organization defaults publish one complete namespace under simultaneous first requests", { skip: process.platform !== "win32" }, async () => {
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-defaults-concurrent-"));
+  try {
+    const fixture = defaultsFixture(workspace);
+    const responses = await Promise.all(["list-profiles", "list-file-groups"].map((operation) => new Promise((resolve, reject) => {
+      const { args, options } = defaultsRequest(fixture, operation);
+      const child = spawn("powershell.exe", args, options);
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code !== 0) reject(new Error(stderr || stdout || `${operation} exited ${code}`));
+        else {
+          try { resolve(JSON.parse(stdout.trim())); } catch (error) { reject(error); }
+        }
+      });
+    })));
+    assert.equal(responses[0].profiles.length, 2);
+    assert.equal(responses[1].groups.length, 6);
+    assertSeedBytes(fixture);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
 
 function validProjectMarker(profileId, overrides = {}) {
   return {

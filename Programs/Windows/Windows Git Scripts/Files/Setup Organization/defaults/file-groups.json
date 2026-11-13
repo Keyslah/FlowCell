@@ -1,0 +1,147 @@
+{
+    "schemaVersion":  1,
+    "format":  "flowcell.windows.setup-organization.custom-file-groups.v1",
+    "groups":  [
+                   {
+                       "groupId":  "images",
+                       "label":  "Images",
+                       "fileTypes":  [
+                                         ".png",
+                                         ".jpg",
+                                         ".jpeg",
+                                         ".jfif",
+                                         ".gif",
+                                         ".bmp",
+                                         ".tif",
+                                         ".tiff",
+                                         ".webp",
+                                         ".heic",
+                                         ".heif",
+                                         ".avif",
+                                         ".ico",
+                                         ".psd",
+                                         ".psb",
+                                         ".xcf",
+                                         ".exr",
+                                         ".hdr",
+                                         ".tga",
+                                         ".dds",
+                                         ".raw",
+                                         ".cr2",
+                                         ".cr3",
+                                         ".nef",
+                                         ".arw",
+                                         ".orf",
+                                         ".rw2",
+                                         ".dng",
+                                         ".pnm",
+                                         ".ppm",
+                                         ".jp2"
+                                     ],
+                       "isProgram":  false,
+                       "createdAt":  "2026-08-03T04:20:48.7933286+00:00",
+                       "updatedAt":  "2026-08-03T20:05:23.6526412+00:00"
+                   },
+                   {
+                       "groupId":  "3d",
+                       "label":  "3D",
+                       "fileTypes":  [
+                                         ".stl",
+                                         ".obj",
+                                         ".mtl",
+                                         ".fbx",
+                                         ".3mf",
+                                         ".amf",
+                                         ".ply",
+                                         ".dae",
+                                         ".glb",
+                                         ".gltf",
+                                         ".3ds",
+                                         ".lwo",
+                                         ".x3d",
+                                         ".wrl",
+                                         ".vrml",
+                                         ".off",
+                                         ".usd",
+                                         ".usda",
+                                         ".usdc",
+                                         ".usdz",
+                                         ".abc",
+                                         ".step",
+                                         ".stp",
+                                         ".iges",
+                                         ".igs",
+                                         ".sat",
+                                         ".brep",
+                                         ".sldprt",
+                                         ".sldasm",
+                                         ".ipt",
+                                         ".iam",
+                                         ".skp",
+                                         ".dwg",
+                                         ".dxf",
+                                         ".max",
+                                         ".c4d",
+                                         ".ma",
+                                         ".mb",
+                                         ".gcode"
+                                     ],
+                       "isProgram":  false,
+                       "createdAt":  "2026-08-03T04:20:49.1454906+00:00",
+                       "updatedAt":  "2026-08-03T19:49:06.6817966+00:00"
+                   },
+                   {
+                       "groupId":  "blender",
+                       "label":  "Blender",
+                       "fileTypes":  [
+                                         ".blend",
+                                         ".blend1",
+                                         ".blend2",
+                                         ".blend3",
+                                         ".blend4",
+                                         ".blend5"
+                                     ],
+                       "isProgram":  true,
+                       "createdAt":  "2026-08-03T17:38:28.5617829+00:00",
+                       "updatedAt":  "2026-08-03T19:49:07.0371107+00:00"
+                   },
+                   {
+                       "groupId":  "illustrator",
+                       "label":  "Illustrator",
+                       "fileTypes":  [
+                                         ".ai",
+                                         ".ait",
+                                         ".ase",
+                                         ".aip",
+                                         ".astute",
+                                         ".eps"
+                                     ],
+                       "isProgram":  true,
+                       "createdAt":  "2026-08-03T17:38:28.9230143+00:00",
+                       "updatedAt":  "2026-08-03T19:49:07.3980410+00:00"
+                   },
+                   {
+                       "groupId":  "fusion-360",
+                       "label":  "Fusion 360",
+                       "fileTypes":  [
+                                         ".f3d",
+                                         ".f3z",
+                                         ".f2d",
+                                         ".f3c"
+                                     ],
+                       "isProgram":  true,
+                       "createdAt":  "2026-08-03T17:38:29.2890847+00:00",
+                       "updatedAt":  "2026-08-03T19:49:07.7571122+00:00"
+                   },
+                   {
+                       "groupId":  "svg",
+                       "label":  "SVG",
+                       "fileTypes":  [
+                                         ".svg"
+                                     ],
+                       "isProgram":  false,
+                       "createdAt":  "2026-08-03T18:52:53.0709986+00:00",
+                       "updatedAt":  "2026-08-03T18:52:53.0709986+00:00"
+                   }
+               ]
+}
