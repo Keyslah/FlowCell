@@ -199,26 +199,6 @@ export default function AddProgramWindowPage() {
     }
   };
 
-  const refreshDetection = async () => {
-    if (busy || packageActionPending.current) return;
-    packageActionPending.current = true;
-    setBusy(true);
-    setStatus("Looking for installed applications…");
-    inventoryRequestRef.current += 1;
-    try {
-      const next = await listAvailableProgramPackages();
-      setInventory(next);
-      const program = next.packages.find((entry) => entry.programName === selectedProgramName);
-      if (program && !executablePath.trim()) setExecutablePath(program.suggestedExecutable);
-      setStatus("Detection refreshed. Choose the application you want to use, or Browse for it.");
-    } catch (error) {
-      setStatus(`Application detection failed: ${errorMessage(error)}`);
-    } finally {
-      packageActionPending.current = false;
-      setBusy(false);
-    }
-  };
-
   const presentSetupResult = async (result: ProgramSetupResult) => {
     setSetupStatuses((current) => [...current.filter((entry) => entry.programName !== result.programName), result]);
     setStatus(result.message);
@@ -494,7 +474,6 @@ export default function AddProgramWindowPage() {
                   setStatus("Add the Program when the name and EXE path are ready.");
                 })}>Browse</button>
               </div>
-              {plainExecutablePath ? <p className="program-setup__path" aria-label="Selected executable path">{plainExecutablePath}</p> : null}
             </div>
           </section>
         </>
@@ -516,19 +495,7 @@ export default function AddProgramWindowPage() {
                   setExecutablePath(paths[0]); markSelectionChanged();
                 })}>Browse</button>
               </div>
-              {executablePath ? <p className="program-setup__path" aria-label="Selected executable path">{executablePath}</p> : null}
-              {selectedProgram.executableCandidates.length ? <div className="program-setup__executables" role="group" aria-label="Detected application paths">
-                {selectedProgram.executableCandidates.map((candidate) => <button
-                  key={candidate.path}
-                  type="button"
-                  className={executablePath === candidate.path ? "is-active" : ""}
-                  aria-pressed={executablePath === candidate.path}
-                  disabled={busy}
-                  onClick={() => { setExecutablePath(candidate.path); markSelectionChanged(); }}
-                >{candidate.path}</button>)}
-              </div> : null}
             </div>
-            <div className="program-setup__switch"><span className="program-setup__hint">Select the installed application you want FlowCell to use.</span><button type="button" disabled={busy} onClick={() => void refreshDetection()}>Find installed</button></div>
           </section>
 
           <section className="program-setup__modes" aria-label="Setup mode">
@@ -549,7 +516,7 @@ export default function AddProgramWindowPage() {
                   id !== source.id && selectedProgram.sources.find((candidate) => candidate.id === id)?.panelName === panel.label
                 );
               });
-              return <details className="program-setup__panel" key={panel.id} open>
+              return <details className="program-setup__panel" key={`${selectedProgram.programId}:${panel.id}`}>
                 <summary>
                   <label className="program-setup__panel-choice" title={panelLocked ? "Required by a selected button." : `Select the ${panel.label} panel and its default buttons.`}>
                     <input type="checkbox" checked={selectedPanels.has(panel.label)} disabled={busy || mode === "register" || panelLocked} onClick={(event) => event.stopPropagation()} onChange={(event) => togglePanel(panel.label, event.target.checked)} />

@@ -14,6 +14,8 @@ import { BUTTON_SKIN_SECTION_ORDER } from "./.compiled-button-system/button/skin
 import { getEmbeddedButtonSkinFamilySources } from "./.compiled-button-system/button/skins/buttonSkinFamily.js";
 import { emptyButtonThemeOverride } from "./.compiled-button-system/theme/themeModel.js";
 import { isPortableTheme, portableThemeForScope, planPortableThemeImport, applyPortableTheme } from "./.compiled-button-system/theme/portableTheme.js";
+import { validateButtonStateDocument } from "./.compiled-button-system/button/state/buttonStateValidation.js";
+import { createProgramProfileRecipient } from "../../release-tools/program-profile-roundtrip.mjs";
 
 const programRoot = join(import.meta.dirname, "../../Programs/Blender");
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
@@ -181,3 +183,61 @@ test("the packaged Blender profile restores every saved appearance on a clean re
   assert.deepEqual(repeated, after, "reapplying the complete Blender profile must be idempotent");
   assert.ok(Object.keys(original.buttons).length > 0, "the recipient starts from clean actual catalog installations");
 });
+
+for (const collides of [true, false]) {
+  test(`Blender default setup retains the updater and ${collides ? "moves it clear of the captured Files layout" : "preserves its already-clear placement"}`, () => {
+    const program = readJson(join(programRoot, "flowcell.program.json"));
+    const archive = decodeProgramAppearance(readJson(join(programRoot, program.defaultTheme)));
+    const updaterSource = program.bundledSources.find((source) => source.id === "blender.update-git-scripts");
+    assert.ok(updaterSource);
+    assert.equal(archive.dependencies.some((source) => source.sourceId === updaterSource.id), false);
+    const updaterDependency = { id: "extra-updater", programName: program.label, programId: program.programId,
+      panelName: updaterSource.panelName, sourceId: updaterSource.id, sourceVersion: updaterSource.version,
+      sourceName: updaterSource.displayLabel, importKind: updaterSource.importKind, slots: [] };
+    const recipient = createProgramProfileRecipient(programRoot,
+      { dependencies: [...archive.dependencies, updaterDependency] });
+    const updaterId = recipient.descriptors.find((source) => source.sourceId === updaterSource.id).ownerButtonId;
+    const updater = Object.values(recipient.document.placements).find((placement) => placement.buttonId === updaterId);
+    const files = recipient.document.surfaces[updater.surfaceId];
+    // These are deliberate fixture coordinates, not measured live-app positions.
+    // Node cannot measure the browser's font widths. Start with valid separated
+    // rows, then reproduce the collision caused by restoring the saved geometry.
+    for (const id of files.placementIds) {
+      if (id !== updater.id) recipient.document.placements[id].y += 200;
+    }
+    updater.x = 8;
+    updater.y = collides ? 60 : 400;
+    let plan = planPortableThemeImport(recipient.document, archive, archive.target, recipient.descriptors);
+    prepareThemeSurfaces(recipient.document, archive, plan);
+    plan = planPortableThemeImport(recipient.document, archive, archive.target, recipient.descriptors);
+    assert.deepEqual(plan.issues, []);
+    assert.deepEqual(plan.missingDependencies, []);
+    assert.deepEqual(validateButtonStateDocument(recipient.document).issues, [], "the pre-theme layout is valid");
+    const before = structuredClone(recipient.document);
+    if (collides) {
+      assert.throws(() => applyPortableTheme(recipient.document, archive, plan), /Placements .* overlap/,
+        "ordinary theme import remains strict unless setup explicitly enables additional-placement reconciliation");
+    }
+    const after = applyPortableTheme(recipient.document, archive, plan, { reconcileAdditionalPanelPlacements: true });
+    assert.deepEqual(recipient.document, before, "theme preparation must not mutate the input document");
+    assert.deepEqual(validateButtonStateDocument(after).issues, [], "all restored and additional controls remain collision-free");
+    assert.deepEqual(after.buttons[updaterId], before.buttons[updaterId], "the updater keeps its execution target and presentation");
+    const { x: beforeX, y: beforeY, ...beforePlacement } = before.placements[updater.id];
+    const { x: afterX, y: afterY, ...afterPlacement } = after.placements[updater.id];
+    assert.deepEqual(afterPlacement, beforePlacement, "only the updater's position may change");
+    if (collides) assert.notDeepEqual([afterX, afterY], [beforeX, beforeY]);
+    else assert.deepEqual(after.placements[updater.id], before.placements[updater.id]);
+    const savedFiles = archive.surfaces.find((surface) => surface.kind === "panel" && surface.name === "Blender / Files");
+    assert.equal(savedFiles.placementIds.length, 7);
+    for (const savedId of savedFiles.placementIds) {
+      const restored = after.placements[plan.placementIds[savedId]];
+      const saved = archive.presentation[savedId].placement;
+      for (const key of ["x", "y", "width", "height"]) {
+        assert.equal(restored[key], saved[key], `${archive.presentation[savedId].button.label}: captured ${key}`);
+      }
+    }
+    const repeated = applyPortableTheme(after, archive,
+      planPortableThemeImport(after, archive, archive.target, recipient.descriptors), { reconcileAdditionalPanelPlacements: true });
+    assert.deepEqual(repeated, after, "reapplying the default does not move the updater again");
+  });
+}

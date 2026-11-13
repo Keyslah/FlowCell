@@ -119,6 +119,8 @@ export async function preparePortableThemeImport(args: {
   descriptors?: readonly ThemeToolDescriptor[]; extraDescriptors?: readonly ThemeToolDescriptor[];
   /** Program setup already installed exactly the selected sources in its own transaction. */
   allowSourceInstallation?: boolean;
+  /** New Program setup may retain selected controls outside its packaged appearance. */
+  reconcileAdditionalPanelPlacements?: boolean;
 }): Promise<PreparedPortableThemeImport> {
   const original = args.document ?? await loadButtonStateDocument();
   let descriptors = [...(args.descriptors ?? await getThemeToolDescriptors(args.target)), ...(args.extraDescriptors ?? [])];
@@ -165,7 +167,9 @@ export async function preparePortableThemeImport(args: {
     plan = planPortableThemeImport(candidate, args.theme, args.target, descriptors);
     prepareThemeSurfaces(candidate, args.theme, plan);
     plan = planPortableThemeImport(candidate, args.theme, args.target, descriptors);
-    const next = applyPortableTheme(candidate, args.theme, plan);
+    const next = applyPortableTheme(candidate, args.theme, plan, {
+      reconcileAdditionalPanelPlacements: args.reconcileAdditionalPanelPlacements
+    });
     return { document: next, plan, rollback,
       commit: async () => {
         try {

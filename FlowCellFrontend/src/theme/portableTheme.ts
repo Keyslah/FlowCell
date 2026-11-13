@@ -5,6 +5,7 @@ import type {
 } from "../button/types.js";
 import { createButtonStateDocument } from "../button/state/buttonDefaults.js";
 import { validateButtonStateDocument } from "../button/state/buttonStateValidation.js";
+import { buttonRectsOverlap, buttonSpacingPixelsFromMillimeters, findFirstAvailableButtonPosition } from "../button/geometry/buttonGeometry.js";
 import { resolveButtonPlacementPresentation } from "../button/state/buttonPresentation.js";
 import { createButtonSourceIdentity, deriveRegularPopoutSelectionKey } from "../button/state/sourceIdentity.js";
 import { parseInstalledToolSetSkin } from "../button/state/installedToolSetSkins.js";
@@ -694,7 +695,8 @@ export function planPortableThemeImport(
 }
 
 /** Pure application: callers commit once after dependencies/assets/contributions pass preflight. */
-export function applyPortableTheme(document: ButtonStateDocument, theme: PortableTheme, plan: PortableThemeImportPlan): ButtonStateDocument {
+export function applyPortableTheme(document: ButtonStateDocument, theme: PortableTheme, plan: PortableThemeImportPlan,
+  options: { reconcileAdditionalPanelPlacements?: boolean } = {}): ButtonStateDocument {
   if (!isPortableTheme(theme) || plan.themeId !== theme.id || plan.revision !== document.revision) {
     throw new Error("Theme preview is stale. Preview again before applying.");
   }
@@ -744,6 +746,30 @@ export function applyPortableTheme(document: ButtonStateDocument, theme: Portabl
     } else {
       let index = 0;
       surface.placementIds = surface.placementIds.map((id) => ordered.includes(id) ? ordered[index++] : id);
+    }
+    if (options.reconcileAdditionalPanelPlacements && surface.kind === "panel" && ordered.length && !allScoped) {
+      // New Program setup can include optional controls absent from its saved
+      // appearance. Keep the authored layout exact and make room for those controls.
+      const placements = surface.placementIds.map((id) => next.placements[id]);
+      const restored = ordered.map((id) => next.placements[id]);
+      const colliding = placements.filter((placement) => !mappedPlacements.has(placement.id) &&
+        restored.some((other) => buttonRectsOverlap(placement, other)));
+      const occupied = placements.filter((placement) => !colliding.includes(placement));
+      const padding = next.settings.defaultSurfacePadding;
+      const gap = buttonSpacingPixelsFromMillimeters(next.settings.buttonSpacingMm);
+      surface.width = Math.max(surface.width, ...placements.map((placement) => placement.x + placement.width));
+      surface.height = Math.max(surface.height, ...placements.map((placement) => placement.y + placement.height));
+      for (const placement of colliding) {
+        const position = findFirstAvailableButtonPosition({ width: placement.width, height: placement.height,
+          surface, otherRects: occupied, padding, gap, gridSize: 0 }) ?? {
+          x: padding, y: Math.max(padding, ...occupied.map((other) => other.y + other.height + gap))
+        };
+        placement.x = position.x;
+        placement.y = position.y;
+        surface.width = Math.max(surface.width, placement.x + placement.width + padding);
+        surface.height = Math.max(surface.height, placement.y + placement.height + padding);
+        occupied.push(placement);
+      }
     }
     const units = Object.values(next.popoutUnits).filter((unit) => unit.surfaceId === localId);
     if (saved.popout && units.length === 1 && allScoped) {

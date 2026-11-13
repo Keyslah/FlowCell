@@ -114,7 +114,8 @@ export async function applyProgramDefaultTheme(
     throw new Error("The packaged appearance is not a valid whole-Program portable theme.");
   }
   const prepared = await preparePortableThemeImport({
-    document, theme, target, descriptors: await getThemeToolDescriptors(target), allowSourceInstallation: false
+    document, theme, target, descriptors: await getThemeToolDescriptors(target), allowSourceInstallation: false,
+    reconcileAdditionalPanelPlacements: true
   });
   return prepared.document;
 }

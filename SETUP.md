@@ -25,9 +25,9 @@ Do not use GitHub's automatic `Source code (zip)` download as the app download. 
 5. Open **Add Program → Import program ZIP** and select the downloaded ZIP.
    FlowCell validates it and places the package in its active program data folder.
    Existing packages are not overwritten; importing a ZIP does not run its scripts.
-6. Choose the detected host application, or use **Find installed** / **Browse**.
-   When multiple installations are found, choose the one you want to use. Continue
-   through **Managed package** with Register program only, Add everything, or Custom.
+6. Check the application's .exe path, or use **Browse** to choose it.
+   Choose **Register program only**, **Add everything**, or **Custom**.
+   Panels start collapsed; expand a panel to choose its individual buttons.
 7. Use the program normally, following the package's host restart/reload notes.
 
 If Blender has not created its settings profile yet, setup remains visibly

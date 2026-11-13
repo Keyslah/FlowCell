@@ -158,25 +158,31 @@ function installationElements(node) {
   return React.isValidElement(node) ? [node, ...installationElements(node.props.children)] : [];
 }
 
-test("Installation renders full executable choices and selecting another version updates its path", () => {
+test("Installation renders one executable field and Browse updates its path", async () => {
   const paths = ["C:\\Program Files\\Blender Foundation\\Blender 5.0\\blender.exe", "C:\\Program Files\\Blender Foundation\\Blender 5.1\\blender.exe"];
   const h = installationRenderHarness({
     executablePath: paths[0],
+    showOpenFileDialog: async () => [paths[1]],
     selectedProgram: { programName: "Blender", executableCandidates: paths.map(path => ({ path })), panels: [], sources: [] }
   });
-  const choices = tree => installationElements(tree).filter(node => node.type === "button" && paths.includes(node.props.children));
+  const input = tree => installationElements(tree).find(node => node.props.id === "program-executable");
+  const browse = tree => installationElements(tree).filter(node => node.type === "button" && node.props.children === "Browse");
   let tree = h.render();
-  assert.deepEqual(choices(tree).map(node => node.props.children), paths);
-  assert.deepEqual(choices(tree).map(node => node.props["aria-pressed"]), [true, false]);
-  assert.ok(paths.every(path => renderToStaticMarkup(tree).includes(path)));
-  choices(tree)[1].props.onClick();
+  const markup = renderToStaticMarkup(tree);
+  assert.equal(input(tree).props.value, paths[0]);
+  assert.equal(markup.split(paths[0]).length - 1, 1);
+  assert.ok(!markup.includes(paths[1]));
+  assert.doesNotMatch(markup, /Detected application paths|Selected executable path|Select the installed application|Find installed/);
+  assert.equal(browse(tree).length, 1);
+  browse(tree)[0].props.onClick();
+  await Promise.resolve();
   tree = h.render();
-  assert.equal(installationElements(tree).find(node => node.props.id === "program-executable").props.value, paths[1]);
-  assert.equal(installationElements(tree).find(node => node.props["aria-label"] === "Selected executable path").props.children, paths[1]);
-  assert.deepEqual(choices(tree).map(node => node.props["aria-pressed"]), [false, true]);
+  assert.equal(input(tree).props.value, paths[1]);
+  assert.equal(renderToStaticMarkup(tree).split(paths[1]).length - 1, 1);
   assert.equal(h.state.selectionChanges, 1);
   h.state.busy = true;
-  assert.ok(choices(h.render()).every(node => node.props.disabled));
+  assert.ok(input(h.render()).props.disabled);
+  assert.ok(browse(h.render())[0].props.disabled);
 });
 
 test("Installation displays the complete manually entered path in both application setup modes", () => {
@@ -187,12 +193,12 @@ test("Installation displays the complete manually entered path in both applicati
     const input = installationElements(h.render()).find(node => node.props.id === inputId);
     input.props.onChange({ target: { value: path } });
     const tree = h.render();
-    assert.equal(installationElements(tree).find(node => node.props["aria-label"] === "Selected executable path").props.children, path);
-    assert.ok(renderToStaticMarkup(tree).includes(path));
+    assert.equal(installationElements(tree).find(node => node.props.id === inputId).props.value, path);
+    assert.equal(renderToStaticMarkup(tree).split(path).length - 1, 1);
   }
 });
 
-test("Installation renders all 6 catalog Shapes with their individual checkboxes", () => {
+test("Installation starts Shapes collapsed and retains all 6 individual checkboxes", () => {
   const manifest = JSON.parse(read(repoRoot, "Programs", "Blender", "flowcell.program.json"));
   const sources = manifest.bundledSources.filter(source => source.panelName === "Shapes").map(source => ({
     ...source, label: source.displayLabel
@@ -201,6 +207,9 @@ test("Installation renders all 6 catalog Shapes with their individual checkboxes
     programName: "Blender", executableCandidates: [], panels: manifest.panels.filter(panel => panel.label === "Shapes"), sources
   } });
   const tree = h.render();
+  const panel = installationElements(tree).find(node => node.type === "details" && node.props.className === "program-setup__panel");
+  assert.ok(!panel.props.open);
+  assert.doesNotMatch(renderToStaticMarkup(panel), /<details\b[^>]*\bopen(?:=|\s|>)/);
   const labels = installationElements(tree).filter(node => node.props.className === "program-setup__source");
   assert.equal(labels.length, 6);
   assert.deepEqual(labels.flatMap(label => installationElements(label).filter(node => node.type === "span").map(node => node.props.children)).sort(),

@@ -334,6 +334,74 @@ function singleFixture(owner) {
   return { document, descriptor, unit };
 }
 
+function additionalPanelFixture(savedRect, initialRect, extraRects, bounds) {
+  const donor = singleFixture("saved-owner");
+  const donorPlacement = Object.values(donor.document.placements).find((placement) =>
+    donor.document.surfaces[placement.surfaceId].kind === "panel");
+  Object.assign(donorPlacement, savedRect);
+  Object.assign(donor.document.surfaces[donorPlacement.surfaceId], {
+    width: savedRect.x + savedRect.width, height: savedRect.y + savedRect.height
+  });
+  const archive = capturePortableTheme({ document: donor.document, descriptors: [donor.descriptor], target, name: "Saved panel" });
+  const recipient = singleFixture("new-owner");
+  const extras = extraRects.map((rect, index) => {
+    const ownerButtonId = `extra-${index}`;
+    const sourceIdentity = createButtonSourceIdentity("Blender", "Tools", `${ownerButtonId}.flowcell-source.json`);
+    return { ownerButtonId, sourceIdentity, label: ownerButtonId, tooltip: "Keep this control", children: [],
+      executionTarget: { kind: "panel-script", programName: "Blender", panelName: "Tools", fileName: sourceIdentity.displayFileName } };
+  });
+  recipient.document = mergeLegacyInstallsIntoDocument(recipient.document, extras);
+  recipient.document.settings.defaultSurfacePadding = 0;
+  recipient.document.settings.buttonSpacingMm = 0;
+  const panel = Object.values(recipient.document.surfaces).find((surface) => surface.kind === "panel");
+  const mapped = panel.placementIds.map((id) => recipient.document.placements[id]).find((placement) => placement.buttonId === "new-owner");
+  Object.assign(mapped, initialRect);
+  Object.assign(panel, bounds);
+  const extraPlacements = extras.map((extra, index) => {
+    const placement = panel.placementIds.map((id) => recipient.document.placements[id]).find((entry) => entry.buttonId === extra.ownerButtonId);
+    Object.assign(placement, extraRects[index]);
+    return placement;
+  });
+  assert.deepEqual(validateButtonStateDocument(recipient.document).issues, [], "the initial selection must be valid before applying the saved layout");
+  const before = structuredClone(recipient.document);
+  const plan = planPortableThemeImport(recipient.document, archive, target, [recipient.descriptor]);
+  assert.deepEqual(plan.issues, []);
+  const after = applyPortableTheme(recipient.document, archive, plan, { reconcileAdditionalPanelPlacements: true });
+  assert.deepEqual(recipient.document, before, "setup preparation must not mutate its input");
+  assert.deepEqual(validateButtonStateDocument(after).issues, [], "all selected controls must fit without overlap");
+  assert.deepEqual(Object.fromEntries(Object.keys(savedRect).map((key) => [key, after.placements[mapped.id][key]])), savedRect);
+  for (const placement of extraPlacements) {
+    const restored = after.placements[placement.id];
+    assert.deepEqual({ ...restored, x: placement.x, y: placement.y }, placement, "only an extra control's position may change");
+    assert.deepEqual(after.buttons[placement.buttonId], before.buttons[placement.buttonId]);
+  }
+  return { after, before, panel, extraPlacements };
+}
+
+test("new Program appearance keeps clear extra controls fixed while relocating multiple collisions", () => {
+  const { after, before, extraPlacements } = additionalPanelFixture(
+    { x: 0, y: 0, width: 100, height: 40 }, { x: 0, y: 60, width: 100, height: 40 },
+    [{ x: 0, y: 0, width: 40, height: 20 }, { x: 45, y: 0, width: 40, height: 20 },
+      { x: 0, y: 40, width: 40, height: 20 }], { width: 100, height: 100 }
+  );
+  for (const placement of extraPlacements.slice(0, 2)) {
+    assert.notDeepEqual(after.placements[placement.id], before.placements[placement.id], "each colliding extra must move");
+  }
+  const clear = extraPlacements[2];
+  assert.deepEqual(after.placements[clear.id], before.placements[clear.id], "an already clear extra is a fixed obstacle");
+});
+
+test("new Program appearance grows a tight panel to retain every additional control", () => {
+  const { after, panel, extraPlacements } = additionalPanelFixture(
+    { x: 0, y: 0, width: 100, height: 100 }, { x: 0, y: 40, width: 100, height: 40 },
+    [{ x: 0, y: 0, width: 100, height: 20 }, { x: 0, y: 20, width: 100, height: 20 }],
+    { width: 100, height: 80 }
+  );
+  assert.equal(after.surfaces[panel.id].width, 100);
+  assert.equal(after.surfaces[panel.id].height, 140);
+  assert.deepEqual(extraPlacements.map((placement) => after.placements[placement.id].y), [100, 120]);
+});
+
 test("portable themes retain installed page source identity when its execution uses a core action", () => {
   const donor = singleFixture("installed-page");
   donor.document.buttons["installed-page"].executionTarget = { kind: "core-action", actionId: "open-installed-page" };
