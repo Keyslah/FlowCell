@@ -380,7 +380,7 @@ test("theme roles and gradient stops use the original native color popups for nu
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.1.3");
+  assert.equal(contribution.version, "3.1.4");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -1539,7 +1539,7 @@ test("package page is headerless and keeps Theme plus Place Picture compact", ()
   assert.equal((pageCss.match(/\.theme-role-grid\s*\{/g) || []).length, 1);
   assert.match(
     pageCss,
-    /\.theme-role\s*\{[^}]*flex:\s*0 1 auto;[^}]*width:\s*max-content;[^}]*max-width:\s*100%;[^}]*min-height:\s*30px;/
+    /\.theme-role\s*\{[^}]*flex:\s*0 1 auto;[^}]*width:\s*max-content;[^}]*max-width:\s*100%;[^}]*min-height:\s*60px;/
   );
   assert.match(pageCss, /\.theme-role__label-row\s*\{[\s\S]*display:\s*flex;/);
   assert.match(pageCss, /\.theme-role__label\s*\{[\s\S]*word-break:\s*normal;/);
