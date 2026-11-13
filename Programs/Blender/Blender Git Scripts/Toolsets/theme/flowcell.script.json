@@ -2165,11 +2165,16 @@
               "header_text_hex": "textHex",
               "text_hex": "textHex",
               "control_text_hex": "textHex",
+              "search_field_text_hex": "textHex",
               "accent_text_hex": "textHex",
+              "outliner_active_text_hex": "textHex",
+              "outliner_selected_text_hex": "textHex",
               "editor_background_hex": "secondaryHex",
               "scene_hex": "backgroundHex",
               "controls_hex": "controlHex",
               "highlights_hex": "highlightHex",
+              "outliner_active_hex": "highlightHex",
+              "outliner_selected_hex": "highlightHex",
               "viewport_background_hex": "backgroundHex",
               "viewport_gradient_hex": "secondaryHex"
             }
@@ -2241,7 +2246,16 @@
                 "control_text_hex": {
                   "type": "string"
                 },
+                "search_field_text_hex": {
+                  "type": "string"
+                },
                 "accent_text_hex": {
+                  "type": "string"
+                },
+                "outliner_active_text_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_text_hex": {
                   "type": "string"
                 },
                 "editor_background_hex": {
@@ -2254,6 +2268,12 @@
                   "type": "string"
                 },
                 "highlights_hex": {
+                  "type": "string"
+                },
+                "outliner_active_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_hex": {
                   "type": "string"
                 },
                 "viewport_background_hex": {
@@ -2321,11 +2341,16 @@
               "header_text_hex",
               "text_hex",
               "control_text_hex",
+              "search_field_text_hex",
               "accent_text_hex",
+              "outliner_active_text_hex",
+              "outliner_selected_text_hex",
               "editor_background_hex",
               "scene_hex",
               "controls_hex",
               "highlights_hex",
+              "outliner_active_hex",
+              "outliner_selected_hex",
               "viewport_background_hex",
               "viewport_gradient_enabled",
               "viewport_gradient_hex",
@@ -2382,7 +2407,16 @@
                 "control_text_hex": {
                   "type": "string"
                 },
+                "search_field_text_hex": {
+                  "type": "string"
+                },
                 "accent_text_hex": {
+                  "type": "string"
+                },
+                "outliner_active_text_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_text_hex": {
                   "type": "string"
                 },
                 "editor_background_hex": {
@@ -2395,6 +2429,12 @@
                   "type": "string"
                 },
                 "highlights_hex": {
+                  "type": "string"
+                },
+                "outliner_active_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_hex": {
                   "type": "string"
                 },
                 "viewport_background_hex": {
@@ -2438,11 +2478,16 @@
                 "header_text_hex",
                 "text_hex",
                 "control_text_hex",
+                "search_field_text_hex",
                 "accent_text_hex",
+                "outliner_active_text_hex",
+                "outliner_selected_text_hex",
                 "editor_background_hex",
                 "scene_hex",
                 "controls_hex",
                 "highlights_hex",
+                "outliner_active_hex",
+                "outliner_selected_hex",
                 "viewport_background_hex",
                 "viewport_gradient_enabled",
                 "viewport_gradient_hex",
@@ -2495,11 +2540,16 @@
               "header_text_hex",
               "text_hex",
               "control_text_hex",
+              "search_field_text_hex",
               "accent_text_hex",
+              "outliner_active_text_hex",
+              "outliner_selected_text_hex",
               "editor_background_hex",
               "scene_hex",
               "controls_hex",
               "highlights_hex",
+              "outliner_active_hex",
+              "outliner_selected_hex",
               "viewport_background_hex",
               "viewport_gradient_enabled",
               "viewport_gradient_hex",
@@ -2598,7 +2648,16 @@
                 "control_text_hex": {
                   "type": "string"
                 },
+                "search_field_text_hex": {
+                  "type": "string"
+                },
                 "accent_text_hex": {
+                  "type": "string"
+                },
+                "outliner_active_text_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_text_hex": {
                   "type": "string"
                 },
                 "editor_background_hex": {
@@ -2611,6 +2670,12 @@
                   "type": "string"
                 },
                 "highlights_hex": {
+                  "type": "string"
+                },
+                "outliner_active_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_hex": {
                   "type": "string"
                 },
                 "viewport_background_hex": {
@@ -2680,11 +2745,16 @@
               "header_text_hex",
               "text_hex",
               "control_text_hex",
+              "search_field_text_hex",
               "accent_text_hex",
+              "outliner_active_text_hex",
+              "outliner_selected_text_hex",
               "editor_background_hex",
               "scene_hex",
               "controls_hex",
               "highlights_hex",
+              "outliner_active_hex",
+              "outliner_selected_hex",
               "viewport_background_hex",
               "viewport_gradient_enabled",
               "viewport_gradient_hex",
@@ -2787,7 +2857,16 @@
                 "control_text_hex": {
                   "type": "string"
                 },
+                "search_field_text_hex": {
+                  "type": "string"
+                },
                 "accent_text_hex": {
+                  "type": "string"
+                },
+                "outliner_active_text_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_text_hex": {
                   "type": "string"
                 },
                 "editor_background_hex": {
@@ -2800,6 +2879,12 @@
                   "type": "string"
                 },
                 "highlights_hex": {
+                  "type": "string"
+                },
+                "outliner_active_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_hex": {
                   "type": "string"
                 },
                 "viewport_background_hex": {
@@ -3289,11 +3374,16 @@
                 "header_text_hex",
                 "text_hex",
                 "control_text_hex",
+                "search_field_text_hex",
                 "accent_text_hex",
+                "outliner_active_text_hex",
+                "outliner_selected_text_hex",
                 "editor_background_hex",
                 "scene_hex",
                 "controls_hex",
                 "highlights_hex",
+                "outliner_active_hex",
+                "outliner_selected_hex",
                 "viewport_background_hex",
                 "viewport_gradient_enabled",
                 "viewport_gradient_hex",
@@ -3358,11 +3448,16 @@
               "header_text_hex",
               "text_hex",
               "control_text_hex",
+              "search_field_text_hex",
               "accent_text_hex",
+              "outliner_active_text_hex",
+              "outliner_selected_text_hex",
               "editor_background_hex",
               "scene_hex",
               "controls_hex",
               "highlights_hex",
+              "outliner_active_hex",
+              "outliner_selected_hex",
               "viewport_background_hex",
               "viewport_gradient_enabled",
               "viewport_gradient_hex",
@@ -3471,7 +3566,16 @@
                 "control_text_hex": {
                   "type": "string"
                 },
+                "search_field_text_hex": {
+                  "type": "string"
+                },
                 "accent_text_hex": {
+                  "type": "string"
+                },
+                "outliner_active_text_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_text_hex": {
                   "type": "string"
                 },
                 "editor_background_hex": {
@@ -3484,6 +3588,12 @@
                   "type": "string"
                 },
                 "highlights_hex": {
+                  "type": "string"
+                },
+                "outliner_active_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_hex": {
                   "type": "string"
                 },
                 "viewport_background_hex": {
@@ -4003,11 +4113,16 @@
               "header_text_hex",
               "text_hex",
               "control_text_hex",
+              "search_field_text_hex",
               "accent_text_hex",
+              "outliner_active_text_hex",
+              "outliner_selected_text_hex",
               "editor_background_hex",
               "scene_hex",
               "controls_hex",
               "highlights_hex",
+              "outliner_active_hex",
+              "outliner_selected_hex",
               "viewport_background_hex",
               "viewport_gradient_enabled",
               "viewport_gradient_hex",
@@ -4123,7 +4238,16 @@
                 "control_text_hex": {
                   "type": "string"
                 },
+                "search_field_text_hex": {
+                  "type": "string"
+                },
                 "accent_text_hex": {
+                  "type": "string"
+                },
+                "outliner_active_text_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_text_hex": {
                   "type": "string"
                 },
                 "editor_background_hex": {
@@ -4136,6 +4260,12 @@
                   "type": "string"
                 },
                 "highlights_hex": {
+                  "type": "string"
+                },
+                "outliner_active_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_hex": {
                   "type": "string"
                 },
                 "viewport_background_hex": {
@@ -4655,11 +4785,16 @@
               "header_text_hex",
               "text_hex",
               "control_text_hex",
+              "search_field_text_hex",
               "accent_text_hex",
+              "outliner_active_text_hex",
+              "outliner_selected_text_hex",
               "editor_background_hex",
               "scene_hex",
               "controls_hex",
               "highlights_hex",
+              "outliner_active_hex",
+              "outliner_selected_hex",
               "viewport_background_hex",
               "viewport_gradient_enabled",
               "viewport_gradient_hex",
@@ -4775,7 +4910,16 @@
                 "control_text_hex": {
                   "type": "string"
                 },
+                "search_field_text_hex": {
+                  "type": "string"
+                },
                 "accent_text_hex": {
+                  "type": "string"
+                },
+                "outliner_active_text_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_text_hex": {
                   "type": "string"
                 },
                 "editor_background_hex": {
@@ -4788,6 +4932,12 @@
                   "type": "string"
                 },
                 "highlights_hex": {
+                  "type": "string"
+                },
+                "outliner_active_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_hex": {
                   "type": "string"
                 },
                 "viewport_background_hex": {
@@ -5435,7 +5585,16 @@
                 "control_text_hex": {
                   "type": "string"
                 },
+                "search_field_text_hex": {
+                  "type": "string"
+                },
                 "accent_text_hex": {
+                  "type": "string"
+                },
+                "outliner_active_text_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_text_hex": {
                   "type": "string"
                 },
                 "editor_background_hex": {
@@ -5448,6 +5607,12 @@
                   "type": "string"
                 },
                 "highlights_hex": {
+                  "type": "string"
+                },
+                "outliner_active_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_hex": {
                   "type": "string"
                 },
                 "viewport_background_hex": {
@@ -5516,7 +5681,16 @@
             "control_text_hex": {
               "type": "string"
             },
+            "search_field_text_hex": {
+              "type": "string"
+            },
             "accent_text_hex": {
+              "type": "string"
+            },
+            "outliner_active_text_hex": {
+              "type": "string"
+            },
+            "outliner_selected_text_hex": {
               "type": "string"
             },
             "editor_background_hex": {
@@ -5537,6 +5711,12 @@
             "highlights_hex": {
               "type": "string"
             },
+            "outliner_active_hex": {
+              "type": "string"
+            },
+            "outliner_selected_hex": {
+              "type": "string"
+            },
             "viewport_background_hex": {
               "type": "string"
             },
@@ -5555,13 +5735,18 @@
             "header_text_hex",
             "text_hex",
             "control_text_hex",
+            "search_field_text_hex",
             "accent_text_hex",
+            "outliner_active_text_hex",
+            "outliner_selected_text_hex",
             "editor_background_hex",
             "scene_hex",
             "controls_hex",
             "borders_hex",
             "darks_hex",
             "highlights_hex",
+            "outliner_active_hex",
+            "outliner_selected_hex",
             "viewport_background_hex",
             "viewport_gradient_enabled",
             "viewport_gradient_hex"
@@ -5592,7 +5777,16 @@
             "control_text_hex": {
               "type": "string"
             },
+            "search_field_text_hex": {
+              "type": "string"
+            },
             "accent_text_hex": {
+              "type": "string"
+            },
+            "outliner_active_text_hex": {
+              "type": "string"
+            },
+            "outliner_selected_text_hex": {
               "type": "string"
             },
             "editor_background_hex": {
@@ -5611,6 +5805,12 @@
               "type": "string"
             },
             "highlights_hex": {
+              "type": "string"
+            },
+            "outliner_active_hex": {
+              "type": "string"
+            },
+            "outliner_selected_hex": {
               "type": "string"
             },
             "viewport_background_hex": {
@@ -5634,13 +5834,18 @@
             "header_text_hex",
             "text_hex",
             "control_text_hex",
+            "search_field_text_hex",
             "accent_text_hex",
+            "outliner_active_text_hex",
+            "outliner_selected_text_hex",
             "editor_background_hex",
             "scene_hex",
             "controls_hex",
             "borders_hex",
             "darks_hex",
             "highlights_hex",
+            "outliner_active_hex",
+            "outliner_selected_hex",
             "viewport_background_hex",
             "viewport_gradient_enabled",
             "viewport_gradient_hex",
@@ -5753,7 +5958,16 @@
                 "control_text_hex": {
                   "type": "string"
                 },
+                "search_field_text_hex": {
+                  "type": "string"
+                },
                 "accent_text_hex": {
+                  "type": "string"
+                },
+                "outliner_active_text_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_text_hex": {
                   "type": "string"
                 },
                 "editor_background_hex": {
@@ -5774,6 +5988,12 @@
                 "highlights_hex": {
                   "type": "string"
                 },
+                "outliner_active_hex": {
+                  "type": "string"
+                },
+                "outliner_selected_hex": {
+                  "type": "string"
+                },
                 "viewport_background_hex": {
                   "type": "string"
                 },
@@ -5792,13 +6012,18 @@
                 "header_text_hex",
                 "text_hex",
                 "control_text_hex",
+                "search_field_text_hex",
                 "accent_text_hex",
+                "outliner_active_text_hex",
+                "outliner_selected_text_hex",
                 "editor_background_hex",
                 "scene_hex",
                 "controls_hex",
                 "borders_hex",
                 "darks_hex",
                 "highlights_hex",
+                "outliner_active_hex",
+                "outliner_selected_hex",
                 "viewport_background_hex",
                 "viewport_gradient_enabled",
                 "viewport_gradient_hex"
@@ -5858,7 +6083,16 @@
             "control_text_hex": {
               "type": "string"
             },
+            "search_field_text_hex": {
+              "type": "string"
+            },
             "accent_text_hex": {
+              "type": "string"
+            },
+            "outliner_active_text_hex": {
+              "type": "string"
+            },
+            "outliner_selected_text_hex": {
               "type": "string"
             },
             "editor_background_hex": {
@@ -5877,6 +6111,12 @@
               "type": "string"
             },
             "highlights_hex": {
+              "type": "string"
+            },
+            "outliner_active_hex": {
+              "type": "string"
+            },
+            "outliner_selected_hex": {
               "type": "string"
             },
             "viewport_background_hex": {
@@ -5900,7 +6140,12 @@
                 "header_text_hex",
                 "text_hex",
                 "control_text_hex",
+                "search_field_text_hex",
                 "accent_text_hex",
+                "outliner_active_hex",
+                "outliner_active_text_hex",
+                "outliner_selected_hex",
+                "outliner_selected_text_hex",
                 "highlights_hex",
                 "viewport_background_hex",
                 "viewport_gradient_hex"
@@ -5918,13 +6163,18 @@
             "header_text_hex",
             "text_hex",
             "control_text_hex",
+            "search_field_text_hex",
             "accent_text_hex",
+            "outliner_active_text_hex",
+            "outliner_selected_text_hex",
             "editor_background_hex",
             "scene_hex",
             "controls_hex",
             "borders_hex",
             "darks_hex",
             "highlights_hex",
+            "outliner_active_hex",
+            "outliner_selected_hex",
             "viewport_background_hex",
             "viewport_gradient_enabled",
             "viewport_gradient_hex",
@@ -5951,7 +6201,12 @@
                 "header_text_hex",
                 "text_hex",
                 "control_text_hex",
+                "search_field_text_hex",
                 "accent_text_hex",
+                "outliner_active_hex",
+                "outliner_active_text_hex",
+                "outliner_selected_hex",
+                "outliner_selected_text_hex",
                 "highlights_hex",
                 "viewport_background_hex",
                 "viewport_gradient_hex"
@@ -6987,9 +7242,39 @@
           "defaultValue": "#FFFFFF"
         },
         {
+          "id": "search_field_text_hex",
+          "kind": "color",
+          "label": "Search / Field Text",
+          "defaultValue": "#FFFFFF"
+        },
+        {
           "id": "accent_text_hex",
           "kind": "color",
           "label": "Accent text",
+          "defaultValue": "#FFFFFF"
+        },
+        {
+          "id": "outliner_active_hex",
+          "kind": "color",
+          "label": "Active Row Fill",
+          "defaultValue": "#000000"
+        },
+        {
+          "id": "outliner_active_text_hex",
+          "kind": "color",
+          "label": "Active Object Text",
+          "defaultValue": "#FFFFFF"
+        },
+        {
+          "id": "outliner_selected_hex",
+          "kind": "color",
+          "label": "Selected Row Fill",
+          "defaultValue": "#7BA8B7"
+        },
+        {
+          "id": "outliner_selected_text_hex",
+          "kind": "color",
+          "label": "Selected Object Text",
           "defaultValue": "#FFFFFF"
         },
         {
@@ -7234,12 +7519,63 @@
           "bucket": "control_text_hex"
         },
         {
+          "id": "search_field_text",
+          "label": "Search / Field Text",
+          "fieldId": "search_field_text_hex",
+          "group": "text",
+          "tone": "text",
+          "bucket": "search_field_text_hex",
+          "tooltip": "Base color for text and icons in search and text fields, including empty Search and Object hints. Blender draws empty hints at 33% opacity; this bucket does not change that opacity."
+        },
+        {
           "id": "accent_text",
           "label": "scene/header text",
           "fieldId": "accent_text_hex",
           "group": "text",
           "tone": "text",
           "bucket": "accent_text_hex"
+        },
+        {
+          "id": "outliner_active",
+          "label": "Active Row Fill",
+          "fieldId": "outliner_active_hex",
+          "group": "viewport",
+          "tone": {
+            "dark": 0.0,
+            "light": 1.0
+          },
+          "bucket": "outliner_active_hex",
+          "tooltip": "Outliner active-row background. Separate from selected-row fill and object-name text."
+        },
+        {
+          "id": "outliner_active_text",
+          "label": "Active Object Text",
+          "fieldId": "outliner_active_text_hex",
+          "group": "text",
+          "tone": "text",
+          "bucket": "outliner_active_text_hex",
+          "tooltip": "Outliner active object name, separate from selected object names and row backgrounds."
+        },
+        {
+          "id": "outliner_selected",
+          "label": "Selected Row Fill",
+          "fieldId": "outliner_selected_hex",
+          "group": "viewport",
+          "tone": {
+            "dark": 0.35,
+            "light": 0.44
+          },
+          "bucket": "outliner_selected_hex",
+          "tooltip": "Outliner selected-row background, separate from the active-row background and object-name text."
+        },
+        {
+          "id": "outliner_selected_text",
+          "label": "Selected Object Text",
+          "fieldId": "outliner_selected_text_hex",
+          "group": "text",
+          "tone": "text",
+          "bucket": "outliner_selected_text_hex",
+          "tooltip": "Outliner selected object names, separate from the active object name and row backgrounds."
         },
         {
           "id": "highlights",
@@ -7383,13 +7719,18 @@
           "header_text_hex": "header_text_hex",
           "text_hex": "text_hex",
           "control_text_hex": "control_text_hex",
+          "search_field_text_hex": "search_field_text_hex",
           "accent_text_hex": "accent_text_hex",
+          "outliner_active_text_hex": "outliner_active_text_hex",
+          "outliner_selected_text_hex": "outliner_selected_text_hex",
           "editor_background_hex": "editor_background_hex",
           "scene_hex": "scene_hex",
           "controls_hex": "controls_hex",
           "borders_hex": "editor_background_hex",
           "darks_hex": "editor_background_hex",
           "highlights_hex": "highlights_hex",
+          "outliner_active_hex": "outliner_active_hex",
+          "outliner_selected_hex": "outliner_selected_hex",
           "viewport_background_hex": "viewport_background_hex",
           "viewport_gradient_enabled": "viewport_gradient_enabled",
           "viewport_gradient_hex": "viewport_gradient_hex"
@@ -7422,11 +7763,16 @@
           "header_text_hex",
           "text_hex",
           "control_text_hex",
+          "search_field_text_hex",
           "accent_text_hex",
+          "outliner_active_text_hex",
+          "outliner_selected_text_hex",
           "editor_background_hex",
           "scene_hex",
           "controls_hex",
           "highlights_hex",
+          "outliner_active_hex",
+          "outliner_selected_hex",
           "viewport_background_hex",
           "viewport_gradient_enabled",
           "viewport_gradient_hex",
@@ -7448,11 +7794,16 @@
           "header_text_hex",
           "text_hex",
           "control_text_hex",
+          "search_field_text_hex",
           "accent_text_hex",
+          "outliner_active_text_hex",
+          "outliner_selected_text_hex",
           "editor_background_hex",
           "scene_hex",
           "controls_hex",
           "highlights_hex",
+          "outliner_active_hex",
+          "outliner_selected_hex",
           "viewport_background_hex",
           "viewport_gradient_enabled",
           "viewport_gradient_hex",
@@ -7519,11 +7870,16 @@
         "header_text_hex",
         "text_hex",
         "control_text_hex",
+        "search_field_text_hex",
         "accent_text_hex",
+        "outliner_active_text_hex",
+        "outliner_selected_text_hex",
         "editor_background_hex",
         "scene_hex",
         "controls_hex",
         "highlights_hex",
+        "outliner_active_hex",
+        "outliner_selected_hex",
         "viewport_background_hex",
         "viewport_gradient_enabled",
         "viewport_gradient_hex",

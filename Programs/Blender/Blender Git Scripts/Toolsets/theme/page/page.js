@@ -1204,7 +1204,23 @@
   function applySavedFields(response) {
     const patch = objectRecord(response.fieldPatch) || objectRecord(response.values);
     if (!patch) return;
-    patchFields(patch);
+    patchFields(restoreThemeFields(patch));
+  }
+
+  function restoreThemeFields(fields) {
+    if (!fields) return fields;
+    const restored = { ...fields };
+    const legacyColors = {
+      search_field_text_hex: normalizeHex(fields.control_text_hex) || normalizeHex(fields.text_hex),
+      outliner_active_hex: fields.visual_mode === "light" ? "#FFFFFF" : fields.visual_mode === "dark" ? "#000000" : null,
+      outliner_selected_hex: normalizeHex(fields.highlights_hex),
+      outliner_active_text_hex: normalizeHex(fields.accent_text_hex) || normalizeHex(fields.highlights_hex),
+      outliner_selected_text_hex: normalizeHex(fields.accent_text_hex) || normalizeHex(fields.highlights_hex)
+    };
+    for (const [key, color] of Object.entries(legacyColors)) {
+      if (!Object.hasOwn(restored, key) && color) restored[key] = color;
+    }
+    return restored;
   }
 
   async function applyTheme(withinOperation = false) {
@@ -1778,7 +1794,7 @@
     const grid = element("div", "theme-role-grid");
     roles.forEach((role) => {
       const roleNode = element("div", "theme-role");
-      roleNode.title = role.label;
+      roleNode.title = role.tooltip || role.label;
       const roleLabel = element("div", "theme-role__label-row");
       roleLabel.append(element("span", "theme-role__label", role.label));
       if (role.fieldId === config.gradient.gradientFieldId) {
@@ -1803,7 +1819,7 @@
             const response = await requestAction(actions.theme.applyBucket, payload, copy.applyingBucket);
             applyResponsePatch(response);
           },
-          `Apply only the ${role.label} bucket.`
+          `Apply only the ${role.label} bucket.${role.tooltip ? ` ${role.tooltip}` : ""}`
         )
       );
       grid.append(roleNode);
@@ -2988,7 +3004,7 @@
   function hydrateState(value) {
     const state = objectRecord(value);
     if (!state || Object.keys(state).length === 0) return;
-    const fields = objectRecord(state.fields);
+    const fields = restoreThemeFields(objectRecord(state.fields));
     if (fields) {
       for (const [fieldId, fieldValueEntry] of Object.entries(fields)) {
         const field = fieldById.get(fieldId);
@@ -3077,7 +3093,7 @@
       }
       if (buttonsOnly) throw new Error("The common Popped Button Colors page supports only Button appearance operations.");
       const state = objectRecord(value);
-      const fields = objectRecord(state?.fields);
+      const fields = restoreThemeFields(objectRecord(state?.fields));
       if (!fields) throw new Error("The program Theme has no declared field settings.");
       const allowed = new Set(themeDeclaration.persistentFieldIds || []);
       for (const [key, value] of Object.entries(fields)) {

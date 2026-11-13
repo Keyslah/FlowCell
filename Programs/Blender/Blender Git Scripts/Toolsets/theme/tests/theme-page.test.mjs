@@ -380,7 +380,7 @@ test("theme roles and gradient stops use the original native color popups for nu
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.1.4");
+  assert.equal(contribution.version, "3.1.5");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -1285,7 +1285,12 @@ test("all existing Theme fields, buckets, and mappings are package-owned", () =>
     "header_text_hex",
     "text_hex",
     "control_text_hex",
+    "search_field_text_hex",
     "accent_text_hex",
+    "outliner_active_hex",
+    "outliner_active_text_hex",
+    "outliner_selected_hex",
+    "outliner_selected_text_hex",
     "highlights_hex",
     "viewport_background_hex",
     "viewport_gradient_hex"
@@ -1318,7 +1323,12 @@ test("the package restores the original Theme wording", () => {
       header_text: "Header text",
       text: "random text",
       control_text: "tool text",
+      search_field_text: "Search / Field Text",
       accent_text: "scene/header text",
+      outliner_active: "Active Row Fill",
+      outliner_active_text: "Active Object Text",
+      outliner_selected: "Selected Row Fill",
+      outliner_selected_text: "Selected Object Text",
       highlights: "Highlights",
       viewport: "Viewport BG",
       viewport_gradient: "Gradient 2"
@@ -1358,6 +1368,84 @@ test("the package restores the original Theme wording", () => {
       "environment.reset": "Reset"
     }
   );
+});
+
+test("search and Outliner buckets apply and persist independently with accurate tooltips", async () => {
+  const root = await renderThemePage({ fields: { control_text_hex: "#102030", accent_text_hex: "#405060" } },
+    { "button-theme.settings": { settings: poppedSettings(), configured: true } });
+  const colors = {
+    search_field_text_hex: "#A1B2C3", outliner_active_hex: "#112233", outliner_active_text_hex: "#445566",
+    outliner_selected_hex: "#778899", outliner_selected_text_hex: "#AABBCC"
+  };
+  for (const [key, color] of Object.entries(colors)) {
+    const role = page.config.roles.find(({ fieldId }) => fieldId === key);
+    const node = root.querySelectorAll("div").find((item) => classes(item).includes("theme-role") &&
+      item.querySelectorAll("input").some((input) => input["aria-label"] === `${role.label} color picker`));
+    assert.ok(node, `${role.label} must be visible`);
+    assert.match(node.title, key === "search_field_text_hex" ? /33% opacity/ : /Outliner/);
+    setInput(labelledInput(node, `${role.label} color picker`), color, "input");
+    assert.equal(node.querySelectorAll("button")[0].title, `Apply only the ${role.label} bucket. ${node.title}`);
+    node.querySelectorAll("button")[0].click();
+    await settlePageAction();
+    const applied = root.requests.filter(({ actionId }) => actionId === "theme.apply-bucket").at(-1).payload;
+    assert.equal(applied.bucket, key);
+    assert.equal(applied.bucket_hex, color);
+    assert.equal(applied[key], color);
+    assert.equal(applied.control_text_hex, "#102030");
+    assert.equal(applied.accent_text_hex, "#405060");
+  }
+  await clickPageButton(root, "Save Buckets");
+  const saved = root.requests.filter(({ actionId }) => actionId === "theme.fields.save").at(-1).payload.values;
+  for (const [key, color] of Object.entries(colors)) assert.equal(saved[key], color);
+  await root.flushTimers();
+  const ownerState = root.requests.filter(({ actionId }) => actionId === "owner-state.write").at(-1).payload.state;
+  const reopened = await renderThemePage(ownerState, { "button-theme.settings": { settings: poppedSettings(), configured: true } }, true);
+  const captured = await reopened.themeRequest("capture");
+  for (const [key, color] of Object.entries(colors)) assert.equal(captured.fields[key], color);
+});
+
+test("legacy saved buckets inherit their previous text and Outliner colors without overriding explicit new colors", async () => {
+  let loaded = { control_text_hex: "#213243", accent_text_hex: "#546576", highlights_hex: "#8798A9", visual_mode: "light" };
+  const root = await renderThemePage({ fields: { text_hex: "#121314", highlights_hex: "#151617", visual_mode: "dark" } }, {
+    "button-theme.settings": { settings: poppedSettings(), configured: true },
+    "theme.fields.load": () => ({ selected: true, fieldPatch: loaded })
+  }, true);
+  let fields = (await root.themeRequest("capture")).fields;
+  assert.equal(fields.search_field_text_hex, "#121314");
+  assert.equal(fields.outliner_active_hex, "#000000");
+  assert.equal(fields.outliner_selected_hex, "#151617");
+  assert.equal(fields.outliner_active_text_hex, "#151617");
+  assert.equal(fields.outliner_selected_text_hex, "#151617");
+  await clickPageButton(root, "Load Buckets");
+  fields = (await root.themeRequest("capture")).fields;
+  assert.equal(fields.search_field_text_hex, "#213243");
+  assert.equal(fields.outliner_active_hex, "#FFFFFF");
+  assert.equal(fields.outliner_selected_hex, "#8798A9");
+  assert.equal(fields.outliner_active_text_hex, "#546576");
+  assert.equal(fields.outliner_selected_text_hex, "#546576");
+  loaded = { ...loaded, search_field_text_hex: "#A1B2C3", outliner_active_hex: "#192837",
+    outliner_selected_hex: "#465564", outliner_active_text_hex: "#738291", outliner_selected_text_hex: "#ABCDEF" };
+  await clickPageButton(root, "Load Buckets");
+  fields = (await root.themeRequest("capture")).fields;
+  for (const [key, value] of Object.entries(loaded)) assert.equal(fields[key], value);
+});
+
+test("embedded named themes migrate legacy colors and retain independent colors during partial imports", async () => {
+  const root = await renderThemePage({}, { "button-theme.settings": { settings: poppedSettings(), configured: true } }, true);
+  await root.themeRequest("apply", { fields: { control_text_hex: "#192837", accent_text_hex: "#465564",
+    highlights_hex: "#738291", visual_mode: "light" } });
+  const applied = root.requests.filter(({ actionId }) => actionId === "theme.apply-bundle").at(-1).payload.theme;
+  assert.equal(applied.search_field_text_hex, "#192837");
+  assert.equal(applied.outliner_active_hex, "#FFFFFF");
+  assert.equal(applied.outliner_selected_hex, "#738291");
+  assert.equal(applied.outliner_active_text_hex, "#465564");
+  assert.equal(applied.outliner_selected_text_hex, "#465564");
+  const independent = { search_field_text_hex: "#112233", outliner_active_hex: "#223344", outliner_active_text_hex: "#334455",
+    outliner_selected_hex: "#445566", outliner_selected_text_hex: "#556677" };
+  await root.themeRequest("stage", { fields: independent });
+  await root.themeRequest("stage", { fields: { tabs_hex: "#ABCDEF" } });
+  const captured = await root.themeRequest("capture");
+  for (const [key, color] of Object.entries(independent)) assert.equal(captured.fields[key], color);
 });
 
 test("every rendered Theme button restores an explanatory tooltip", async () => {
@@ -1428,7 +1516,7 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
     buttons
       .filter((button) => button.title.startsWith("Apply only the "))
       .map((button) => button.title),
-    page.config.roles.map((role) => `Apply only the ${role.label} bucket.`)
+    page.config.roles.map((role) => `Apply only the ${role.label} bucket.${role.tooltip ? ` ${role.tooltip}` : ""}`)
   );
   const checkboxes = root.querySelectorAll("input").filter((input) => input.type === "checkbox");
   const gradientRole = root.querySelectorAll("div").find((node) => node.title === "Gradient 2");

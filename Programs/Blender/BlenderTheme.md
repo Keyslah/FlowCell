@@ -44,6 +44,36 @@ Theme color swatches open the original native picker for numeric color entry
 and desktop eyedropper sampling. This includes Blender buckets, Fill and Text
 gradient stops, individual popped Buttons, and effect colors.
 
+Theme 3.1.5 adds 5 independent buckets:
+
+| Bucket | Blender theme property |
+| --- | --- |
+| Search / Field Text | `user_interface.wcol_text.text` and `text_sel` |
+| Active Row Fill | `outliner.active` |
+| Active Object Text | `outliner.active_object` |
+| Selected Row Fill | `outliner.selected_highlight` |
+| Selected Object Text | `outliner.selected_object` |
+
+Search / Field Text controls entered text, text-field icons, and empty hints
+such as Search, Object, Scene, and Movie Clip. Blender 5.2.0 draws these hints
+with its hardcoded `UI_INPUT_HINT_ALPHA` multiplier of 0.33; the theme exposes
+RGB only, so this bucket cannot change hint opacity. The Outliner fill buckets
+control active/selected rows; the text buckets control selected object names.
+Blender's hover, search-match, and faded-item overlays still apply. Row selection
+and object selection can differ when Outliner selection synchronization is off.
+
+These 5 buckets apply their exact chosen RGB without automatic contrast
+replacement. Absorb Theme, per-bucket/full Apply, image palettes, tone profiles,
+bucket files, named themes, and project/startup restoration retain them. Older
+themes derive Search / Field Text from Tool Text, selected fill from Highlights,
+and both object texts from Scene/Header Text. Active fill retains the old
+dark-mode black / light-mode white fallback until explicitly configured.
+
+Mappings were checked against Blender 5.2.0 build `fbe6228777e7`:
+[placeholder rendering](https://github.com/blender/blender/blob/fbe6228777e7/source/blender/editors/interface/interface_widgets.cc#L2526-L2537),
+[Outliner object text](https://github.com/blender/blender/blob/fbe6228777e7/source/blender/editors/space_outliner/outliner_draw.cc#L3183-L3229),
+and [Outliner row fill](https://github.com/blender/blender/blob/fbe6228777e7/source/blender/editors/space_outliner/outliner_draw.cc#L3553-L3614).
+
 ## Install And Ownership
 
 Use Add Button and select `flowcell.script.json` or its package folder. FlowCell

@@ -50,6 +50,11 @@ PROJECT_THEME_STATE_THEME_KEYS = (
     "header_text_hex",
     "text_hex",
     "control_text_hex",
+    "search_field_text_hex",
+    "outliner_active_hex",
+    "outliner_active_text_hex",
+    "outliner_selected_hex",
+    "outliner_selected_text_hex",
     "accent_text_hex",
     "editor_background_hex",
     "scene_hex",
@@ -207,7 +212,7 @@ UI_WIDGET_TEXT_ROLE_OVERRIDES = {
     "wcol_regular": {"text": "control_text_hex", "text_sel": "control_text_hex"},
     "wcol_scroll": {"text": "control_text_hex", "text_sel": "control_text_hex"},
     "wcol_tab": {"text": "tabs_text_hex", "text_sel": "tabs_text_hex"},
-    "wcol_text": {"text": "control_text_hex", "text_sel": "control_text_hex"},
+    "wcol_text": {"text": "search_field_text_hex", "text_sel": "search_field_text_hex"},
     "wcol_toggle": {"text": "control_text_hex", "text_sel": "control_text_hex"},
     "wcol_tool": {"text": "control_text_hex", "text_sel": "control_text_hex"},
     "wcol_toolbar_item": {"text": "tabs_text_hex", "text_sel": "tabs_text_hex"},
@@ -3158,6 +3163,10 @@ def _set_theme_text_property(
 ):
     role_key = _resolve_theme_text_role_key(target, attribute, mode, context_name)
     preferred_hex = role_hexes[role_key]
+    if role_key == "search_field_text_hex":
+        # This explicit bucket owns the base RGB exactly. Blender itself fades
+        # empty Search/Object hints with UI_INPUT_HINT_ALPHA (0.33 in 5.2).
+        return _set_theme_hex_property(target, attribute, preferred_hex)
     background_hex = _resolve_theme_text_background_hex(
         target, attribute, role_hexes, context_name
     )
@@ -3301,6 +3310,15 @@ def _read_theme_role_hexes(payload):
     }
     role_hexes["borders_hex"] = role_hexes["editor_background_hex"]
     role_hexes["darks_hex"] = role_hexes["editor_background_hex"]
+    # Themes saved before these independent buckets retain their old sources.
+    for key, fallback in (
+        ("search_field_text_hex", role_hexes["control_text_hex"]),
+        ("outliner_active_hex", "#FFFFFF" if str(payload.get("visual_mode", "dark")).lower() == "light" else "#000000"),
+        ("outliner_active_text_hex", role_hexes["accent_text_hex"]),
+        ("outliner_selected_hex", role_hexes["highlights_hex"]),
+        ("outliner_selected_text_hex", role_hexes["accent_text_hex"]),
+    ):
+        role_hexes[key] = _normalize_hex_color(payload, key) if str(payload.get(key) or "").strip() else fallback
     return role_hexes
 
 
@@ -3317,6 +3335,11 @@ def _theme_project_payload_from_role_hexes(
         "header_text_hex": role_hexes["header_text_hex"],
         "text_hex": role_hexes["text_hex"],
         "control_text_hex": role_hexes["control_text_hex"],
+        "search_field_text_hex": role_hexes["search_field_text_hex"],
+        "outliner_active_hex": role_hexes["outliner_active_hex"],
+        "outliner_active_text_hex": role_hexes["outliner_active_text_hex"],
+        "outliner_selected_hex": role_hexes["outliner_selected_hex"],
+        "outliner_selected_text_hex": role_hexes["outliner_selected_text_hex"],
         "accent_text_hex": role_hexes["accent_text_hex"],
         "editor_background_hex": editor_background_hex,
         "scene_hex": role_hexes["scene_hex"],
@@ -3764,19 +3787,20 @@ def _apply_theme_outliner_colors(theme_outliner, role_hexes, visual_mode: str = 
         return
     accent_rgb = _hex_to_rgb_floats(role_hexes["accent_text_hex"])
     accent_rgba = _hex_to_rgba_floats(role_hexes["accent_text_hex"])
-    highlights_rgb = _hex_to_rgb_floats(role_hexes["highlights_hex"])
-    highlights_rgba = _hex_to_rgba_floats(role_hexes["highlights_hex"])
-    active_highlight_hex = "#FFFFFF" if visual_mode == "light" else "#000000"
+    active_highlight_hex = role_hexes["outliner_active_hex"]
     active_highlight_rgb = _hex_to_rgb_floats(active_highlight_hex)
     active_highlight_rgba = _hex_to_rgba_floats(active_highlight_hex)
 
-    for attribute in ("match", "active_object", "selected_object"):
-        _set_theme_color_property(theme_outliner, attribute, accent_rgb, accent_rgba)
+    _set_theme_color_property(theme_outliner, "match", accent_rgb, accent_rgba)
+    _set_theme_hex_property(theme_outliner, "active_object", role_hexes["outliner_active_text_hex"])
+    _set_theme_hex_property(theme_outliner, "selected_object", role_hexes["outliner_selected_text_hex"])
     _set_theme_color_property(
         theme_outliner, "active", active_highlight_rgb, active_highlight_rgba
     )
     _set_theme_color_property(
-        theme_outliner, "selected_highlight", highlights_rgb, highlights_rgba
+        theme_outliner, "selected_highlight",
+        _hex_to_rgb_floats(role_hexes["outliner_selected_hex"]),
+        _hex_to_rgba_floats(role_hexes["outliner_selected_hex"]),
     )
     for attribute in ("back", "list", "row_alternate"):
         _set_theme_color_property(
@@ -3871,6 +3895,11 @@ def _apply_theme_bucket(context, payload):
         "text": "text_hex",
         "tool_text": "control_text_hex",
         "control_text": "control_text_hex",
+        "search_field_text": "search_field_text_hex",
+        "outliner_active": "outliner_active_hex",
+        "outliner_active_text": "outliner_active_text_hex",
+        "outliner_selected": "outliner_selected_hex",
+        "outliner_selected_text": "outliner_selected_text_hex",
         "scene_header_text": "accent_text_hex",
         "accent_text": "accent_text_hex",
         "panel": "editor_background_hex",
@@ -3899,6 +3928,11 @@ def _apply_theme_bucket(context, payload):
         "viewport_gradient_hex": "Applied Gradient 2 bucket.",
         "text_hex": "Applied Random Text bucket.",
         "control_text_hex": "Applied Tool Text bucket.",
+        "search_field_text_hex": "Applied Search / Field Text bucket.",
+        "outliner_active_hex": "Applied Active Row Fill bucket.",
+        "outliner_active_text_hex": "Applied Active Object Text bucket.",
+        "outliner_selected_hex": "Applied Selected Row Fill bucket.",
+        "outliner_selected_text_hex": "Applied Selected Object Text bucket.",
         "accent_text_hex": "Applied Scene/Header Text bucket.",
         "tabs_text_hex": "Applied Tab Text bucket.",
         "header_text_hex": "Applied Header Text bucket.",
@@ -3971,6 +4005,19 @@ def _absorb_current_theme(context):
             ("user_interface.wcol_tooltip", "text_hi"),
         ],
     )
+
+    search_field_text_hex = _sample_theme_hex_from_paths(
+        theme, [("user_interface.wcol_text", "text")]
+    )
+    outliner_hexes = {
+        key: _sample_theme_hex_from_paths(theme, [("outliner", attribute)])
+        for key, attribute in (
+            ("outliner_active_hex", "active"),
+            ("outliner_active_text_hex", "active_object"),
+            ("outliner_selected_hex", "selected_highlight"),
+            ("outliner_selected_text_hex", "selected_object"),
+        )
+    }
 
     accent_text_hex = _sample_theme_hex_from_paths(
         theme,
@@ -4113,6 +4160,8 @@ def _absorb_current_theme(context):
             "header_text_hex": header_text_hex,
             "text_hex": text_hex,
             "control_text_hex": control_text_hex,
+            "search_field_text_hex": search_field_text_hex,
+            **outliner_hexes,
             "accent_text_hex": accent_text_hex,
             "editor_background_hex": editor_background_hex,
             "scene_hex": scene_hex,
@@ -4182,6 +4231,11 @@ def _apply_theme_from_photo_manual_colors(context, payload, persist_project_stat
         header_text_hex=role_hexes["header_text_hex"],
         text_hex=role_hexes["text_hex"],
         control_text_hex=role_hexes["control_text_hex"],
+        search_field_text_hex=role_hexes["search_field_text_hex"],
+        outliner_active_hex=role_hexes["outliner_active_hex"],
+        outliner_active_text_hex=role_hexes["outliner_active_text_hex"],
+        outliner_selected_hex=role_hexes["outliner_selected_hex"],
+        outliner_selected_text_hex=role_hexes["outliner_selected_text_hex"],
         accent_text_hex=role_hexes["accent_text_hex"],
         editor_background_hex=role_hexes["editor_background_hex"],
         scene_hex=role_hexes["scene_hex"],
