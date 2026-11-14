@@ -208,6 +208,7 @@ fn main() {
             get_theme_tool_descriptors,
             export_flowcell_theme_archive,
             package_flowcell_theme_archive,
+            save_portable_theme,
             validate_flowcell_theme_assets,
             prepare_theme_archive_sources,
             finish_theme_archive_sources,

@@ -132,15 +132,25 @@ export function importedThemeFileName(theme: Pick<PortableTheme, "name" | "id">)
   return `${name}--${identity}.flowcell-theme-pack.json`;
 }
 
-export async function savePortableTheme(theme: PortableTheme, existingPath?: string): Promise<string | null> {
-  const archive = await packageTheme(theme);
+export async function choosePortableThemeSavePath(
+  theme: Pick<PortableTheme, "target" | "name">, existingPath?: string
+): Promise<string | null> {
   const root = await flowCellThemeDirectory(theme.target);
   const canonical = (value: string) => value.replaceAll("\\", "/").toLowerCase();
   const remembered = existingPath && canonical(existingPath).startsWith(`${canonical(root)}/`) ? existingPath : null;
-  const path = remembered || await showSaveFileDialog({ title: "Save Theme", filter: THEME_FILE_FILTER,
+  return remembered || await showSaveFileDialog({ title: "Save Theme", filter: THEME_FILE_FILTER,
     defaultFileName: `${theme.name.replace(/[<>:"/\\|?*]+/g, "-")}.flowcell-theme-pack.json`, initialDirectory: root });
+}
+
+export function savePortableThemeAtPath(theme: PortableTheme, path: string): Promise<string> {
+  // Package and write in one native worker; large encoded archives never return to the WebView.
+  return invoke("save_portable_theme", { path, theme, programName: themeProgramName(theme.target) });
+}
+
+export async function savePortableTheme(theme: PortableTheme, existingPath?: string): Promise<string | null> {
+  const path = await choosePortableThemeSavePath(theme, existingPath);
   if (!path) return null;
-  return invoke("save_flowcell_theme_file", { path, theme: archive, programName: themeProgramName(theme.target) });
+  return savePortableThemeAtPath(theme, path);
 }
 
 export async function exportPortableTheme(theme: PortableTheme): Promise<string | null> {

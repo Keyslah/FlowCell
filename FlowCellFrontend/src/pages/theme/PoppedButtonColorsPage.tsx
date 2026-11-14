@@ -48,9 +48,10 @@ export function poppedButtonCorePlan(actionId: string, payload: unknown): Instal
   throw new Error(`The common Popped Button Colors page does not allow '${actionId}'.`);
 }
 
-export default function PoppedButtonColorsPage({ programName, active = true, onReady }: {
+export default function PoppedButtonColorsPage({ programName, active = true, onReady, canClose }: {
   programName: string;
   active?: boolean;
+  canClose?: () => boolean;
   onReady?: (controller: PoppedButtonColorsController | null) => void;
 }) {
   const onReadyRef = useRef(onReady);
@@ -89,5 +90,5 @@ export default function PoppedButtonColorsPage({ programName, active = true, onR
       refresh: async () => { await bridge.request("refresh"); }
     } : null);
   };
-  return <InstalledPageWindowPage context={context} builtinPage={builtinPage} embedded embeddedVisible={active} onThemeBridge={bridgeReady} />;
+  return <InstalledPageWindowPage context={context} builtinPage={builtinPage} embedded embeddedVisible={active} onThemeBridge={bridgeReady} canClose={canClose} />;
 }

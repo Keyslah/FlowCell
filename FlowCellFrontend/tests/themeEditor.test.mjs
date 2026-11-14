@@ -41,6 +41,210 @@ function themeCallback(fileName, name, context) {
   return new Function(...Object.keys(context), compiled)(...Object.values(context));
 }
 
+function deferredThemeOperation() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+function saveThemeHarness(overrides = {}) {
+  const calls = [];
+  const context = {
+    pending: false, draftDocument: { revision: 1 }, saveInFlight: { current: false },
+    preparingSaveRef: { current: false },
+    mounted: { current: true }, saveContext: { current: { revision: 1 } },
+    target: { kind: "program", programName: "Blender", panelName: null },
+    themeName: "Green", activeTheme: null,
+    setSaving: (value) => calls.push(["saving", value]),
+    setPreparingSave: (value) => calls.push(["preparing", value]),
+    setSaveStatus: (value) => calls.push(["status", value]),
+    setPending: () => assert.fail("Background saving must not lock the editor"),
+    choosePortableThemeSavePath: async () => { calls.push(["dialog"]); return "Green.json"; },
+    saveCapture: { current: async () => { calls.push(["capture"]); return { id: "green", name: "Green" }; } },
+    savePortableThemeAtPath: async (theme, path) => { calls.push(["write", theme, path]); return path; },
+    updateContributionSelection: async () => calls.push(["selection"]),
+    rememberTheme: (theme) => calls.push(["remember", theme]),
+    warningSuffix: (warnings) => warnings.join("; "), errorMessage: String,
+    ...overrides
+  };
+  return { calls, context, save: themeCallback("ThemeEditorPage.tsx", "handleSaveTheme", context) };
+}
+
+test("Save Theme opens its dialog before capture, does no work on cancel, and prevents duplicate clicks", async () => {
+  const dialog = deferredThemeOperation();
+  let dialogs = 0;
+  const harness = saveThemeHarness({ choosePortableThemeSavePath: () => { dialogs++; return dialog.promise; } });
+  const saving = harness.save();
+  assert.equal(dialogs, 1);
+  assert.equal(harness.calls.some(([call]) => call === "capture" || call === "write"), false);
+  await harness.save();
+  assert.equal(dialogs, 1);
+  dialog.resolve(null);
+  await saving;
+  assert.equal(harness.calls.some(([call]) => call === "capture" || call === "write"), false);
+  assert.equal(harness.context.saveInFlight.current, false);
+  assert.deepEqual(harness.calls.filter(([call]) => call === "saving"), [["saving", true], ["saving", false]]);
+});
+
+test("Save Theme writes the captured snapshot while allowing edits and ignores stale selection completion", async () => {
+  const write = deferredThemeOperation();
+  const snapshot = { id: "green", name: "Green", color: "#123456" };
+  let payload;
+  const harness = saveThemeHarness({
+    saveCapture: { current: async () => structuredClone(snapshot) },
+    savePortableThemeAtPath: (theme) => { payload = theme; return write.promise; }
+  });
+  const saving = harness.save();
+  await new Promise(setImmediate);
+  snapshot.color = "#ABCDEF";
+  harness.context.saveContext.current.revision++;
+  assert.equal(payload.color, "#123456");
+  assert.ok(harness.calls.some(([call, value]) => call === "status" && value.includes("You can keep working")));
+  write.resolve("Green.json");
+  await saving;
+  assert.equal(harness.calls.some(([call]) => call === "remember" || call === "selection"), false);
+  assert.ok(harness.calls.some(([call, value]) => call === "status" && value === "Saved theme: Green.json"));
+});
+
+test("Save Theme uses the latest snapshot after the dialog and stops if its scope changed", async () => {
+  const dialog = deferredThemeOperation();
+  const harness = saveThemeHarness({ choosePortableThemeSavePath: () => dialog.promise });
+  const saving = harness.save();
+  harness.context.saveCapture.current = async () => ({ id: "updated", name: "Green" });
+  dialog.resolve("Green.json");
+  await saving;
+  assert.equal(harness.calls.find(([call]) => call === "write")[1].id, "updated");
+  assert.equal(harness.calls.find(([call]) => call === "remember")[1].id, "updated");
+
+  const changedDialog = deferredThemeOperation();
+  const changed = saveThemeHarness({ choosePortableThemeSavePath: () => changedDialog.promise });
+  const cancelled = changed.save();
+  changed.context.saveContext.current.revision++;
+  changedDialog.resolve("Green.json");
+  await cancelled;
+  assert.equal(changed.calls.some(([call]) => call === "capture" || call === "write"), false);
+});
+
+test("background save errors release its single-flight guard and never report success", async () => {
+  const harness = saveThemeHarness({ savePortableThemeAtPath: async () => { throw new Error("disk full"); } });
+  await harness.save();
+  assert.equal(harness.context.saveInFlight.current, false);
+  assert.equal(harness.calls.some(([call]) => call === "remember"), false);
+  assert.ok(harness.calls.some(([call, value]) => call === "status" && value.includes("disk full")));
+  assert.equal(harness.calls.some(([call, value]) => call === "status" && value.startsWith("Saved theme:")), false);
+  await harness.save();
+  assert.equal(harness.calls.filter(([call]) => call === "dialog").length, 2);
+});
+
+test("a save already submitted completes after editor unmount without updating its UI", async () => {
+  const write = deferredThemeOperation();
+  const harness = saveThemeHarness({ savePortableThemeAtPath: () => write.promise });
+  const saving = harness.save();
+  await new Promise(setImmediate);
+  assert.deepEqual(harness.calls.filter(([call]) => call === "preparing"), [["preparing", true], ["preparing", false]]);
+  harness.context.mounted.current = false;
+  const count = harness.calls.length;
+  write.resolve("Green.json");
+  await saving;
+  assert.equal(harness.calls.length, count);
+  assert.equal(harness.context.saveInFlight.current, false);
+});
+
+test("native close waits for snapshot preparation and releases after submission or capture failure", async () => {
+  const capture = deferredThemeOperation();
+  const write = deferredThemeOperation();
+  const harness = saveThemeHarness({
+    saveCapture: { current: () => capture.promise },
+    savePortableThemeAtPath: () => write.promise
+  });
+  const canClose = themeCallback("ThemeEditorPage.tsx", "canCloseEditor", harness.context);
+  assert.equal(canClose(), true);
+  const saving = harness.save();
+  await new Promise(setImmediate);
+  assert.equal(canClose(), false, "Alt+F4 must not destroy the editor before the native job exists");
+  capture.resolve({ id: "green", name: "Green" });
+  await new Promise(setImmediate);
+  assert.equal(canClose(), true, "The editor can close while the submitted native job writes");
+  write.resolve("Green.json");
+  await saving;
+  assert.equal(canClose(), true);
+
+  const rejectedCapture = deferredThemeOperation();
+  const failed = saveThemeHarness({ saveCapture: { current: () => rejectedCapture.promise } });
+  const canCloseFailed = themeCallback("ThemeEditorPage.tsx", "canCloseEditor", failed.context);
+  const failure = failed.save();
+  await new Promise(setImmediate);
+  assert.equal(canCloseFailed(), false);
+  rejectedCapture.reject(new Error("Snapshot could not be prepared"));
+  await failure;
+  assert.equal(canCloseFailed(), true, "A failed preparation must not strand the editor");
+  assert.equal(failed.calls.some(([call]) => call === "write"), false);
+
+  const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
+  assert.match(editor, /onCloseRequested\(\(event\) => \{\s*if \(!canCloseEditor\(\)\) event\.preventDefault\(\)/);
+  assert.equal((editor.match(/canClose=\{canCloseEditor\}/g) ?? []).length, 2);
+  for (const file of ["ThemeContribution.tsx", "PoppedButtonColorsPage.tsx"]) {
+    assert.match(read("src", "pages", "theme", file), /<InstalledPageWindowPage[^>]*canClose=\{canClose\}/,
+      `${file} must forward the close guard to the child owner`);
+  }
+  const installedPage = read("src", "pages", "installed-page", "InstalledPageWindowPage.tsx");
+  assert.match(installedPage, /onCloseRequested\(\(event\) => \{\s*event\.preventDefault\(\);\s*if \(callbacksRef\.current\.canClose\?\.\(\) === false\) return;/);
+});
+
+test("filename selection is lightweight and portable saving sends one native worker request", async () => {
+  const source = ts.createSourceFile("themeFile.ts", read("src", "theme", "themeFile.ts"), ts.ScriptTarget.Latest, true);
+  const names = ["choosePortableThemeSavePath", "savePortableThemeAtPath", "savePortableTheme", "themeProgramName"];
+  const helpers = source.statements.filter((node) => ts.isFunctionDeclaration(node) && names.includes(node.name?.text))
+    .map((node) => node.getText(source).replace(/^export /, "")).join("\n");
+  const compiled = ts.transpileModule(helpers, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const calls = [];
+  let chosen = null;
+  const { savePortableTheme } = new Function("flowCellThemeDirectory", "showSaveFileDialog", "invoke", "THEME_FILE_FILTER",
+    `${compiled}\nreturn { savePortableTheme };`)(
+    async () => "C:/Themes/Blender", async () => { calls.push("dialog"); return chosen; },
+    async (command, payload) => { calls.push({ command, payload }); return payload.path; }, "filter");
+  const snapshot = { name: "Green", target: { kind: "program", programName: "Blender" } };
+  assert.equal(await savePortableTheme(snapshot), null);
+  assert.deepEqual(calls, ["dialog"]);
+  calls.length = 0;
+  chosen = "C:/Themes/Blender/Green.json";
+  assert.equal(await savePortableTheme(snapshot), chosen);
+  assert.equal(calls[0], "dialog");
+  assert.deepEqual(calls[1], { command: "save_portable_theme", payload: { path: chosen, theme: snapshot, programName: "Blender" } });
+  calls.length = 0;
+  assert.equal(await savePortableTheme(snapshot, chosen), chosen);
+  assert.equal(calls.length, 1, "Remembered library paths keep their existing save behavior");
+});
+
+test("complete theme capture freezes document, gradient and selection sets before asynchronous work", async () => {
+  const host = deferredThemeOperation();
+  const document = { revision: 1, color: "#123456" };
+  const gradient = { role: "surface", colors: ["#111111"] };
+  const assignments = { current: new Set(["one"]) };
+  const resets = { current: { hover: new Set(["one"]), active: new Set() } };
+  const contribution = { current: { capture: () => host.promise } };
+  const capture = themeCallback("ThemeEditorPage.tsx", "captureCompleteTheme", {
+    draftDocument: document, target: { kind: "program", programName: "Blender" },
+    themeName: "Green", activeTheme: null, gradient, contribution, contributionAvailable: true,
+    selectedPageAppearance: null, skinAssignmentPlacementIds: assignments, highlightColorResetPlacementIds: resets,
+    cloneButtonDocument: structuredClone, listThemePlacements: () => [{ id: "one" }],
+    embedLocalButtonSkinFamilies: async (snapshot) => snapshot,
+    getThemeToolDescriptors: async () => [], captureThemeFile: (snapshot) => snapshot,
+    capturePortableTheme: (snapshot) => snapshot
+  });
+  const saving = capture();
+  document.color = "#FFFFFF";
+  gradient.colors[0] = "#222222";
+  assignments.current.clear(); resets.current.hover.clear();
+  contribution.current = { capture: () => assert.fail("Must retain the captured controller") };
+  host.resolve({ sourceId: "blender.theme", state: { fields: { text_hex: "#123456" } } });
+  const snapshot = await saving;
+  assert.equal(snapshot.document.color, "#123456");
+  assert.deepEqual(snapshot.theme.gradient.colors, ["#111111"]);
+  assert.deepEqual([...snapshot.theme.skinAssignmentPlacementIds], ["one"]);
+  assert.deepEqual([...snapshot.theme.highlightColorResetPlacementIds.hover], ["one"]);
+});
+
 test("legacy theme apply keeps omitted host fields out and reuses its captured transaction snapshot", async () => {
   const previous = { version: 1, sourceId: "example.theme", sourceVersion: "1", assetFields: [],
     state: { fields: { tabs_hex: "#111111", hdri_path: "C:/current.hdr", static_background_path: "C:/current.png", world_strength: 2 },
@@ -325,7 +529,7 @@ test("Theme Editor is a bulk override and saved-skin assignment workflow", () =>
   assert.match(css, /height: 100vh;[\s\S]*overflow-y: auto;/);
   assert.match(css, /select option \{[\s\S]*background: #1d2522;/);
   const gradientStart = editor.indexOf("const applyGradient =");
-  const gradientEnd = editor.indexOf("const captureCurrentTheme", gradientStart);
+  const gradientEnd = editor.indexOf("const captureCompleteTheme", gradientStart);
   assert.notEqual(gradientStart, -1);
   assert.notEqual(gradientEnd, -1);
   const applyGradient = editor.slice(gradientStart, gradientEnd);
@@ -413,7 +617,8 @@ test("Theme Editor is a bulk override and saved-skin assignment workflow", () =>
 test("Theme Editor preserves loaded default-highlight resets without exposing legacy enablement or color controls", () => {
   const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
   assert.match(editor, /const highlightColorResetPlacementIds = useRef/);
-  assert.match(editor, /highlightColorResetPlacementIds: highlightColorResetPlacementIds\.current/);
+  assert.match(editor, /hover: new Set\(highlightColorResetPlacementIds\.current\.hover\)/);
+  assert.match(editor, /active: new Set\(highlightColorResetPlacementIds\.current\.active\)/);
   assert.match(editor, /const handleApply[\s\S]*?commitCompleteTheme\(theme\)/);
   assert.match(editor, /adoptHighlightColorResetIntents\(scoped, committed\.applied\)/);
   assert.doesNotMatch(editor, /applyHighlightChange|useDefaultHighlightColor|highlightSummary/);

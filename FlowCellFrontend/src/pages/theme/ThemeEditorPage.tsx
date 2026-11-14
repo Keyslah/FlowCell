@@ -86,7 +86,7 @@ import {
   writeThemeEditorScopeState
 } from "../../theme/themeEditorState.js";
 import {
-  exportPortableTheme, importedThemeFileName, legacyThemeIdentity, listThemeLibrary, materializeTheme, readTheme, savePortableTheme,
+  choosePortableThemeSavePath, exportPortableTheme, importedThemeFileName, legacyThemeIdentity, listThemeLibrary, materializeTheme, readTheme, savePortableTheme, savePortableThemeAtPath,
   type ReadThemeResult
 } from "../../theme/themeFile.js";
 import { capturePortableTheme, planPortableThemeImport, type PortableTheme, type ThemeToolDescriptor } from "../../theme/portableTheme.js";
@@ -500,6 +500,25 @@ export default function ThemeEditorPage({
   const [assignEveryButtonInScope, setAssignEveryButtonInScope] = useState(false);
   const [gradient, setGradient] = useState<ThemeGradientDefinition>(DEFAULT_GRADIENT);
   const [pending, setPending] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [preparingSave, setPreparingSave] = useState(false);
+  const preparingSaveRef = useRef(false);
+  const [saveStatus, setSaveStatus] = useState("");
+  const saveInFlight = useRef(false);
+  const saveCapture = useRef<(() => Promise<PortableTheme>) | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const canCloseEditor = () => {
+    if (!preparingSaveRef.current) return true;
+    setSaveStatus("Preparing the theme snapshot. Close again when saving starts.");
+    return false;
+  };
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onCloseRequested((event) => {
+      if (!canCloseEditor()) event.preventDefault();
+    });
+    return () => { void unlisten.then((dispose) => dispose()).catch(() => {}); };
+  }, []);
   const [status, setStatus] = useState("Loading Theme Editor...");
   const [libraryMode, setLibraryMode] = useState<"open" | "import" | null>(null);
   const [contributionAvailable, setContributionAvailable] = useState<boolean | null>(null);
@@ -520,6 +539,11 @@ export default function ThemeEditorPage({
     [pageValue, panelValue, targetValue]
   );
   const targetLibraryKey = target.kind === "program" ? target.programName : "main";
+  const saveContext = useRef({ key: "", revision: 0 });
+  const saveContextKey = JSON.stringify([target, themeName, activeTheme]);
+  if (saveContext.current.key !== saveContextKey) {
+    saveContext.current = { key: saveContextKey, revision: saveContext.current.revision + 1 };
+  }
   const showingProgramPage = target.kind === "program";
   useEffect(() => {
     let cancelled = false;
@@ -891,47 +915,46 @@ export default function ThemeEditorPage({
     );
   };
 
-  const captureCurrentTheme = (document = draftDocument): FlowCellThemeFile => {
-    if (!document) throw new Error("Canonical Button state is not loaded yet.");
-    return captureThemeFile({
-      document,
-      target,
-      page: target.kind === "flowcell" ? selectedPageAppearance : null,
-      gradient,
-      buttonParticipation: {},
-      skinAssignmentPlacementIds: skinAssignmentPlacementIds.current,
-      highlightColorResetPlacementIds: highlightColorResetPlacementIds.current
-    });
-  };
-
   // Apply works on this machine, so it keeps local skin family links instead of embedding every family file into
   // each skin (one Apply on the Chipped Concrete keys used to add ~37 MB to button-state.json). Save Theme embeds,
   // because a saved or exported theme must carry its variants.
   const captureCompleteTheme = async ({ localApply = false }: { localApply?: boolean } = {}): Promise<PortableTheme> => {
     if (!draftDocument) throw new Error("Button state is not loaded yet.");
-    if (target.kind === "program") {
-      const installed = await invoke<unknown>("resolve_theme_contribution", { programName: target.programName });
-      if (installed && !contribution.current) throw new Error("The program theme features are still loading. Try saving again when they are ready.");
+    // Snapshot all mutable editor inputs before any asynchronous preparation.
+    const sourceDocument = localApply ? draftDocument : cloneButtonDocument(draftDocument);
+    const controller = contribution.current;
+    const captureOptions = {
+      target, page: target.kind === "flowcell" ? structuredClone(selectedPageAppearance) : null,
+      gradient: structuredClone(gradient), buttonParticipation: {},
+      skinAssignmentPlacementIds: new Set(skinAssignmentPlacementIds.current),
+      highlightColorResetPlacementIds: {
+        hover: new Set(highlightColorResetPlacementIds.current.hover),
+        active: new Set(highlightColorResetPlacementIds.current.active)
+      }
+    };
+    if (target.kind === "program" && (contributionAvailable === null || (contributionAvailable && !controller))) {
+      throw new Error("The program theme features are still loading. Try saving again when they are ready.");
     }
-    const extension = target.kind === "program" ? await contribution.current?.capture() : null;
+    const extension = target.kind === "program" ? await controller?.capture() : null;
     let library: Promise<ToolsetSkinLibrary> | undefined;
-    const document = localApply ? draftDocument : await embedLocalButtonSkinFamilies(
-      draftDocument,
-      listThemePlacements(draftDocument, target).map((placement) => placement.id),
+    const document = localApply ? sourceDocument : await embedLocalButtonSkinFamilies(
+      sourceDocument,
+      listThemePlacements(sourceDocument, target).map((placement) => placement.id),
       () => library ??= Promise.all([getButtonSkinDirectory(), listButtonSkinFiles()]).then(([directory, paths]) => ({
         directory, paths, read: loadButtonSkinFile
       }))
     );
     return capturePortableTheme({ document, target, name: themeName,
-      descriptors: await getThemeToolDescriptors(target), theme: captureCurrentTheme(document),
+      descriptors: await getThemeToolDescriptors(target), theme: captureThemeFile({ ...captureOptions, document }),
       ...(activeTheme?.id && activeTheme.name === themeName ? { id: activeTheme.id } : {}),
       contributions: extension ? { [extension.sourceId]: extension } : {},
       keepLocalSkinMetadata: localApply });
   };
+  saveCapture.current = captureCompleteTheme;
 
   const updateContributionSelection = async (theme: PortableTheme, path: string, snapshot?: {
     document: ButtonStateDocument; descriptors: readonly ThemeToolDescriptor[];
-  }) => {
+  }, isCurrent = () => true) => {
     const controls = contribution.current ?? poppedColors.current;
     if (!controls || target.kind !== "program") return;
     const document = snapshot?.document ?? await loadButtonStateDocument();
@@ -943,6 +966,7 @@ export default function ThemeEditorPage({
       ...(appearance.overrides[savedId]?.text ? { textColor: appearance.overrides[savedId].text } : {}),
       ...(appearance.locks[savedId] ? { lockedAppearance: appearance.locks[savedId] } : {})
     })) : [];
+    if (!isCurrent()) return;
     await controls.setActiveTheme({ name: theme.name, path,
       ...(appearance?.settings ? { buttonSettings: appearance.settings as unknown as JsonValue } : {}),
       ...(appearance ? { buttonAppearance: { version: 1, placements } as unknown as JsonValue } : {}) });
@@ -1106,21 +1130,39 @@ export default function ThemeEditorPage({
   };
 
   const handleSaveTheme = async () => {
-    if (pending || !draftDocument) return;
-    setPending(true);
+    if (pending || !draftDocument || saveInFlight.current) return;
+    saveInFlight.current = true;
+    setSaving(true);
+    setSaveStatus("");
+    const contextRevision = saveContext.current.revision;
+    const isCurrent = () => mounted.current && saveContext.current.revision === contextRevision;
     try {
-      const theme = await captureCompleteTheme();
-      const path = await savePortableTheme(theme, activeTheme?.id && activeTheme.name === themeName ? activeTheme.path : undefined);
-      if (path) {
-        rememberTheme({ id: theme.id, path, name: theme.name });
-        const warnings: string[] = [];
-        await updateContributionSelection(theme, path).catch((error) => warnings.push(`Selected theme controls could not update: ${errorMessage(error)}`));
-        setStatus(`Saved theme: ${path}${warningSuffix(warnings)}`);
+      // Only the target directory and suggested filename are needed before the dialog.
+      const chosenPath = await choosePortableThemeSavePath({ target, name: themeName },
+        activeTheme?.id && activeTheme.name === themeName ? activeTheme.path : undefined);
+      if (!chosenPath) return;
+      if (!isCurrent()) throw new Error("The selected theme changed while choosing a filename. Save the current theme again.");
+      preparingSaveRef.current = true;
+      setPreparingSave(true);
+      setSaveStatus(`Saving ${themeName}… You can keep working.`);
+      const theme = await saveCapture.current!();
+      const saved = savePortableThemeAtPath(theme, chosenPath);
+      preparingSaveRef.current = false;
+      if (mounted.current) setPreparingSave(false);
+      const path = await saved;
+      const warnings: string[] = [];
+      if (isCurrent()) {
+        await updateContributionSelection(theme, path, undefined, isCurrent)
+          .catch((error) => warnings.push(`Selected theme controls could not update: ${errorMessage(error)}`));
+        if (isCurrent()) rememberTheme({ id: theme.id, path, name: theme.name });
       }
+      if (mounted.current) setSaveStatus(`Saved theme: ${path}${warningSuffix(warnings)}`);
     } catch (error) {
-      setStatus(`Theme could not be saved: ${errorMessage(error)}`);
+      if (mounted.current) setSaveStatus(`Theme could not be saved: ${errorMessage(error)}`);
     } finally {
-      setPending(false);
+      saveInFlight.current = false;
+      preparingSaveRef.current = false;
+      if (mounted.current) { setSaving(false); setPreparingSave(false); }
     }
   };
 
@@ -1289,12 +1331,12 @@ export default function ThemeEditorPage({
         </div>
         <div className="theme-editor__header-actions">
           <button type="button" disabled={pending} onClick={() => void handleLoadTheme()}>Open Theme</button>
-          <button type="button" disabled={pending || !draftDocument} onClick={() => void handleSaveTheme()}>Save Theme</button>
+          <button type="button" disabled={pending || saving || !draftDocument} onClick={() => void handleSaveTheme()}>Save Theme</button>
           <button type="button" disabled={pending} onClick={() => setLibraryMode("import")}>Import Theme</button>
           <button type="button" disabled={pending} onClick={() => void handleExportTheme()}>Export Theme</button>
           <button type="button" disabled={pending || !draftDocument} onClick={() => void handleApply()}>Apply</button>
           <button type="button" disabled={pending} onClick={resetDraftFromCanonical}>Discard</button>
-          <button type="button" disabled={pending} onClick={() => void getCurrentWindow().close()}>Close</button>
+          <button type="button" disabled={pending || preparingSave} onClick={() => void getCurrentWindow().close()}>Close</button>
         </div>
       </header>
 
@@ -1651,6 +1693,7 @@ export default function ThemeEditorPage({
 
       </div>}
       {target.kind === "program" && <ThemeContribution key={target.programName} programName={target.programName}
+        canClose={canCloseEditor}
         active={contributionAvailable !== false && libraryMode === null}
         onAvailable={setContributionAvailable}
         onReady={(controller) => { contribution.current = controller; }}
@@ -1661,9 +1704,10 @@ export default function ThemeEditorPage({
         }} />}
       {target.kind === "program" && contributionAvailable === false &&
         <PoppedButtonColorsPage key={`popped-colors-${target.programName}`} programName={target.programName}
+          canClose={canCloseEditor}
           active={libraryMode === null} onReady={(controller) => { poppedColors.current = controller; }} />}
       </div>
-      <footer className="theme-editor__status" role="status">{status}</footer>
+      <footer className="theme-editor__status" role="status">{[status, saveStatus].filter(Boolean).join(" · ")}</footer>
       {libraryMode && <ThemeLibraryDialog target={target} mode={libraryMode} onClose={() => setLibraryMode(null)}
         onReview={(loaded) => reviewThemeContribution(contribution.current, loaded)}
         onApply={(loaded) => applyLoadedTheme(loaded, libraryMode === "import")} />}

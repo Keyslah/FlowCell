@@ -416,7 +416,12 @@ fn validate_program_default_theme(theme: &Value, manifest: &manifest::ProgramMan
 }
 
 #[tauri::command]
-pub(crate) fn get_theme_tool_descriptors(program_name: Option<String>) -> Result<Vec<Value>, String> {
+pub(crate) async fn get_theme_tool_descriptors(program_name: Option<String>) -> Result<Vec<Value>, String> {
+    tauri::async_runtime::spawn_blocking(move || collect_theme_tool_descriptors(program_name))
+        .await.map_err(|error| format!("Theme source scan worker failed: {error}"))?
+}
+
+fn collect_theme_tool_descriptors(program_name: Option<String>) -> Result<Vec<Value>, String> {
     let programs = match program_name { Some(name) => vec![crate::require_registered_program_name(&name)?], None => return Ok(Vec::new()) };
     let mut result = Vec::new();
     for program in programs {
@@ -460,7 +465,7 @@ pub(crate) fn package_flowcell_theme_archive(mut theme: Value, program_name: Opt
     super::themes::validate_theme_target(&theme, program_name.as_deref())?;
     let previous_assets = theme.as_object_mut().ok_or("Theme must be an object.")?.remove("assets").unwrap_or(json!([]));
     let mut sources = validate_sources(&theme)?;
-    let descriptors = get_theme_tool_descriptors(program_name.clone())?;
+    let descriptors = collect_theme_tool_descriptors(program_name.clone())?;
     for dependency in theme["dependencies"].as_array().ok_or("Theme dependencies are missing.")? {
         if sources.iter().any(|s| s["dependencyId"] == dependency["id"]) { continue; }
         let matches: Vec<_> = descriptors.iter().filter(|d| d["programId"] == dependency["programId"] && d["sourceId"] == dependency["sourceId"] && d["sourceVersion"] == dependency["sourceVersion"]).collect();
@@ -496,6 +501,16 @@ pub(crate) fn package_flowcell_theme_archive(mut theme: Value, program_name: Opt
     theme["sources"] = Value::Array(sources);
     validate_archive(&theme, program_name.as_deref())?;
     Ok(theme)
+}
+
+#[tauri::command]
+pub(crate) async fn save_portable_theme(path: String, theme: Value, program_name: Option<String>) -> Result<String, String> {
+    // Keep file reads, hashing, encoding, validation and the atomic write off the UI thread.
+    // The native task owns the snapshot once submitted, even if its editor window closes.
+    tauri::async_runtime::spawn_blocking(move || {
+        let archive = package_flowcell_theme_archive(theme, program_name.clone())?;
+        super::layouts::save_flowcell_theme_file(path, archive, program_name, None)
+    }).await.map_err(|error| format!("Theme save worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -605,6 +620,23 @@ pub(crate) fn finish_theme_archive_sources(token: String) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_theme_save_preserves_existing_file_when_asset_packaging_fails() {
+        let root = std::env::temp_dir().join(format!("flowcell-background-theme-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir(&root).unwrap();
+        let target = root.join("keep.flowcell-theme-pack.json");
+        fs::write(&target, b"existing saved theme").unwrap();
+        let theme = json!({"kind":"FlowCellPortableTheme", "version":1,
+            "target":{"kind":"flowcell","page":"main"}, "dependencies":[], "contributions":{},
+            "theme":{"page":{"assets":{"background":{"path":root.join("missing.png").display().to_string()}}}}});
+        let result = tauri::async_runtime::block_on(save_portable_theme(target.display().to_string(), theme, None));
+        assert!(result.unwrap_err().contains("Required theme asset"));
+        assert_eq!(fs::read(&target).unwrap(), b"existing saved theme");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap(); // This test's short-lived fixtures only.
+    }
 
     #[test]
     fn program_appearance_validates_shared_sections_and_variants_without_expanding_buttons() {

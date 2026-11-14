@@ -101,9 +101,10 @@ export async function reviewThemeContribution(
   return [...new Set(issues)];
 }
 
-export default function ThemeContribution({ programName, active = true, onReady, onAvailable, onLibraryAction }: {
+export default function ThemeContribution({ programName, active = true, onReady, onAvailable, onLibraryAction, canClose }: {
   programName: string;
   active?: boolean;
+  canClose?: () => boolean;
   onReady: (controller: ThemeContributionController | null) => void;
   onAvailable: (available: boolean) => void;
   onLibraryAction: (action: "save" | "open" | "previous" | "next") => void;
@@ -195,7 +196,7 @@ export default function ThemeContribution({ programName, active = true, onReady,
   if (!descriptor || !context) return null;
   return <section hidden={!active} className="theme-editor-contribution" aria-label={`${programName} program theme features`}>
     <div className="theme-editor-contribution__page">
-      <InstalledPageWindowPage context={context} embedded embeddedVisible={active} onThemeBridge={bridgeReady}
+      <InstalledPageWindowPage context={context} embedded embeddedVisible={active} onThemeBridge={bridgeReady} canClose={canClose}
         onThemeLibrary={(action) => callbacks.current.onLibraryAction(action)} />
     </div>
   </section>;

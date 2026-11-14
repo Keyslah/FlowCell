@@ -406,11 +406,12 @@ export interface InstalledPageThemeBridge {
 }
 
 export default function InstalledPageWindowPage({
-  context, embedded = false, embeddedVisible = true, onThemeBridge, onThemeLibrary, builtinPage
+  context, embedded = false, embeddedVisible = true, onThemeBridge, onThemeLibrary, builtinPage, canClose
 }: {
   context: InstalledPageWindowContext;
   embedded?: boolean;
   embeddedVisible?: boolean;
+  canClose?: () => boolean;
   onThemeBridge?: (bridge: InstalledPageThemeBridge | null) => void;
   onThemeLibrary?: (action: "save" | "open" | "previous" | "next") => void;
   /** Only trusted bundled Core callers can supply this renderer/action adapter. */
@@ -424,8 +425,8 @@ export default function InstalledPageWindowPage({
   const hostRef = useRef<HTMLElement | null>(null);
   const visibleRef = useRef(embeddedVisible);
   visibleRef.current = embeddedVisible;
-  const callbacksRef = useRef({ onThemeBridge, onThemeLibrary });
-  callbacksRef.current = { onThemeBridge, onThemeLibrary };
+  const callbacksRef = useRef({ onThemeBridge, onThemeLibrary, canClose });
+  callbacksRef.current = { onThemeBridge, onThemeLibrary, canClose };
   const themeRequests = useRef(new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>; operation: string }>());
   const readBounds = () => {
     const rect = hostRef.current?.getBoundingClientRect();
@@ -631,6 +632,7 @@ export default function InstalledPageWindowPage({
       unlistenNative = disposeNative;
       const disposeClose = await currentWindow.onCloseRequested((event) => {
         event.preventDefault();
+        if (callbacksRef.current.canClose?.() === false) return;
         if (closeInProgressRef.current) return;
         closeInProgressRef.current = true;
         void (async () => {
