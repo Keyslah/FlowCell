@@ -45,6 +45,7 @@
     "src/button/geometry/buttonGeometry.ts",
     "src/button/geometry/labelGrowth.ts",
     "src/button/editor/buttonEditorSelection.ts",
+    "src/button/editor/buttonEditorMembership.ts",
     "src/button/editor/buttonSkinFiles.ts",
     "src/button/editor/buttonActivationStateStructure.ts",
     "src/button/editor/buttonEditorSaveScopes.ts",

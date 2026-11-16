@@ -1,7 +1,13 @@
 import type { ButtonSkin } from "../types.js";
 import { BUTTON_SKIN_SECTION_ORDER, createEmptyButtonSkinSections } from "./buttonSkinFormat.js";
 import { parseButtonSkinPaste } from "./skinPasteParser.js";
-import { chippedConcreteFamilySources } from "./chippedConcreteFamily.js";
+import { chippedConcreteFamilySources as authoredFamilySources } from "./chippedConcreteFamily.js";
+
+const sizingPreset = "--flowcell-sizing-default: proportional;\n--flowcell-sizing-responsive: 0;";
+const chippedConcreteFamilySources = Object.fromEntries(Object.entries(authoredFamilySources).map(([count, variant]) => [count, {
+  ...variant,
+  source: variant.source.replace("=== base ===\n", `=== base ===\n${sizingPreset}\n`)
+}]));
 
 export const CHIPPED_CONCRETE_BUTTON_SKIN_ID = "skin-chipped-concrete-family-default";
 const counts = Object.keys(chippedConcreteFamilySources).map(Number).sort((a, b) => a - b);
@@ -85,9 +91,12 @@ export function getChippedConcreteButtonSkin(label: string, preferredWidth?: num
   return skinForCount(variantCount(label, preferredWidth, textSizeOverride));
 }
 
-export function getChippedConcreteButtonSize(label: string, preferredWidth?: number, textSizeOverride?: number): { width: number; height: number } {
+export function getChippedConcreteButtonSize(label: string, preferredWidth?: number, textSizeOverride?: number, rowHeight?: number): { width: number; height: number } {
   const { width, height } = chippedConcreteFamilySources[String(variantCount(label, preferredWidth, textSizeOverride))];
-  return { width, height };
+  // Pick the artwork using authored typography and padding, then scale both axes
+  // together to the row height. Label length must never change the text scale.
+  const targetHeight = rowHeight ?? height;
+  return { width: width * targetHeight / height, height: targetHeight };
 }
 
 export const CHIPPED_CONCRETE_BUTTON_SKIN: ButtonSkin = {
@@ -102,12 +111,38 @@ export const CHIPPED_CONCRETE_BUTTON_SKIN: ButtonSkin = {
 };
 
 export function isBundledChippedConcreteDefaultSkin(skin: ButtonSkin): boolean {
-  if (skin.id !== CHIPPED_CONCRETE_BUTTON_SKIN_ID ||
-    !BUTTON_SKIN_SECTION_ORDER.every((section) => skin[section] === CHIPPED_CONCRETE_BUTTON_SKIN[section])) return false;
+  if (skin.id !== CHIPPED_CONCRETE_BUTTON_SKIN_ID) return false;
   const sources = skin.metadata.buttonSkinEmbeddedVariants;
+  // Older saved defaults reference the on-disk family and can hold any literal
+  // authored variant. Keep their sizing policy here: they need measured text
+  // plus this skin's padding, not the generic family's character-count lookup.
+  // Exact section matching protects user edits even when the default ID remains.
+  if (sources === undefined && skin.metadata.buttonSkinFamily === "Chipped Concrete") {
+    return counts.some((count) => {
+      const authored = skinForCount(count);
+      return matchesAuthoredVariant(skin, authored);
+    });
+  }
+  if (!matchesAuthoredVariant(skin, CHIPPED_CONCRETE_BUTTON_SKIN)) return false;
   return Boolean(sources && typeof sources === "object" && !Array.isArray(sources) &&
     Object.keys(sources).length === counts.length &&
-    counts.every((count) => sources[String(count)] === chippedConcreteFamilySources[String(count)].source));
+    counts.every((count) => sources[String(count)] === chippedConcreteFamilySources[String(count)].source ||
+      sources[String(count)] === authoredFamilySources[String(count)].source));
+}
+
+function matchesAuthoredVariant(skin: ButtonSkin, authored: ButtonSkin): boolean {
+  return BUTTON_SKIN_SECTION_ORDER.every((section) => section === "base"
+    ? skin.base.replace(sizingPreset, "").trim() === authored.base.replace(sizingPreset, "").trim()
+    : skin[section] === authored[section]);
+}
+
+/** Upgrade unchanged saved artwork with this skin's non-visual sizing instructions. */
+export function applyChippedConcreteSizingPreset(skin: ButtonSkin): boolean {
+  if (skin.base.includes("--flowcell-sizing-default") || skin.base.includes("--flowcell-sizing-responsive")) return false;
+  if (!counts.some((count) => matchesAuthoredVariant(skin, skinForCount(count)))) return false;
+  skin.base = `${sizingPreset}\n${skin.base}`;
+  skin.compileCache = null;
+  return true;
 }
 
 /** Recognize Main's unchanged default after settings imports rename a conflicting ID. */
@@ -116,5 +151,8 @@ export function isBundledMainPageConcreteSkin(value: unknown): value is ButtonSk
   const skin = value as ButtonSkin;
   if (typeof skin.id !== "string" || !/^(?:settings-skin-)*skin-chipped-concrete-family-default(?:-\d+)*$/.test(skin.id) ||
     !skin.metadata || typeof skin.metadata !== "object" || Array.isArray(skin.metadata)) return false;
+  // File-backed legacy families qualify for measured sizing, not the newer
+  // Main-theme cleanup that removes accidentally inherited embedded skins.
+  if (!skin.metadata.buttonSkinEmbeddedVariants) return false;
   return isBundledChippedConcreteDefaultSkin({ ...skin, id: CHIPPED_CONCRETE_BUTTON_SKIN_ID });
 }

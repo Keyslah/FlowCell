@@ -7261,6 +7261,7 @@ mod managed_program_setup_tests {
                 bridge_data: None,
                 state_query: None,
                 events: None,
+                input_setup: None,
                 children: vec![ActiveSourceChild {
                     slot: "run".to_string(),
                     label: "Run".to_string(),

@@ -10,7 +10,8 @@ import {
 } from "../state/ButtonDraftBus";
 import { loadButtonStateDocument } from "../state/ButtonStateRepository";
 import { withCanonicalPanelFanMotion, withCanonicalProgramPopoutThemes } from "./buttonWindowThemeDocument";
-import { withAddedCanonicalPanelButtons } from "../state/panelPopoutReconciliation";
+import { withAddedCanonicalPanelButtons, withRemovedCanonicalButtons } from "../state/panelPopoutReconciliation";
+import { withCanonicalButtonInputs } from "./buttonConfiguredInputs";
 
 export interface ButtonWindowDocumentState {
   document: ButtonStateDocument | null;
@@ -59,7 +60,7 @@ export function useButtonWindowDocument(
 
     const renderDraft = (document: ButtonStateDocument) => {
       acceptDocument(withCanonicalProgramPopoutThemes(
-        withAddedCanonicalPanelButtons(document, canonicalDocument), canonicalDocument
+        withCanonicalButtonInputs(withAddedCanonicalPanelButtons(withRemovedCanonicalButtons(document, canonicalDocument), canonicalDocument), canonicalDocument), canonicalDocument
       ));
     };
 

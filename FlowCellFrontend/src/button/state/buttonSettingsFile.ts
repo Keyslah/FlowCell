@@ -1130,6 +1130,7 @@ function updateSurfaceOwnerRecords(
     unit.windowFitMode = file.behavior.windowFitMode;
     unit.canonicalBounds = { x: 0, y: 0, width: surface.width, height: surface.height };
     if (unit.kind === "regular" && file.behavior.kind === "regular-popout") {
+      unit.automaticLayout = false;
       const ownerButtonId = file.behavior.ownerButtonId;
       const ownerPlacements = ownerButtonId
         ? surface.placementIds.filter(
@@ -1143,7 +1144,7 @@ function updateSurfaceOwnerRecords(
       unit.ownerPlacementId = ownerPlacements[0] ?? null;
       unit.memberPlacementIds = surface.placementIds.filter((placementId) => {
         const placement = document.placements[placementId];
-        return placement && document.buttons[placement.buttonId]?.role === "single-script";
+        return placement && ["single-script", "tool-set-owner"].includes(document.buttons[placement.buttonId]?.role);
       });
       unit.memberSourceIdentities = unit.memberPlacementIds.map((placementId) => {
         const placement = document.placements[placementId];
@@ -1171,20 +1172,12 @@ function updateSurfaceOwnerRecords(
       const childButtonIds = childPlacementIds.map(
         (placementId) => document.placements[placementId].buttonId
       );
-      const savedChildIds = new Set(childButtonIds);
-      if (
-        savedChildIds.size !== unit.childButtonIds.length ||
-        unit.childButtonIds.some((buttonId) => !savedChildIds.has(buttonId))
-      ) {
-        throw new Error(
-          "Tool Set settings cannot add or remove package-owned child actions."
-        );
-      }
       for (const buttonId of childButtonIds) {
         const child = document.buttons[buttonId];
-        if (child?.role !== "tool-set-child" || child.toolSetParentId !== unit.ownerButtonId) {
-          throw new Error(`Button '${buttonId}' is not a child of this Tool Set.`);
-        }
+        const packageChild = child?.role === "tool-set-child" && child.toolSetParentId === unit.ownerButtonId;
+        const extra = unit.templateUnitId && child?.sourceIdentity && ["single-script", "tool-set-owner"].includes(child.role) &&
+          child.id !== unit.ownerButtonId && buttonBelongsToPanel(document, child.id, { programName: file.programName, panelName: file.panelName });
+        if (!packageChild && !extra) throw new Error(`Button '${buttonId}' does not belong in this Tool Set Pop-out.`);
       }
       unit.childButtonIds = childButtonIds;
       unit.childPlacementIds = childPlacementIds;
@@ -1236,6 +1229,22 @@ function updateSurfaceOwnerRecords(
   setup.windowFitMode = file.behavior.windowFitMode;
 }
 
+function omitDeletedPopoutButtons(document: ButtonStateDocument, file: ButtonSettingsFile): ButtonSettingsFile {
+  if (file.placementKind !== "pop-out") return file;
+  const next = structuredClone(file);
+  next.entries = next.entries.filter(entry => Boolean(document.buttons[entry.buttonId]));
+  if (next.behavior.kind === "tool-set-popout" && !document.buttons[next.behavior.ownerButtonId]) {
+    next.surface.kind = "regular-popout";
+    next.behavior = { ...next.behavior, kind: "regular-popout", ownerButtonId: null, ownerPlacementId: null, interactionMode: "pop" };
+  }
+  if (next.behavior.kind === "regular-popout" && next.behavior.ownerButtonId && !document.buttons[next.behavior.ownerButtonId]) {
+    next.behavior.ownerButtonId = null;
+    next.behavior.ownerPlacementId = null;
+    next.behavior.interactionMode = "pop";
+  }
+  return next;
+}
+
 export function applyButtonSettingsFile(
   document: ButtonStateDocument,
   selectedSurfaceId: string,
@@ -1245,7 +1254,7 @@ export function applyButtonSettingsFile(
   const normalizedValue = normalizeButtonSettingsFile(value);
   const fileValidation = validateButtonSettingsFile(normalizedValue);
   if (!fileValidation.valid) throw new Error(fileValidation.issues.join("\n"));
-  let file = normalizedValue as ButtonSettingsFile;
+  let file = omitDeletedPopoutButtons(document, normalizedValue as ButtonSettingsFile);
   const selectedSurface = document.surfaces[selectedSurfaceId];
   if (!selectedSurface) throw new Error("Select an existing Button surface before loading settings.");
   if (file.placementKind !== buttonSettingsPlacementKind(selectedSurface)) {
@@ -1377,7 +1386,7 @@ export function buildTransientButtonPopoutSettingsDocument(
   const normalizedValue = normalizeButtonSettingsFile(value);
   const fileValidation = validateButtonSettingsFile(normalizedValue);
   if (!fileValidation.valid) throw new Error(fileValidation.issues.join("\n"));
-  const file = normalizedValue as ButtonSettingsFile;
+  const file = omitDeletedPopoutButtons(document, normalizedValue as ButtonSettingsFile);
   if (file.placementKind !== "pop-out") {
     throw new Error("Open Pop accepts only Pop-out settings files.");
   }
@@ -1417,11 +1426,8 @@ export function buildTransientButtonPopoutSettingsDocument(
     if (behavior.ownerPlacementId && !ownerEntry) {
       throw new Error("Regular Fan settings have no entry for their saved owner placement.");
     }
-    const memberEntries = file.entries.filter((entry) => entry.buttonRole === "single-script");
-    if (memberEntries.length === 0) {
-      throw new Error("A regular Pop-out settings file must contain at least one Button.");
-    }
-    if (file.entries.some((entry) => entry.buttonRole !== "single-script" && entry !== ownerEntry)) {
+    const memberEntries = file.entries.filter((entry) => ["single-script", "tool-set-owner"].includes(entry.buttonRole));
+    if (file.entries.some((entry) => !["single-script", "tool-set-owner"].includes(entry.buttonRole) && entry !== ownerEntry)) {
       throw new Error("A regular Pop-out may contain only script Buttons and one optional panel owner.");
     }
     const buttons = memberEntries.map((entry) => {
@@ -1432,8 +1438,8 @@ export function buildTransientButtonPopoutSettingsDocument(
         );
       }
       if (
-        entry.buttonRole !== "single-script" ||
-        button.role !== "single-script" ||
+        entry.buttonRole !== button.role ||
+        !["single-script", "tool-set-owner"].includes(button.role) ||
         !buttonBelongsToPanel(working, button.id, context)
       ) {
         throw new Error(
@@ -1504,7 +1510,7 @@ export function buildTransientButtonPopoutSettingsDocument(
     const sourceUnit = Object.values(working.popoutUnits).find(
       (candidate): candidate is ToolSetButtonPopoutUnit =>
         candidate.kind === "tool-set" &&
-        candidate.ownerButtonId === owner.id
+        candidate.ownerButtonId === owner.id && !candidate.templateUnitId
     );
     if (!sourceUnit) {
       throw new Error(`Tool Set owner '${owner.label}' no longer has an installed Pop-out.`);
@@ -1521,26 +1527,13 @@ export function buildTransientButtonPopoutSettingsDocument(
     const childEntries = file.entries.filter((entry) => entry !== ownerEntry);
     for (const entry of childEntries) {
       const child = working.buttons[entry.buttonId];
-      if (
-        !child ||
-        entry.buttonRole !== "tool-set-child" ||
-        child.role !== "tool-set-child" ||
-        child.toolSetParentId !== owner.id
-      ) {
-        throw new Error(`Button '${entry.buttonId}' is not an installed child of '${owner.label}'.`);
-      }
-    }
-    const savedChildIds = new Set(childEntries.map((entry) => entry.buttonId));
-    if (
-      savedChildIds.size !== sourceUnit.childButtonIds.length ||
-      sourceUnit.childButtonIds.some((buttonId) => !savedChildIds.has(buttonId))
-    ) {
-      throw new Error(
-        `Tool Set '${owner.label}' no longer has the same installed child actions as this Pop-out file.`
-      );
+      const packageChild = child?.role === "tool-set-child" && child.toolSetParentId === owner.id;
+      const extra = child && ["single-script", "tool-set-owner"].includes(child.role) && child.id !== owner.id && buttonBelongsToPanel(working, child.id, context);
+      if (!packageChild && !extra) throw new Error(`Button '${entry.buttonId}' does not belong in '${owner.label}'.`);
     }
     unit = {
       ...structuredClone(sourceUnit),
+      templateUnitId: sourceUnit.templateUnitId ?? sourceUnit.id,
       id: transientUnitId,
       name: file.surface.name,
       surfaceId: transientSurfaceId,
@@ -1619,7 +1612,7 @@ export function buildTransientButtonPopoutSettingsDocument(
     unit.ownerPlacementId = transientOwnerPlacementId;
     unit.memberPlacementIds = transientSurface.placementIds.filter((placementId) => {
       const placement = working.placements[placementId];
-      return placement && working.buttons[placement.buttonId]?.role === "single-script";
+      return placement && ["single-script", "tool-set-owner"].includes(working.buttons[placement.buttonId]?.role);
     });
   } else {
     unit.ownerPlacementId = transientOwnerPlacementId;

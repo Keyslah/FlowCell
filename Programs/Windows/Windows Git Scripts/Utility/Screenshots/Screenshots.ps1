@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [switch]$ValidateOnly,
+    [switch]$ConfigureOnly,
     [ValidateSet('temp-shots', 'snapshots')][string]$Mode = 'temp-shots',
     [string]$LauncherPath = ''
 )
@@ -46,6 +47,17 @@ $script:StatusPath = Join-Path $script:FlowCellLocalRoot 'logs\last_action_statu
 $script:ConfigDirectory = Join-Path $script:FlowCellLocalRoot 'windows\temp-shots'
 $script:ConfigPath = Join-Path $script:ConfigDirectory 'temp-shots.config.json'
 $script:FolderCachePath = Join-Path $script:ConfigDirectory 'temp-shots.folder.txt'
+$script:OwnerButtonId = ''
+$script:InputsPath = ''
+if ($Mode -eq 'temp-shots') {
+    $installPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'flowcell.install.json'
+    if (Test-Path -LiteralPath $installPath -PathType Leaf) {
+        $install = Get-Content -LiteralPath $installPath -Raw | ConvertFrom-Json
+        $script:OwnerButtonId = [string]$install.ownerButtonId
+        if ($script:OwnerButtonId -notmatch '^[A-Za-z0-9_-]{1,128}$') { throw 'Invalid Screenshot Button owner.' }
+        $script:InputsPath = Join-Path $script:FlowCellLocalRoot ('button-inputs\' + $script:OwnerButtonId + '.json')
+    }
+}
 
 function Ensure-Directory {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -76,6 +88,18 @@ function Write-Utf8NoBomText {
 }
 
 function Read-TempShotsFolder {
+    if ($script:InputsPath) {
+        if (Test-Path -LiteralPath $script:InputsPath -PathType Leaf) {
+            try {
+                $inputs = Get-Content -LiteralPath $script:InputsPath -Raw | ConvertFrom-Json
+                if ($inputs.configured -and $inputs.values.folder -and (Test-Path -LiteralPath $inputs.values.folder -PathType Container)) {
+                    return [IO.Path]::GetFullPath([string]$inputs.values.folder)
+                }
+            } catch {}
+            return ''
+        }
+        if (-not $script:OwnerButtonId.StartsWith('button-migrated-')) { return '' }
+    }
     if (Test-Path -LiteralPath $script:FolderCachePath -PathType Leaf) {
         try {
             $cachedFolder = [System.IO.File]::ReadAllText($script:FolderCachePath, [System.Text.Encoding]::UTF8).Trim()
@@ -126,7 +150,7 @@ function Select-TempShotsFolder {
     Add-Type -AssemblyName System.Windows.Forms
 
     $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = 'Choose where Temp Shots saves screenshots.'
+    $dialog.Description = 'Choose where Screenshots saves screenshots.'
     $dialog.ShowNewFolderButton = $true
     $dialog.SelectedPath = [Environment]::GetFolderPath([System.Environment+SpecialFolder]::MyPictures)
 
@@ -140,14 +164,18 @@ function Select-TempShotsFolder {
 }
 
 function Resolve-TempShotsFolder {
-    $folder = Read-TempShotsFolder
+    $folder = if ($ConfigureOnly) { '' } else { Read-TempShotsFolder }
     if (-not [string]::IsNullOrWhiteSpace($folder)) {
         return $folder
     }
 
+    if ($script:OwnerButtonId) {
+        throw 'In FlowCell, right-click this Screenshots Button and choose Edit Inputs to set or repair its destination folder and name, then run the Button again.'
+    }
+
     $selectedFolder = Select-TempShotsFolder
     if ([string]::IsNullOrWhiteSpace($selectedFolder)) {
-        Write-FlowCellStatus -Message 'Temp Shots folder selection cancelled.'
+        Write-FlowCellStatus -Message 'Screenshots folder selection cancelled.'
         exit 0
     }
 
@@ -189,7 +217,7 @@ function Invoke-TempShotsBackend {
     # Do not fall back to Windows Snipping Tool: it independently auto-saves.
     $payload = @{
         command = 'run_script_now'
-        scriptPath = if ($LauncherPath) { [IO.Path]::GetFullPath($LauncherPath) } else { Join-Path $PSScriptRoot 'Temp_Shots.vbs' }
+        scriptPath = if ($LauncherPath) { [IO.Path]::GetFullPath($LauncherPath) } else { Join-Path $PSScriptRoot 'Screenshots.vbs' }
         programKey = 'windows_generic'
         requestId = 'temp-shots-' + [guid]::NewGuid().ToString('N')
         backendRole = $script:BackendRole
@@ -205,7 +233,7 @@ function Invoke-TempShotsBackend {
         $sent = [FlowCell.TempShots.BackendBridge]::SendMessageTimeout(
             $receiver, 0x4A, [IntPtr]::Zero, [ref]$data, 2, 2000, [ref]$reply)
         if ($sent -eq [IntPtr]::Zero -or $reply.ToUInt64() -ne 1) {
-            throw 'The FlowCell capture backend did not accept Temp Shots. Try again when its current action finishes.'
+            throw 'The FlowCell capture backend did not accept Screenshots. Try again when its current action finishes.'
         }
     }
     finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($dataPointer) }
@@ -216,22 +244,23 @@ try {
     if ($ValidateOnly) {
         $captureHelper = Join-Path $script:RepoRoot 'flowcellbackend\helpers\TempShotsCapture.ahk'
         if (-not (Test-Path -LiteralPath $captureHelper -PathType Leaf)) {
-            throw 'The direct Temp Shots capture helper is missing.'
+            throw 'The direct Screenshots capture helper is missing.'
         }
-        $validatedLauncher = if ($LauncherPath) { $LauncherPath } else { Join-Path $PSScriptRoot 'Temp_Shots.vbs' }
+        $validatedLauncher = if ($LauncherPath) { $LauncherPath } else { Join-Path $PSScriptRoot 'Screenshots.vbs' }
         if (-not (Test-Path -LiteralPath $validatedLauncher -PathType Leaf)) {
             throw 'The owned capture launcher is missing.'
         }
-        Write-Output 'Temp Shots direct-capture package validation OK.'
+        Write-Output 'Screenshots direct-capture package validation OK.'
         exit 0
     }
     $targetFolder = Resolve-TempShotsFolder
     Ensure-Directory -Path $targetFolder
+    if ($ConfigureOnly) { exit 0 }
     Invoke-TempShotsBackend
     exit 0
 }
 catch {
-    $captureName = if ($Mode -eq 'snapshots') { 'Snapshots' } else { 'Temp Shots' }
+    $captureName = if ($Mode -eq 'snapshots') { 'Snapshots' } else { 'Screenshots' }
     Write-FlowCellStatus -Message ("{0} failed: {1}" -f $captureName, $_.Exception.Message)
     exit 1
 }

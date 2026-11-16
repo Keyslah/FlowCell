@@ -232,49 +232,6 @@
   text-transform: uppercase;
 }
 
-.button-editor-sidebar__sizing {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  margin: 2px 0 0;
-  padding: 10px;
-  border: 1px solid #39434f;
-  border-radius: 7px;
-  background: #20262d;
-}
-
-.button-editor-sidebar__sizing legend {
-  padding: 0 5px;
-  color: #e7ebf0;
-  font-weight: 600;
-}
-
-.button-editor-sidebar__sizing label {
-  margin: 0;
-}
-
-.button-editor-sidebar__sizing > span {
-  color: #8f9baa;
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.button-editor-sidebar__size-copy-actions {
-  display: grid;
-  gap: 6px;
-}
-
-.button-editor-sidebar__size-copy-actions > button {
-  width: 100%;
-  text-align: left;
-}
-
-.button-editor-sidebar__copied-size {
-  padding: 6px;
-  border-radius: 5px;
-  background: rgba(140, 200, 255, .06);
-}
-
 .button-workspace-shell {
   position: relative;
   padding: 0;
@@ -311,7 +268,34 @@
   position: absolute;
   z-index: 100001;
   transform: translateY(-100%);
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  width: max-content;
   white-space: nowrap;
+}
+
+.button-editor-page .button-workspace-reorder-control > button,
+.button-editor-page .button-editor-sizing-spacing input {
+  flex: 0 0 auto;
+  height: 28px;
+  min-height: 28px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.button-editor-page .button-editor-sizing-spacing {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.button-editor-page .button-editor-sizing-spacing input {
+  width: 72px;
 }
 
 .button-workspace-selection-indicator {
@@ -1242,3 +1226,25 @@
     grid-template-columns: 205px minmax(340px, 1fr) 270px;
   }
 }
+.button-editor-add-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: #0009;
+}
+.button-editor-add-dialog {
+  width: min(520px, 90vw);
+  max-height: 85vh;
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid #46515e;
+  border-radius: 12px;
+  background: #20262d;
+  color: #f0f3f6;
+}
+.button-editor-add-dialog button { margin: 12px 8px 0 0; }
+.button-editor-add-list { max-height: 45vh; overflow: auto; }
+.button-editor-add-list label { display: flex; gap: 10px; align-items: center; padding: 8px; }
+.button-workspace-empty-controls { display: flex; gap: 6px; align-items: center; margin-bottom: 16px; }

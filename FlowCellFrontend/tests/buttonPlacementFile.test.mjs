@@ -1119,7 +1119,7 @@ test("Open Pop materializes a regular settings file only in an isolated transien
   assert.equal(validateButtonStateDocument(opened.document).valid, true);
 });
 
-test("Open Pop rejects non-Pop files, wrong panels, and missing installed Buttons atomically", () => {
+test("Open Pop rejects non-Pop files, wrong panels, and invalid canonical references atomically", () => {
   const { document, settings } = regularPopSettingsFixture();
   const before = structuredClone(document);
 
@@ -1142,7 +1142,7 @@ test("Open Pop rejects non-Pop files, wrong panels, and missing installed Button
       { programName: "Windows", panelName: "Files" },
       "missing-button"
     ),
-    /is not installed/
+    /references a missing Button/
   );
 
   const mainFile = buildButtonSettingsFile(
@@ -1192,15 +1192,11 @@ test("Open Pop isolates Tool Set presentation while retaining installed fields a
 
   const obsolete = structuredClone(settings);
   obsolete.entries.pop();
-  assert.throws(
-    () => buildTransientButtonPopoutSettingsDocument(
-      document,
-      obsolete,
-      { programName: "Windows", panelName: "Files" },
-      "obsolete-tool-choice"
-    ),
-    /same installed child actions/
+  const subset = buildTransientButtonPopoutSettingsDocument(
+    document, obsolete, { programName: "Windows", panelName: "Files" }, "subset-tool-choice"
   );
+  assert.equal(subset.document.popoutUnits[subset.popoutUnitId].childButtonIds.length, 1);
+  assert.deepEqual(document, before, "hiding a child in saved settings leaves the package intact");
 });
 
 test("legacy Pop-out state and settings normalize to Pop mode without an owner placement", () => {

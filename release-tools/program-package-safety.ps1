@@ -494,6 +494,10 @@ function Assert-ProgramPackageEntries(
       $hasManifest = $true
     }
 
+    if ($segments[-1].Equals('sync_recent_creative_shortcuts.ps1', [System.StringComparison]::OrdinalIgnoreCase)) {
+      Stop-Package "$SourceDescription contains the removed Sync Recent Creative Shortcuts script: $entryName"
+    }
+
     foreach ($segment in $segments) {
       if (
         $segment.Equals('Panels', [System.StringComparison]::OrdinalIgnoreCase) -or

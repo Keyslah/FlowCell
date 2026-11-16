@@ -240,14 +240,14 @@ test("fresh panel grids use visible family widths and the same 8 CSS px Main gap
   for (const placement of placements) {
     const button = document.buttons[placement.buttonId];
     const natural = getChippedConcreteButtonSize(button.label);
-    assert.equal(placement.width, natural.width * 44 / natural.height);
-    assert.equal(placement.height, 44);
+    assert.equal(placement.width, natural.width);
+    assert.equal(placement.height, natural.height);
     assert.ok(placement.x + placement.width <= 8 + maximumWidth);
     if (previous) {
       if (placement.y === previous.y) assert.equal(placement.x, previous.x + previous.width + 8);
       else {
         assert.equal(placement.x, 8);
-        assert.equal(placement.y, previous.y + 44 + 8);
+        assert.equal(placement.y, previous.y + previous.height + 8);
       }
     }
     previous = placement;

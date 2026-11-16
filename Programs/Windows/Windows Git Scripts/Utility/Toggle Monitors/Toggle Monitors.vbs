@@ -26,10 +26,15 @@ Dim configPath : configPath = fso.BuildPath(runtimeDir, "toggle-monitors.txt")
 
 Dim validateOnly : validateOnly = False
 Dim forceConfigure : forceConfigure = False
+Dim configureOnly : configureOnly = False
 Dim argument
 For Each argument In WScript.Arguments
     If LCase(argument) = "--validate" Or LCase(argument) = "-validateonly" Then validateOnly = True
     If LCase(argument) = "--configure" Then forceConfigure = True
+    If LCase(argument) = "--configure-only" Then
+        forceConfigure = True
+        configureOnly = True
+    End If
 Next
 
 If Not fso.FileExists(scriptPath) Then
@@ -52,6 +57,7 @@ Dim pythonwPath : pythonwPath = ResolvePythonw()
 If pythonwPath = "" Then WScript.Quit 0
 
 If Not ResolveMonitorGroups(pythonwPath, forceConfigure) Then WScript.Quit 0
+If configureOnly Then WScript.Quit 0
 RefreshStartupSafety pythonwPath
 
 Dim command

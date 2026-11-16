@@ -15,6 +15,7 @@ import {
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { CanonicalActionButton } from "../../button/CanonicalActionButton";
+import { editButtonInputs, hasEditableButtonInputs } from "../../button/runtime/buttonInputs";
 import { startButtonActivationStateCoordinator } from "../../button/runtime/ButtonActivationStateBus";
 import { addKritaBrushToPanel, startKritaBrushButtonSync } from "../../button/state/kritaBrushButtons";
 import { ExactPageFrame } from "../../components/ExactPageFrame";
@@ -185,6 +186,7 @@ type ButtonContextMenuState = {
   buttonId: string;
   x: number;
   y: number;
+  hasEditableInputs?: boolean;
 };
 
 type FanSetupMenuState = {
@@ -197,8 +199,9 @@ type MacroPanelChangedPayload = {
   panelName?: string;
 };
 
-const BUTTON_CONTEXT_MENU_WIDTH = 168;
-const BUTTON_CONTEXT_MENU_HEIGHT = 156;
+// Five 44px actions, four 6px gaps, plus 6px padding and 1px borders.
+const BUTTON_CONTEXT_MENU_WIDTH = 234;
+const BUTTON_CONTEXT_MENU_HEIGHT = 258;
 const BUTTON_CONTEXT_MENU_MARGIN = 8;
 const BUTTON_STATE_MUTATION_ATTEMPTS = 3;
 const MAIN_FAN_DIRECTIONS: ReadonlyArray<{ id: ButtonFanExpansionDirection; name: string }> = [
@@ -258,11 +261,12 @@ async function loadMainPopSettingsFile(
     if (!toolSetOwnerButtonId) return file;
     const owner = document.buttons[toolSetOwnerButtonId];
     const unit = Object.values(document.popoutUnits).find((candidate) =>
-      candidate.kind === "tool-set" && candidate.ownerButtonId === toolSetOwnerButtonId);
+      candidate.kind === "tool-set" && candidate.ownerButtonId === toolSetOwnerButtonId && !candidate.templateUnitId);
     if (owner?.role !== "tool-set-owner" || !unit ||
         !sourceIdentityMatchesFolderScope(owner.sourceIdentity, programName, panelName)) {
       throw new Error("The selected Tool Set is no longer installed in this panel.");
     }
+    if (file.behavior.kind === "tool-set-popout" && file.behavior.ownerButtonId === owner.id) return file;
     const mapped = applyButtonSettingsFile(document, unit.surfaceId, file, { programName, panelName });
     return buildButtonSettingsFile(mapped, unit.surfaceId, { programName, panelName });
   }
@@ -1445,7 +1449,7 @@ export default function MainPage() {
           ...record,
           canonicalButtonId: presentation.button.id,
           label: presentation.button.label,
-          tooltip: presentation.button.tooltip,
+          tooltip: presentation.button.tooltip.trim() || record.tooltip?.trim(),
           canonicalPlacement: {
             x: presentation.placement.x,
             y: presentation.placement.y,
@@ -1647,11 +1651,18 @@ export default function MainPage() {
     }
 
     const nextPosition = clampContextMenuPosition(event.clientX, event.clientY);
-    setContextMenu({
+    const nextMenu = {
       buttonId: button.id,
       x: nextPosition.x,
       y: nextPosition.y
-    });
+    };
+    setContextMenu(nextMenu);
+    const canonical = button.scriptFileName && selectedProgramName && selectedPanelName
+      ? canonicalButtonsBySource.get(canonicalButtonSourceKey(selectedProgramName, selectedPanelName, button.scriptFileName))
+      : undefined;
+    if (canonical) void hasEditableButtonInputs(canonical, buttonDocument ?? undefined).then((hasEditableInputs) => {
+      setContextMenu((current) => current === nextMenu ? { ...current, hasEditableInputs } : current);
+    }).catch((error) => console.error("Button inputs could not be inspected.", error));
   };
 
   const togglePanelScriptSelection = (fileName: string) => {
@@ -2794,7 +2805,7 @@ export default function MainPage() {
       });
       const selectedOwners = new Set(setup.selectedToolSetOwnerButtonIds);
       const panelToolSets = Object.values(document.popoutUnits).filter(
-        (unit): unit is ToolSetButtonPopoutUnit => unit.kind === "tool-set" &&
+        (unit): unit is ToolSetButtonPopoutUnit => unit.kind === "tool-set" && !unit.templateUnitId &&
           sourceIdentityMatchesFolderScope(document.buttons[unit.ownerButtonId]?.sourceIdentity,
             selectedProgramName, selectedPanelName));
       const toolSetWindows = setup.selectedToolSetOwnerButtonIds.map((ownerButtonId) => {
@@ -3723,6 +3734,17 @@ export default function MainPage() {
               >
                 {isScriptContextMenu ? (
                   <>
+                    {contextMenu.hasEditableInputs && contextBrushButton ? <CanonicalActionButton
+                      id={`button-context-inputs:${contextMenuButton.id}`}
+                      label="Edit Inputs…"
+                      className="button-context-menu__item"
+                      onActivate={async () => {
+                        const selected = contextBrushButton;
+                        closeContextMenu();
+                        try { await editButtonInputs(selected); }
+                        catch (error) { window.alert(formatErrorMessage(error)); }
+                      }}
+                    /> : null}
                     {contextBrushButton?.metadata.kritaBrushId ? <CanonicalActionButton
                       id={`button-context-brush-panel:${contextMenuButton.id}`}
                       label="Add to panel"

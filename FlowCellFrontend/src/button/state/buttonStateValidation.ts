@@ -1192,8 +1192,8 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       "desktopBoundsFitMode", "desktopBoundsEnvelope", "interactionMode", "ownerPlacementId", "closeControlOffset", "fanAnimation"
     ];
     const allowedKeys = new Set(unit.kind === "regular"
-      ? [...commonKeys, "ownerButtonId", "memberPlacementIds", "memberSourceIdentities", "selectionKey"]
-      : [...commonKeys, "ownerButtonId", "childButtonIds", "childPlacementIds", "fields"]);
+      ? [...commonKeys, "ownerButtonId", "memberPlacementIds", "memberSourceIdentities", "selectionKey", "automaticLayout"]
+      : [...commonKeys, "ownerButtonId", "childButtonIds", "childPlacementIds", "fields", "templateUnitId"]);
     Object.keys(rawUnit).forEach((property) => {
       if (!allowedKeys.has(property)) addIssue(issues, `${path}.${property}`, `Property '${property}' is not part of the ${unit.kind} popout contract.`);
     });
@@ -1284,7 +1284,7 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       placementIds.forEach((placementId) => {
         const placement = document.placements[placementId];
         const button = placement ? document.buttons[placement.buttonId] : undefined;
-        if (!placement || placement.surfaceId !== unit.surfaceId || !button || button.role !== "single-script" || !button.sourceIdentity) {
+        if (!placement || placement.surfaceId !== unit.surfaceId || !button || !["single-script", "tool-set-owner"].includes(button.role) || !button.sourceIdentity) {
           addIssue(issues, `${path}.memberPlacementIds`, `Invalid regular member placement '${placementId}'.`);
           return;
         }
@@ -1317,6 +1317,12 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
         }
       });
       const owner = typeof unit.ownerButtonId === "string" ? document.buttons[unit.ownerButtonId] : undefined;
+      if (unit.templateUnitId !== undefined) {
+        const template = document.popoutUnits[unit.templateUnitId];
+        if (!template || template.kind !== "tool-set" || template.templateUnitId || template.ownerButtonId !== unit.ownerButtonId || template.id === unit.id) {
+          addIssue(issues, `${path}.templateUnitId`, "Custom Tool Set Pop-out must reference its original package Pop-out.");
+        }
+      }
       if (!owner || owner.role !== "tool-set-owner") addIssue(issues, `${path}.ownerButtonId`, "Tool-set popout requires a tool-set owner.");
       const childButtonIds = Array.isArray(unit.childButtonIds) ? unit.childButtonIds : [];
       const childPlacementIds = Array.isArray(unit.childPlacementIds) ? unit.childPlacementIds : [];
@@ -1346,6 +1352,9 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       }
       for (const childId of childButtonIds) {
         const child = document.buttons[childId];
+        if (unit.templateUnitId && child?.sourceIdentity && ["single-script", "tool-set-owner"].includes(child.role) && child.id !== owner?.id &&
+            child.sourceIdentity.normalizedProgramName === owner?.sourceIdentity?.normalizedProgramName &&
+            child.sourceIdentity.normalizedPanelName === owner?.sourceIdentity?.normalizedPanelName) continue;
         if (!child || child.role !== "tool-set-child" || child.toolSetParentId !== owner?.id) {
           addIssue(issues, `${path}.childButtonIds`, `Invalid tool-set child '${childId}'.`);
         }

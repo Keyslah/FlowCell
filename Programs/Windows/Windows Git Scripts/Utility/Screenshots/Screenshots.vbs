@@ -1,13 +1,13 @@
-' Description: Hidden launcher for Temp Shots screenshots.
+' Description: Hidden launcher for Screenshots screenshots.
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
 scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
 psExe = shell.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
-psScript = scriptDir & "\Temp Shots.ps1"
+psScript = scriptDir & "\Screenshots.ps1"
 
 If Not fso.FileExists(psScript) Then
-    MsgBox "Temp Shots is missing its owned Temp Shots.ps1 engine. Update this Button from the Temp Shots script package.", vbExclamation, "Temp Shots"
+    MsgBox "Screenshots is missing its owned Screenshots.ps1 engine. Update this Button from the Screenshots script package.", vbExclamation, "Screenshots"
     WScript.Quit 1
 End If
 

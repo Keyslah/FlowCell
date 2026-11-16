@@ -109,6 +109,6 @@ export function resolvePanelOwnerButton(
 
 export function resolveToolSetOwnerPopout(document: ButtonStateDocument, ownerButtonId: string) {
   return Object.values(document.popoutUnits).find(
-    (unit) => unit.kind === "tool-set" && unit.ownerButtonId === ownerButtonId
+    (unit) => unit.kind === "tool-set" && unit.ownerButtonId === ownerButtonId && !unit.templateUnitId
   ) ?? null;
 }

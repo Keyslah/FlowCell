@@ -46,6 +46,7 @@ import {
 } from "./runtime/ButtonActivationStateBus";
 import { buttonPlacementActivationCycleUsesResultMatches } from "./runtime/buttonActivationResultSync";
 import { isButtonWindowGeometryTransitionActive } from "./windows/buttonWindowGeometryTransition";
+import { showButtonInputsContextMenu } from "./runtime/buttonInputs";
 
 export interface ButtonHostProps {
   button: ButtonRecord;
@@ -1078,10 +1079,12 @@ export function ButtonHost({
     };
     const handleContextMenu = (event: Event) => {
       const handler = onRequestContextMenuRef.current;
-      if (!handler) return;
+      if (!handler && (modeRef.current !== "run" ||
+        (!buttonRef.current.sourceIdentity && !buttonRef.current.toolSetParentId))) return;
       event.preventDefault();
       event.stopPropagation();
-      handler(buttonRef.current, event as MouseEvent);
+      if (handler) handler(buttonRef.current, event as MouseEvent);
+      else void showButtonInputsContextMenu(buttonRef.current).catch((error) => window.alert(String(error)));
     };
     const handleKeyDown = (event: Event) => {
       if (eventTargetsInlineEditor(event)) return;

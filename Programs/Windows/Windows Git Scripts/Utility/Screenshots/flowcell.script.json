@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.temp-shots",
+  "label": "Screenshots",
+  "tooltip": "First click: choose a screenshot folder and button name. Then capture a rectangle to that folder. Escape cancels without saving.",
+  "program": "Windows",
+  "source": "Screenshots.vbs",
+  "importAliases": ["Screenshots.ps1"],
+  "inputSetup": {
+    "source": "Configure-Inputs.ps1",
+    "arguments": [],
+    "firstRun": true
+  }
+}

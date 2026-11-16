@@ -1306,6 +1306,7 @@ mod tests {
                 bridge_data: None,
                 state_query: None,
                 events: None,
+                input_setup: None,
                 children: Vec::new(),
                 layout: None,
                 page: None,

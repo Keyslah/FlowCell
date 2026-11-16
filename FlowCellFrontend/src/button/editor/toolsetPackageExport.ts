@@ -129,6 +129,7 @@ export async function captureToolsetPackage(
   };
 
   const ownerSkin = await captureSkin(ownerPlacement);
+  if (unit.templateUnitId) throw new Error("Save this combined arrangement as Pop-out Settings. Export the original Tool Set to update its script package.");
   const ownerPresentation = resolveButtonPlacementPresentation(owner, ownerPlacement);
   const children: Record<string, string> = Object.create(null);
   const childPresentation: Record<string, { label: string; tooltip: string }> = Object.create(null);

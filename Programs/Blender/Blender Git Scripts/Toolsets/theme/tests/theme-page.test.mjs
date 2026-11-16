@@ -380,7 +380,7 @@ test("theme roles and gradient stops use the original native color popups for nu
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.1.5");
+  assert.equal(contribution.version, "3.1.6");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -1630,6 +1630,10 @@ test("package page is headerless and keeps Theme plus Place Picture compact", ()
     /\.theme-role\s*\{[^}]*flex:\s*0 1 auto;[^}]*width:\s*max-content;[^}]*max-width:\s*100%;[^}]*min-height:\s*60px;/
   );
   assert.match(pageCss, /\.theme-role__label-row\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(pageCss, /\.theme-role\s*\{[^}]*grid-template-rows:\s*minmax\(22px, auto\) 30px;/);
+  assert.match(pageCss, /\.theme-role__label-row\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*1;/);
+  assert.match(pageCss, /\.theme-role input\[type="color"\]\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*grid-row:\s*2;[^}]*height:\s*30px;/);
+  assert.match(pageCss, /\.theme-role button\s*\{[^}]*grid-column:\s*2;[^}]*grid-row:\s*1;/);
   assert.match(pageCss, /\.theme-role__label\s*\{[\s\S]*word-break:\s*normal;/);
   assert.doesNotMatch(pageCss, /(^|\n)\.theme-gradient\b/);
   assert.match(pageCss, /\.button-theme-gradient\s*[,\{][\s\S]*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\);/);

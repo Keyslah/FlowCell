@@ -3,7 +3,7 @@ Set-StrictMode -Version Latest
 
 $windowsRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent (Split-Path -Parent $windowsRoot)
-$sourcePath = Join-Path $windowsRoot 'Windows Git Scripts\Utility\Temp Shots\Temp Shots.ps1'
+$sourcePath = Join-Path $windowsRoot 'Windows Git Scripts\Utility\Screenshots\Screenshots.ps1'
 $snapshotsPath = Join-Path $windowsRoot 'Windows Git Scripts\Utility\Snapshots\Snapshots.ps1'
 $backendPath = Join-Path $repoRoot 'flowcellbackend\FlowCellBackend.ahk'
 $helperPath = Join-Path $repoRoot 'flowcellbackend\helpers\TempShotsCapture.ahk'
@@ -59,13 +59,23 @@ Assert-True ($panel -match 'if this\.IsTempShotsScript\(scriptPath\)\s+return th
 Assert-True ($route.Contains('this.TryLaunchTempShotsFast(launcherPath)')) 'The shared route does not select direct capture.'
 Assert-True ($direct.Contains('FlowCellTempShotsCapture()')) 'Direct capture is not owned by the resident backend.'
 Assert-True ($direct.Contains('this.tempShotsCapture.Start(folder,')) 'Direct capture does not receive the configured folder.'
-Assert-True ($direct.Contains('this.ReadTempShotsFastFolder()')) 'Direct capture does not resolve the Temp Shots folder.'
+Assert-True ($direct.Contains('this.ReadTempShotsFastFolder(launcherPath)')) 'Direct capture does not resolve this Button''s screenshot folder.'
+Assert-True ($snapshotsDirect.Contains('this.ReadTempShotsFastFolder()')) 'Snapshots no longer retains its existing shared folder.'
+Assert-True ($source.Contains('$script:OwnerButtonId') -and $source.Contains("'button-inputs\' + `$script:OwnerButtonId + '.json'")) 'The package does not read the same per-Button destination as the backend.'
+$manifest = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $sourcePath) 'flowcell.script.json') -Raw | ConvertFrom-Json
+Assert-True ($manifest.label -ceq 'Screenshots') 'A newly added capture Button is not a generic Screenshot Button.'
+Assert-True ($manifest.importAliases -contains 'Screenshots.ps1') 'Selecting Temp Shots.ps1 does not resolve to its declared VBS package entry.'
+Assert-True ($manifest.inputSetup.source -ceq 'Configure-Inputs.ps1' -and $manifest.inputSetup.firstRun) 'Screenshot does not declare its reusable first-run input handler.'
+$setupScript = Join-Path (Split-Path -Parent $sourcePath) 'Configure-Inputs.ps1'
+$setupErrors = $null
+[void][Management.Automation.Language.Parser]::ParseFile($setupScript, [ref]$tokens, [ref]$setupErrors)
+Assert-True (@($setupErrors).Count -eq 0) 'The Screenshot Button setup dialog has PowerShell parse errors.'
 Assert-True ($direct.Contains('temp_shots_direct_capture')) 'Direct capture has no distinct runtime method marker.'
 Assert-True ($source.Contains("command = 'run_script_now'") -and $source.Contains('SendMessageTimeout')) 'The package does not relay to the resident backend.'
 Assert-True ($source.Contains("FindWindow('AutoHotkeyGUI', `$script:ReceiverTitle)") -and $source.Contains("'FlowCellBackendDirectScriptReceiver:'")) 'The package does not address its qualified AutoHotkey receiver.'
 Assert-True ($source.Contains('backendRole = $script:BackendRole') -and $source.Contains('programsRoot = $FlowCellProgramsRoot')) 'The capture relay does not identify its runtime owner.'
 Assert-True ($backend.Contains('JsonStringValue(payload, "backendRole") != flowCellBackendRole')) 'The receiver does not reject requests from another runtime.'
-Assert-True ($source.Contains("Join-Path `$PSScriptRoot 'Temp_Shots.vbs'") -and $source.Contains('if ($LauncherPath)')) 'The relay does not retain the owned package launcher or support Snapshots.'
+Assert-True ($source.Contains("Join-Path `$PSScriptRoot 'Screenshots.vbs'") -and $source.Contains('if ($LauncherPath)')) 'The relay does not retain the owned package launcher or support Snapshots.'
 Assert-True ($snapshotsRoute.Contains('this.TryLaunchSnapshotsFast(launcherPath)') -and $snapshotsDirect.Contains('"snapshots"')) 'Snapshots does not route to the resident fixed-box capture.'
 Assert-True ($panel.Contains('this.IsSnapshotsScript(scriptPath)') -and $hotkey -notmatch 'Snapshots') 'Snapshots panel routing is missing or Temp Shots routing changed unexpectedly.'
 Assert-True ($beginSnapshots.Contains('this.snapshotRect :=') -and $beginSnapshots.Contains('this.snapshotFolder := parentFolder "\snapshots"') -and $beginSnapshots.Contains('Hotkey "*Space"') -and $beginSnapshots.Contains('Hotkey "*Escape"')) 'Snapshots does not retain a box and bind Space/Escape.'

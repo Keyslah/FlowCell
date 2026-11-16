@@ -859,6 +859,80 @@ function readLabelTextMeasurement(
   };
 }
 
+export type ButtonTextSizeMeasurement =
+  | { status: "sized"; width: number; height: number }
+  | { status: "skipped"; reason: string }
+  | { status: "failed"; reason: string };
+
+/** Measures an explicit Size snap without changing the saved skin or live renderer. */
+export function measureButtonTextSize(
+  skin: ButtonSkin,
+  label: string,
+  textSizeOverride?: number
+): ButtonTextSizeMeasurement {
+  if (!label.trim()) return { status: "skipped", reason: "The Button has no label text." };
+  const result = compileButtonSkin(skin);
+  if (!result.ok) return { status: "failed", reason: "The Button skin could not be compiled." };
+  if (!result.compiled.hasLabelToken) {
+    return { status: "skipped", reason: "The Button skin does not display label text." };
+  }
+  if (typeof document === "undefined" || !document.body) {
+    return { status: "failed", reason: "The Button text cannot be measured in this window." };
+  }
+  const host = document.createElement("span");
+  Object.assign(host.style, {
+    position: "fixed", left: "-100000px", top: "-100000px",
+    visibility: "hidden", pointerEvents: "none"
+  });
+  const shadow = host.attachShadow({ mode: "open" });
+  document.body.append(host);
+  try {
+    const mounted = mountCompiledSkin(shadow, result.compiled, label);
+    if (!mounted.labelNode) return { status: "failed", reason: "The Button label could not be measured." };
+    applyLabelLines(mounted.labelNode, [label], textSizeOverride);
+    const natural = readMeasurement(mounted.container, mounted.core);
+    if (![natural.width, natural.height].every((value) => Number.isFinite(value) && value > 0)) {
+      return { status: "failed", reason: "The Button skin has no measurable core." };
+    }
+
+    // Change only this disposable label to establish whether the literal skin
+    // sizes its own core from text. Never remove fixed widths, min/max limits,
+    // wrapping, padding or other authored sizing rules to force a fit.
+    let probeLabel = label;
+    let widthRespondsToText = false;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      probeLabel = `${probeLabel} ${probeLabel}`;
+      applyLabelLines(mounted.labelNode, [probeLabel], textSizeOverride);
+      const probe = readMeasurement(mounted.container, mounted.core);
+      if (!Number.isFinite(probe.width) || probe.width <= 0) {
+        return { status: "failed", reason: "The Button skin's text sizing could not be measured." };
+      }
+      if (Math.abs(probe.width - natural.width) > 0.01) {
+        widthRespondsToText = true;
+        break;
+      }
+      if (readLabelTextMeasurement(mounted.labelNode).width > natural.width) break;
+    }
+    applyLabelLines(mounted.labelNode, [label], textSizeOverride);
+    if (!widthRespondsToText) {
+      return { status: "skipped", reason: "The Button skin keeps its width fixed independently of its text." };
+    }
+    const { width, height } = readMeasurement(mounted.container, mounted.core);
+    const text = readLabelTextMeasurement(mounted.labelNode);
+    if (![width, height, text.width, text.height].every((value) => Number.isFinite(value) && value > 0)) {
+      return { status: "failed", reason: "The Button skin has no measurable text-sized core." };
+    }
+    if (text.width > width + 0.01 || text.height > height + 0.01) {
+      return { status: "skipped", reason: "The Button skin constrains its label within its authored sizing rules." };
+    }
+    return { status: "sized", width, height };
+  } catch {
+    return { status: "failed", reason: "The Button text could not be measured." };
+  } finally {
+    host.remove();
+  }
+}
+
 function applyTextFit(
   mounted: MountedSkin,
   label: string,

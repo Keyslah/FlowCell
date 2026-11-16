@@ -1,6 +1,6 @@
-# Description: Relays Snapshots to the shared Temp Shots folder setup and resident backend.
+# Description: Relays Snapshots to the shared Screenshots folder setup and resident backend.
 [CmdletBinding()]
-param([switch]$ValidateOnly)
+param([switch]$ValidateOnly, [switch]$ConfigureOnly)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -22,9 +22,12 @@ $repoRoot = if ($env:FLOWCELL_RESOURCE_ROOT -and
     }
 }
 . (Join-Path $repoRoot 'flowcellbackend/helpers/FlowCellPaths.ps1')
-$engine = Join-Path $FlowCellProgramsRoot 'Windows/Windows Git Scripts/Utility/Temp Shots/Temp Shots.ps1'
+$engine = Join-Path $FlowCellProgramsRoot 'Windows/Windows Git Scripts/Utility/Screenshots/Screenshots.ps1'
 if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
-    throw 'The shared Temp Shots capture engine is missing.'
+    $engine = Join-Path $FlowCellProgramsRoot 'Windows/Windows Git Scripts/Utility/Temp Shots/Temp Shots.ps1'
 }
-& $engine -ValidateOnly:$ValidateOnly -Mode snapshots -LauncherPath (Join-Path $PSScriptRoot 'Snapshots.vbs')
+if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
+    throw 'The shared Screenshots capture engine is missing.'
+}
+& $engine -ValidateOnly:$ValidateOnly -ConfigureOnly:$ConfigureOnly -Mode snapshots -LauncherPath (Join-Path $PSScriptRoot 'Snapshots.vbs')
 exit $LASTEXITCODE

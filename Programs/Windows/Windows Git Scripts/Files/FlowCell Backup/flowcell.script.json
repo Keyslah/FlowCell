@@ -4,5 +4,6 @@
   "label": "FlowCell Back Up",
   "tooltip": "Create a FlowCell backup with the program support files required to restore the workspace.",
   "program": "Windows",
-  "source": "file_flow_cell_back_up.ps1"
+  "source": "file_flow_cell_back_up.ps1",
+  "inputSetup": { "source": "file_flow_cell_back_up.ps1", "arguments": ["-ConfigureOnly"], "firstRun": false }
 }

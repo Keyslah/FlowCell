@@ -73,7 +73,7 @@ the completed architecture only.
   larger cursor-ignored transparent canvas without changing the saved rectangle.
 - Each placement stores one of three host-owned sizing behaviors. Selecting a
   placement or loading, pasting, or editing a working skin starts its pending
-  policy at Responsive and first renders its natural core; selecting a behavior
+  policy at the skin's declared default (Responsive when undeclared) and first renders its natural core; selecting a behavior
   changes no dimensions. Responsive gives `[data-core]` the exact
   independently requested width and height and does not scale the authored root;
   a translation-only normalization aligns any authored resting core offset to
@@ -270,14 +270,13 @@ preview.
 and opens the selected
 Program/Panel's matching `Main`, `Fan`, or `Pop` folder.
 Load fails closed unless the file matches the settings category and concrete
-surface subtype and every saved Button ID is still installed. Cross-surface reuse
+surface subtype. Pop-out files omit Buttons that have since been deleted, retaining the remaining coordinates and gaps. Main Page files still require installed Button IDs. Cross-surface reuse
 must also match the selected Program and Panel; a file tied to the same stable
 surface ID remains valid after a Program or Panel rename. It replaces only the
 selected surface with the file's exact Button amount, order, frame, presentation,
 and container behavior as one undoable Editor draft. Buttons omitted by the file
 leave that surface, but their canonical action records and occurrences elsewhere
-remain intact. Tool-set settings may reorder and restyle only the exact current
-package-owned children; they cannot add or remove actions. `Save {type} Settings`
+remain intact. Tool-set membership editing first creates a separate Pop-out settings file and surface. The package-owned original is preserved. Custom copies may hide package children and include independent Main Page script/owner Buttons; installed actions, first-click inputs, and payloads remain shared, and unrelated scripts do not receive the toolset field payload. `Save {type} Settings`
 is still required to commit a loaded draft.
 
 `Load {type} Default` and `Update {type} Default` appear directly below Load.
@@ -403,9 +402,16 @@ move out of the way into a row-aligned, undoable saved order with sequential
   Button placement uses it. Layout actions fail atomically when the complete layout
   cannot fit the surface. The right pane's Button Size
 section uses a working preview. Selecting a placement or loading, pasting, or
-editing skin source starts the pending policy at Responsive and renders and
+editing skin source starts the pending policy at its declared default and renders and
 measures the working skin naturally rather than forcing it into the selected
-placement box. Selecting Responsive, Proportional, or Stretch changes only the
+placement box. Skin authors may put `--flowcell-sizing-default: proportional;`
+and `--flowcell-sizing-responsive: 0;` in the `base` section. These non-visual
+instructions survive skin file export/import. The editor reads them generically:
+Chipped Concrete declares Proportional with Responsive disabled; Default Gray
+declares Proportional with Responsive available. Undeclared skins retain Responsive
+as their default and all three options. Existing unchanged bundled skins receive
+their own presets without changing their artwork or saved placement dimensions.
+Selecting Responsive, Proportional, or Stretch changes only the
 pending policy; it does not alter width or height. Responsive constrains the core
 to explicitly requested independent dimensions without root scaling, so fixed
 nested artwork may overflow instead of reflowing and never causes an automatic
@@ -886,18 +892,19 @@ another authorized installation or synchronization workflow invokes it:
    `flowcell.toolset.json` as a Tool Set package. A folder containing both root
    manifests is ambiguous, and a folder containing neither is invalid. Nested
    manifests do not classify the selected folder.
-2. When a selected root-level file is the declared entry beside either
-   `flowcell.script.json` or `flowcell.toolset.json`, FlowCell installs the
-   complete Script or Tool Set package automatically. A Script manifest can
-   explicitly list root-level companion filenames in `importAliases`; selecting
-   one imports that same complete package and still executes its declared
-   `source`. Aliases must be unique existing regular files, with no subdirectory,
-   traversal, or reparse-point paths. Other companions are rejected instead of
-   creating a broken partial install; a root containing both manifest kinds also
-   fails closed.
+2. The Add picker says "Pick any script or file within a package to add the button."
+   Selecting any file inside a package, including a nested asset, imports the
+   complete nearest enclosing Script or Tool Set package and executes its declared
+   `source`. A regular standalone script, such as an Illustrator `.jsx`, needs no
+   manifest. Discovery stops at the program root; ambiguous manifests and
+   reparse-point paths fail closed. Existing `importAliases` declarations remain
+   validated for compatibility but are no longer required to select a helper.
 3. Native install validates the program manifest and source contract.
 4. FlowCell copies the source package into the owner Button's Local Scripts
    package and writes `flowcell.install.json` inside it.
+   Windows packages display their script names in Explorer and native file pickers
+   through `desktop.ini`; physical owner-ID paths stay stable for execution,
+   bindings, and saved inputs. Duplicate copies can display the same script name.
 5. Program-specific deployment runs only when the program runner requires it.
 6. FlowCell writes the owner Button's `.flowcell-source.json` active record and
    records the pending canonical intent.
@@ -950,6 +957,64 @@ append new release-owned child slots while preserving every existing child ID
 and placement; other graph changes still require delete/re-add. Delete removes
 that owner's entire installed lifecycle. No filename classifier or pre-baked
 program action is part of this flow.
+
+## Reopening a Button's First-Click Setup
+
+`Edit Inputs…` reopens a Button's one-time setup. It changes that Button's saved
+function (for example, its screenshot destination or assigned shortcuts) without
+running the action. Ordinary per-run prompts, tool-set fields, page controls, and
+variables in another program do not grant this menu item.
+
+Any Script or Tool Set package, including future packages, can declare its setup
+replay handler in its root manifest. Core inspects this declaration; it does not
+maintain a list of Button names or recognize input-taking scripts by filename.
+
+```json
+"inputSetup": {
+  "source": "Configure-Inputs.ps1",
+  "arguments": [],
+  "firstRun": true
+}
+```
+
+The handler must be an existing `.ps1` file inside the copied package. Arguments
+are passed separately, without shell interpolation. The handler must show only
+the original setup flow; it must never take the screenshot, toggle monitors,
+send shortcuts, write clipboard contents, or otherwise run the normal action.
+Main and Pop/Fan context menus expose the same `Edit Inputs…` capability. A
+Tool Set child can reopen its owner's declared setup; fields alone do not qualify.
+
+`firstRun: true` tells Core to run this handler before the first normal action
+until settings are saved. The handler receives `FLOWCELL_BUTTON_INPUTS_JSON`
+containing `ownerButtonId`, `label`, `tooltip`, `values`, `localRoot`, `configPath`,
+and `editInputs`, plus `FLOWCELL_BUTTON_INPUTS_PATH` naming its owner-specific
+cache. It returns UTF-8 JSON on stdout:
+
+```json
+{"label":"Reference Shots","values":{"folder":"D:\\Reference"}}
+```
+
+`values` must be an object. `label` and `tooltip` are optional. Cancel returns
+`{"cancelled":true}` and changes no saved settings. Core saves values and any
+new name/description in one revision-checked Button transaction, publishes
+`metadata.buttonInputs` and `metadata.buttonInputsRevision`, and refreshes open
+Pop/Fan views. A disabled cache is written before commit; a failed save cannot
+leave hotkeys silently using the previous destination. The next normal activation
+repairs the cache from canonical settings.
+
+Existing scripts that already manage their own first-click setup can omit
+`firstRun` or set it to `false` and declare their configure-only switch in
+`arguments`. Their handler may persist its existing settings and return no JSON.
+Page-enabled and event-driven packages must use this mode because their page or
+press/release lifecycle owns its first-use flow; they may still declare an
+explicit setup-replay handler. Core rejects `firstRun: true` alongside a page or
+nonempty events instead of interrupting those lifecycles.
+
+Saved generic values are cached under `local/button-inputs/<owner-id>.json` as
+`{"configured":true,"values":{...}}`. Windows action processes receive that
+JSON and its path in the same environment variables; declared managed bridge
+actions receive the values under `buttonInputs`. Separate Button owners always
+have separate generic settings, even when they use the same source package.
 
 ## Page-Enabled Script Packages
 
@@ -1103,3 +1168,22 @@ and using exact or nearest available variants after label-length changes.
   install, execute, update, or delete path.
 - Blender deployment changes: reload the FlowCell Blender add-on or restart
   Blender before runtime verification.
+
+
+### Button Editor membership
+
+Picking a panel selects its spatial top-left Main Page Button. The toolbar starts
+with Re-order, Remove, Add. Remove uses the full selection. On Main Page it invokes
+the existing Delete Button transaction and each program's uninstall rules. In a
+Pop-out it removes occurrences only. Main Page deletion preserves gaps in saved/custom
+arrangements, compacts automatic regular grids, and leaves other Pop-out buttons usable.
+
+Add opens a chooser for Main Page buttons and a New button action. New imports commit
+immediately to Main Page, and also to the active Pop-out when imported there. Cancel,
+close, and Undo do not uninstall a committed import. Failed saves discard only an
+uncommitted installation; revision retries preserve concurrent changes.
+
+Original toolset membership editing requires Save New first and refuses existing
+file names. The separate surface shares installed actions, fields and payloads.
+The original remains the canonical source-update and owner/hotkey target. Associated
+settings files update after membership edits; presentation drafts use Save Settings.

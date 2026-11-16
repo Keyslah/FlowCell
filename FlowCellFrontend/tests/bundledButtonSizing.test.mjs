@@ -99,6 +99,45 @@ function domFixture(measureAt15 = (label) => [...label].reduce((width, char) => 
 const coreWidth = (skin) => Number(skin.structure.match(/width:([\d.]+)px/)[1]);
 const sizingPath = path.join(root, "button/skins/chippedConcreteButtonSkin.ts");
 
+test("new Main imports retain the panel height and measured Concrete width through first render", () => {
+  const load = sourceModules(domFixture());
+  const sizing = load(sizingPath);
+  const { defaultPanelButtonSize } = load(path.join(root, "button/state/buttonPanelDefaults.ts"));
+  const geometry = load(path.join(root, "button/geometry/buttonGeometry.ts"));
+  const editor = readFileSync(path.join(root, "button/editor/ButtonEditorPage.tsx"), "utf8");
+  const add = editor.slice(editor.indexOf("function addPlacement("), editor.indexOf("function createSurface("));
+  const measure = editor.slice(editor.indexOf("const handleNaturalMeasurement ="), editor.indexOf("const selectWorkspacePlacement ="));
+  const document = { buttons: { new: { label: "WWWWWW", defaultSkinId: "skin-default-neutral" } }, skins: {},
+    surfaces: { panel: { id: "panel", kind: "panel", width: 1000, height: 500, placementIds: ["later", "first"] } },
+    placements: { later: { x: 200, y: 100, width: 100, height: 48 }, first: { x: 0, y: 0, width: 100, height: 37.294964 } },
+    settings: { gridSize: 8, defaultSurfacePadding: 8, buttonSpacingMm: 0, defaultMinimumFontSize: 8 } };
+  const sandbox = { ...geometry, defaultPanelButtonSize, CHIPPED_CONCRETE_BUTTON_SKIN_ID: sizing.CHIPPED_CONCRETE_BUTTON_SKIN_ID,
+    createStableButtonId: () => "new-placement", naturalCoreMeasurementsRef: { current: new Map() },
+    freshPlacementsRef: { current: new Set(["new-placement"]) },
+    store: { current: () => document, transact: () => assert.fail("already committed Main dimensions must not change on measurement") } };
+  vm.runInNewContext(ts.transpileModule(add + measure + "\nglobalThis.add = addPlacement; globalThis.measure = handleNaturalMeasurement;", {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText, sandbox);
+  const placement = sandbox.add(document, "new", "panel");
+  assert.equal(placement.height, 37.294964);
+  assert.equal(placement.width, 104 * 37.294964 / 37.295);
+  const saved = JSON.stringify(placement);
+  sandbox.measure(placement.id, { width: 104, height: 37.295 });
+  sandbox.measure(placement.id, { width: 200, height: 60 });
+  assert.equal(JSON.stringify(placement), saved);
+  assert.equal(sandbox.freshPlacementsRef.current.size, 0);
+  assert.equal(JSON.parse(JSON.stringify(document)).placements[placement.id].height, 37.294964);
+  const empty = defaultPanelButtonSize(document, document.buttons.new);
+  assert.equal(empty.height, 37.295, "an empty panel uses the skin's authored height");
+  for (const label of ["iiiiii", "WWWWWW", "A longer label"]) {
+    const natural = sizing.getChippedConcreteButtonSize(label);
+    const row = sizing.getChippedConcreteButtonSize(label, undefined, undefined, placement.height);
+    assert.equal(row.height, placement.height);
+    assert.ok(Math.abs(row.width / natural.width - row.height / natural.height) < 1e-12,
+      "changing the label preserves a uniform font scale and authored side padding");
+  }
+});
+
 test("bundled defaults measure equal-character wide/narrow labels and preserve literal skin sections", () => {
   const dom = domFixture();
   const load = sourceModules(dom);
@@ -112,7 +151,10 @@ test("bundled defaults measure equal-character wide/narrow labels and preserve l
     const count = Number(skin.id.split("-").at(-1));
     const { parseButtonSkinPaste } = load(path.join(root, "button/skins/skinPasteParser.ts"));
     const original = parseButtonSkinPaste(family[count].source).sections;
-    for (const [section, source] of Object.entries(original)) assert.equal(skin[section], source);
+    for (const [section, source] of Object.entries(original)) {
+      const actual = section === "base" ? skin.base.replace(/--flowcell-sizing-(?:default|responsive):[^;]+;\s*/g, "") : skin[section];
+      assert.equal(actual, source, "non-visual presets must not change authored artwork or animation");
+    }
   }
   assert.equal(dom.measured.length, 2, "reuse measurements between skin and geometry getters");
   assert.equal(dom.probes.size, 0, "every measurement probe is removed");
@@ -181,6 +223,66 @@ test("canonical default-family routing uses measured widths while custom family 
   assert.equal(sizing.isBundledChippedConcreteDefaultSkin(editedFamily), false);
   assert.equal(useButtonSkinFamily(editedFamily, "saved", "WWWWWW"), editedFamily);
   assert.equal(dom.measured.length, 1, "custom character-count families are not remeasured");
+});
+
+test("unchanged legacy Chipped Concrete defaults use text and padding instead of character count", () => {
+  const dom = domFixture();
+  const overrides = new Map([
+    ["react", { useMemo: (callback) => callback(), useState: () => [null, () => {}], useEffect: () => {} }]
+  ]);
+  // The file-backed family need not load for a recognized authored default.
+  overrides.set(path.join(root, "button/state/ButtonStateRepository.ts"), {});
+  const load = sourceModules(dom, overrides);
+  const sizing = load(sizingPath);
+  const { useButtonSkinFamily } = load(path.join(root, "button/skins/useButtonSkinFamily.ts"));
+  const { BUTTON_SKIN_SECTION_ORDER } = load(path.join(root, "button/skins/buttonSkinFormat.ts"));
+  const legacy = {
+    ...sizing.getChippedConcreteButtonSkin("", 156),
+    id: sizing.CHIPPED_CONCRETE_BUTTON_SKIN_ID,
+    name: "Chipped Concrete",
+    metadata: { buttonSkinFamily: "Chipped Concrete" }
+  };
+  legacy.base = legacy.base.replace(/--flowcell-sizing-(?:default|responsive):[^;]+;\s*/g, "");
+  assert.equal(sizing.isBundledChippedConcreteDefaultSkin(legacy), true);
+  assert.equal(sizing.isBundledMainPageConcreteSkin(legacy), false, "legacy width compatibility must not trigger Main-theme cleanup of existing popout assignments");
+  assert.equal(coreWidth(useButtonSkinFamily(legacy, "new", "WWWWWW")), 104);
+  assert.equal(coreWidth(useButtonSkinFamily(legacy, "new", "iiiiii")), 48);
+  assert.equal(coreWidth(useButtonSkinFamily(legacy, "new", "Screenshots")), 104,
+    "fixture text width 88 px plus 14 px padding selects the 104 px authored variant, not the 80 px character-count variant");
+  assert.equal(coreWidth(legacy), 156, "the saved source is not rewritten");
+  for (const section of BUTTON_SKIN_SECTION_ORDER) {
+    assert.equal(sizing.isBundledChippedConcreteDefaultSkin({ ...legacy, [section]: `${legacy[section]}\ncustom edit` }), false);
+  }
+  assert.equal(sizing.isBundledChippedConcreteDefaultSkin({ ...legacy, id: "custom-concrete" }), false);
+  assert.equal(sizing.isBundledChippedConcreteDefaultSkin({ ...legacy, metadata: { buttonSkinFamily: "Another Skin" } }), false);
+});
+
+test("skin-owned sizing presets support existing Concrete, Gray, and arbitrary future skins", () => {
+  const load = sourceModules();
+  const concrete = load(sizingPath);
+  const gray = load(path.join(root, "button/skins/defaultButtonSkin.ts"));
+  const policy = load(path.join(root, "button/skins/buttonSkinSizing.ts"));
+  const shape = value => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(shape(policy.readButtonSkinSizing(concrete.CHIPPED_CONCRETE_BUTTON_SKIN)), { defaultMode: "proportional", supportsResponsive: false });
+  assert.deepEqual(shape(policy.readButtonSkinSizing(gray.DEFAULT_BUTTON_SKIN)), { defaultMode: "proportional", supportsResponsive: true });
+  assert.equal(policy.resolveButtonSkinSizingMode(concrete.CHIPPED_CONCRETE_BUTTON_SKIN, "responsive"), "proportional");
+  assert.equal(policy.resolveButtonSkinSizingMode(gray.DEFAULT_BUTTON_SKIN, "responsive"), "responsive");
+  assert.deepEqual(shape(policy.readButtonSkinSizing({ base: "--flowcell-sizing-default:stretch;--flowcell-sizing-responsive:0;" })), { defaultMode: "stretch", supportsResponsive: false });
+  assert.deepEqual(shape(policy.readButtonSkinSizing({ base: "" })), { defaultMode: "responsive", supportsResponsive: true });
+  assert.equal(policy.readButtonSkinSizing({ base: "--flowcell-sizing-default:invalid;/* --flowcell-sizing-responsive:0; */" }).supportsResponsive, true);
+
+  const oldConcrete = { ...concrete.getChippedConcreteButtonSkin("", 112), base: "" };
+  oldConcrete.base = concrete.getChippedConcreteButtonSkin("", 112).base.replace(/--flowcell-sizing-(?:default|responsive):[^;]+;\s*/g, "");
+  const artwork = oldConcrete.structure;
+  assert.equal(concrete.applyChippedConcreteSizingPreset(oldConcrete), true);
+  assert.equal(oldConcrete.structure, artwork);
+  assert.equal(concrete.applyChippedConcreteSizingPreset(oldConcrete), false, "migration is idempotent");
+  assert.equal(policy.readButtonSkinSizing(oldConcrete).supportsResponsive, false);
+  const edited = { ...oldConcrete, structure: artwork + "custom edit", base: oldConcrete.base.replace(/--flowcell-sizing-(?:default|responsive):[^;]+;\s*/g, "") };
+  assert.equal(concrete.applyChippedConcreteSizingPreset(edited), false);
+  const oldGray = { ...gray.DEFAULT_BUTTON_SKIN, base: gray.DEFAULT_BUTTON_SKIN.base.replace(/--flowcell-sizing-default:[^;]+;\s*/g, "") };
+  assert.equal(gray.applyDefaultGraySizingPreset(oldGray), true);
+  assert.deepEqual(shape(policy.readButtonSkinSizing(oldGray)), { defaultMode: "proportional", supportsResponsive: true });
 });
 
 test("Main header routing retains responsive policy without changing custom or ordinary family behavior", () => {

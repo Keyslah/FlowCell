@@ -8,12 +8,18 @@ import {
   withCanonicalPanelFanMotion,
   withCanonicalProgramPopoutThemes
 } from "./.compiled-button-system/button/windows/buttonWindowThemeDocument.js";
-import { withAddedCanonicalPanelButtons } from "./.compiled-button-system/button/state/panelPopoutReconciliation.js";
+import { withAddedCanonicalPanelButtons, withRemovedCanonicalButtons } from "./.compiled-button-system/button/state/panelPopoutReconciliation.js";
 
 const source = readFileSync(join(import.meta.dirname, "../src/button/windows/useButtonWindowDocument.ts"), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
 }).outputText;
+const screenshotExports = {};
+new Function("exports", ts.transpileModule(readFileSync(join(import.meta.dirname,
+  "../src/button/windows/buttonConfiguredInputs.ts"), "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+}).outputText)(screenshotExports);
+const { withCanonicalButtonInputs } = screenshotExports;
 
 async function flush() {
   for (let count = 0; count < 12; count += 1) await Promise.resolve();
@@ -64,7 +70,8 @@ async function createHarness(...sessions) {
       }
     },
     "./buttonWindowThemeDocument": { withCanonicalPanelFanMotion, withCanonicalProgramPopoutThemes },
-    "../state/panelPopoutReconciliation": { withAddedCanonicalPanelButtons }
+    "../state/panelPopoutReconciliation": { withAddedCanonicalPanelButtons, withRemovedCanonicalButtons },
+    "./buttonConfiguredInputs": { withCanonicalButtonInputs }
   };
   const exports = {};
   new Function("require", "exports", compiled)((name) => {
@@ -102,6 +109,49 @@ function fixture() {
   draft.programPopoutThemes = { blender: { colors: ["#ABCDEF"] } };
   return { canonical, draft };
 }
+
+test("input setup and Edit Inputs refresh live draft names while preserving custom occurrence text", async (t) => {
+  const harness = await createHarness();
+  t.after(harness.dispose);
+  const { canonical, draft } = fixture();
+  const screenshot = { id: "shot", label: "Screenshot", tooltip: "Choose a folder.", metadata: {} };
+  canonical.buttons.shot = structuredClone(screenshot);
+  draft.buttons.shot = structuredClone(screenshot);
+  draft.placements.defaultShot = { buttonId: "shot", presentationOverride: { label: "Screenshot", tooltip: "Choose a folder." } };
+  draft.placements.customShot = { buttonId: "shot", presentationOverride: { label: "My custom caption", tooltip: "Keep this help." } };
+  const original = structuredClone(draft);
+  harness.loads[0].resolve(canonical);
+  await flush();
+  harness.handlers.draft(draft);
+  for (const [label, folder] of [["Project shots", "C:\\Shots"], ["Review shots", "D:\\Review"]]) {
+    const next = structuredClone(canonical);
+    next.revision += 1;
+    Object.assign(next.buttons.shot, { label, tooltip: `Capture to ${folder}.`,
+      metadata: { buttonInputs: { folder }, buttonInputsRevision: next.revision } });
+    await harness.handlers.commit(next);
+    assert.equal(harness.state.document.buttons.shot.label, label);
+    assert.equal(harness.state.document.buttons.shot.metadata.buttonInputs.folder, folder);
+    assert.equal(harness.state.document.placements.defaultShot.presentationOverride.label, label);
+    assert.deepEqual(harness.state.document.placements.customShot, draft.placements.customShot);
+    assert.ok(harness.state.document.fanSetups.transient);
+  }
+  assert.deepEqual(draft, original, "input synchronization never mutates the editor draft");
+});
+
+test("ordinary commits preserve unsaved Button text when its input revision has not changed", () => {
+  const { canonical, draft } = fixture();
+  canonical.buttons.shot = { id: "shot", label: "Saved name", tooltip: "Saved help",
+    metadata: { buttonInputs: { folder: "C:\\Shots" }, buttonInputsRevision: 4 } };
+  draft.buttons.shot = { ...structuredClone(canonical.buttons.shot), label: "Unsaved name", tooltip: "Unsaved help" };
+  canonical.revision = 9;
+  const next = withCanonicalButtonInputs(draft, canonical);
+  assert.equal(next, draft);
+  assert.equal(next.buttons.shot.label, "Unsaved name");
+  assert.equal(next.buttons.shot.tooltip, "Unsaved help");
+  canonical.buttons.shot.metadata.buttonInputsRevision = 3;
+  assert.equal(withCanonicalButtonInputs(draft, canonical), draft,
+    "a late older canonical snapshot cannot undo a newer input configuration");
+});
 
 test("a transient window waits for its draft when canonical state loads first", async (t) => {
   const harness = await createHarness();

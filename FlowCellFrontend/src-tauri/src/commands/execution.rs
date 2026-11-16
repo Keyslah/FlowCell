@@ -19,6 +19,7 @@ use windows_sys::Win32::System::IO::{
 pub(crate) static BLENDER_BRIDGE_REQUEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 pub(crate) static FUSION_BRIDGE_REQUEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 const BLENDER_THEME_APPLY_TIMEOUT_SECONDS: u64 = 20;
+static BUTTON_INPUT_SETUP_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn lock_blender_bridge_request(
     lock: &Mutex<()>,
@@ -2204,6 +2205,7 @@ pub(crate) fn run_windows_panel_script_file_with_window_mode(
     script_path: &Path,
     hide_window: bool,
     source_window_handle: Option<isize>,
+    input_cache_path: Option<&Path>,
 ) -> Result<(), String> {
     // Installed sources are canonicalized and ownership-checked before this
     // runner receives them. Windows PowerShell 5.1 cannot provider-resolve the
@@ -2273,6 +2275,10 @@ pub(crate) fn run_windows_panel_script_file_with_window_mode(
     }
 
     configure_windows_script_source_window(&mut command, source_window_handle);
+    if let Some(path) = input_cache_path {
+        command.env("FLOWCELL_BUTTON_INPUTS_PATH", windows_child_process_path(path));
+        command.env("FLOWCELL_BUTTON_INPUTS_JSON", fs::read_to_string(path).unwrap_or_else(|_| "{\"configured\":false}".into()));
+    }
     command
         .env("FLOWCELL_SESSION_ID", {
             static SESSION: OnceLock<String> = OnceLock::new();
@@ -2309,8 +2315,10 @@ fn configure_windows_script_source_window(command: &mut Command, source_window_h
 pub(crate) fn run_windows_panel_script_file(
     script_path: &Path,
     source_window_handle: Option<isize>,
+    owner_button_id: &str,
 ) -> Result<(), String> {
-    run_windows_panel_script_file_with_window_mode(script_path, true, source_window_handle)
+    let cache = button_inputs_cache_path(owner_button_id)?;
+    run_windows_panel_script_file_with_window_mode(script_path, true, source_window_handle, Some(&cache))
 }
 
 pub(crate) fn run_blender_bridge_action_direct(action: &str, data: Value) -> Result<Value, String> {
@@ -2471,13 +2479,101 @@ pub(crate) fn run_fusion_bridge_action_direct(
     Ok(response)
 }
 
+pub(crate) fn button_inputs_cache_path(owner_button_id: &str) -> Result<PathBuf, String> {
+    let owner = program_sources::validate_owner_button_id(owner_button_id)?;
+    Ok(resolve_flowcell_local_root()?.join("button-inputs").join(format!("{owner}.json")))
+}
+
+fn write_button_inputs_cache(cache: &Path, values: Option<&Value>) -> Result<(), String> {
+    let state = match values {
+        Some(values) => json!({"configured":true,"values":values}),
+        None => json!({"configured":false}),
+    };
+    let content = serde_json::to_vec(&state).map_err(|error| error.to_string())?;
+    fs::create_dir_all(cache.parent().ok_or("Button inputs cache path has no parent.")?)
+        .map_err(|error| format!("Cannot create Button input settings: {error}"))?;
+    if fs::read(cache).ok().as_deref() == Some(content.as_slice()) { return Ok(()); }
+    program_sources::transaction::write_json_file(
+        cache, &content, program_sources::transaction::AtomicWriteMode::Replace,
+    )
+}
+
+fn prepare_button_inputs(
+    app: &AppHandle,
+    resolution: &program_sources::execute::ActiveSourceResolution,
+    edit_inputs: bool,
+) -> Result<bool, String> {
+    let record = &resolution.record;
+    let Some(setup) = record.input_setup.as_ref() else { return Ok(true); };
+    let source_root = Path::new(&record.local_package_path).join("source");
+    program_sources::install::validate_input_setup(&source_root, setup)?;
+    let _guard = BUTTON_INPUT_SETUP_LOCK.get_or_init(|| Mutex::new(())).lock()
+        .map_err(|_| "Button input setup lock was poisoned.")?;
+    let owner = program_sources::validate_owner_button_id(&record.owner_button_id)?;
+    let cache = button_inputs_cache_path(&owner)?;
+    let document = crate::button_state::load_button_state_sync()?.ok_or("Button state is unavailable.")?;
+    let button = document.get("buttons").and_then(|buttons| buttons.get(&owner))
+        .ok_or("This Button no longer exists.")?;
+    let configured = button.pointer("/metadata/buttonInputs").filter(|values| values.is_object());
+    let first_run = setup.get("firstRun").and_then(Value::as_bool).unwrap_or(false);
+    if edit_inputs || first_run && configured.is_none() {
+        let handler = source_root.join(setup.get("source").and_then(Value::as_str).ok_or("Input handler source is missing.")?);
+        let mut arguments = vec!["-Sta".into(), "-File".into(),
+            windows_child_process_path(&handler).to_string_lossy().into_owned()];
+        if let Some(extra) = setup.get("arguments").and_then(Value::as_array) {
+            arguments.extend(extra.iter().filter_map(Value::as_str).map(str::to_string));
+        }
+        let context = json!({
+            "ownerButtonId":owner,"label":button.get("label"),"tooltip":button.get("tooltip"),
+            "values":configured.cloned().unwrap_or_else(|| json!({})),
+            "localRoot":windows_child_process_path(&resolve_flowcell_local_root()?),
+            "configPath":windows_child_process_path(&cache),"editInputs":edit_inputs,
+        });
+        let output = crate::commands::filesystem::spawn_powershell_output_bounded_with_env(
+            &arguments, 1024 * 1024, 256 * 1024,
+            &[("FLOWCELL_BUTTON_INPUTS_JSON",context.to_string()),
+              ("FLOWCELL_BUTTON_INPUTS_PATH",windows_child_process_path(&cache).to_string_lossy().into_owned())],
+        )?;
+        if !output.status.success() { return Err(format_process_failure(&output,"Button input setup failed.")); }
+        let response = serde_json::from_slice::<Value>(&output.stdout).ok();
+        if response.as_ref().and_then(|value| value.get("cancelled")).and_then(Value::as_bool) == Some(true) {
+            return Ok(false);
+        }
+        if let Some(response) = response.as_ref().filter(|response| response.get("values").is_some()) {
+            let values = &response["values"];
+            let label = response.get("label").map(|value| value.as_str().ok_or("Input handler label must be text.")).transpose()?;
+            let tooltip = response.get("tooltip").map(|value| value.as_str().ok_or("Input handler tooltip must be text.")).transpose()?;
+            if !values.is_object() || label.is_some_and(|label| label.trim().is_empty()) {
+                return Err("Input handler values must be an object and its name must not be empty.".into());
+            }
+            // Existing disabled JSON suppresses all fast-path/legacy fallback.
+            // Failure after this point leaves capture/actions disabled until a UI retry.
+            write_button_inputs_cache(&cache,None)?;
+            crate::button_state::configure_button_inputs(app.clone(),&owner,values,label,tooltip,button)?;
+            write_button_inputs_cache(&cache,Some(values)).map_err(|error| format!(
+                "Inputs are saved but could not be activated. Run this Button in FlowCell again before using its hotkey. {error}"
+            ))?;
+            return Ok(true);
+        }
+        if first_run { return Err("A first-run input handler must return a JSON object with values or cancelled:true.".into()); }
+        // Existing configure-only handlers may own their settings and return no JSON.
+        return Ok(true);
+    }
+    if let Some(values) = configured {
+        write_button_inputs_cache(&cache,Some(values))?;
+    }
+    Ok(true)
+}
+
 pub(crate) fn run_panel_script_response_impl(
-    _app: &AppHandle,
+    app: &AppHandle,
     program_name: String,
     panel_name: String,
     file_name: String,
     modifiers: Option<program_sources::execute::ButtonModifiers>,
     source_window_handle: Option<isize>,
+    inspect_inputs: bool,
+    edit_inputs: bool,
 ) -> Result<Value, String> {
     let validated_file_name = validate_panel_script_file_name(&file_name)?;
     if let Some(resolution) = program_sources::execute::resolve_active_source_record(
@@ -2485,6 +2581,19 @@ pub(crate) fn run_panel_script_response_impl(
         &panel_name,
         &validated_file_name,
     )? {
+        let has_editable_inputs = resolution.record.input_setup.is_some();
+        if inspect_inputs {
+            return Ok(json!({ "hasEditableInputs": has_editable_inputs }));
+        }
+        if edit_inputs && !has_editable_inputs {
+            return Err("This Button has no editable first-run inputs.".into());
+        }
+        if !prepare_button_inputs(app, &resolution, edit_inputs)? {
+            return Ok(json!({ "message": "Input setup cancelled. No Button action was run." }));
+        }
+        if edit_inputs {
+            return Ok(json!({ "message": "Button inputs saved." }));
+        }
         return program_sources::execute::run_active_source(&resolution, modifiers, source_window_handle);
     }
     Err(format!(
@@ -2501,13 +2610,16 @@ pub(crate) async fn run_panel_script_response(
     panel_name: String,
     file_name: String,
     modifiers: Option<program_sources::execute::ButtonModifiers>,
+    inspect_inputs: Option<bool>,
+    edit_inputs: Option<bool>,
 ) -> Result<Value, String> {
     #[cfg(windows)]
     let source_window_handle = Some(window.hwnd().map_err(|error| error.to_string())?.0 as isize);
     #[cfg(not(windows))]
     let source_window_handle = { let _ = window; None };
     tauri::async_runtime::spawn_blocking(move || {
-        run_panel_script_response_impl(&app, program_name, panel_name, file_name, modifiers, source_window_handle)
+        run_panel_script_response_impl(&app, program_name, panel_name, file_name, modifiers, source_window_handle,
+            inspect_inputs.unwrap_or(false), edit_inputs.unwrap_or(false))
     })
     .await
     .map_err(|error| format!("Panel script task failed: {error}"))?
@@ -2535,13 +2647,15 @@ pub(crate) fn run_panel_button_event(
 }
 
 #[tauri::command]
-pub(crate) fn run_toolset_action(
+pub(crate) async fn run_toolset_action(
+    app: AppHandle,
     program_name: String,
     panel_name: String,
     file_name: String,
     command: String,
     payload: Option<Value>,
 ) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
     let normalized_command = command.trim().to_string();
     if normalized_command.is_empty() {
         return Err("Tool-set actions require a non-empty command.".to_string());
@@ -2551,6 +2665,9 @@ pub(crate) fn run_toolset_action(
         &panel_name,
         &file_name,
     )? {
+        if !prepare_button_inputs(&app, &resolution, false)? {
+            return Ok(json!({ "message": "Input setup cancelled. No Button action was run." }));
+        }
         return program_sources::execute::run_active_toolset_action(
             &resolution,
             &normalized_command,
@@ -2562,6 +2679,7 @@ pub(crate) fn run_toolset_action(
         "Button source '{}' is not installed in the active Button system. Complete migration before running tool-set command '{}'.",
         file_name.trim(), normalized_command
     ))
+    }).await.map_err(|error| format!("Tool-set action task failed: {error}"))?
 }
 
 #[tauri::command]

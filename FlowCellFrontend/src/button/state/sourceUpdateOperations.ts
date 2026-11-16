@@ -182,14 +182,14 @@ export function applyInstalledSourceUpdate(
   }
   const units = Object.values(document.popoutUnits).filter(
     (unit): unit is ToolSetButtonPopoutUnit =>
-      unit.kind === "tool-set" && unit.ownerButtonId === owner.id
+      unit.kind === "tool-set" && unit.ownerButtonId === owner.id && !unit.templateUnitId
   );
   if (units.length !== 1) {
     throw new Error(`Tool-set owner '${owner.id}' must own exactly one canonical popout.`);
   }
   const unit = units[0];
   const childIdBySlot = new Map<string, string>();
-  for (const childId of unit.childButtonIds) {
+  for (const childId of Object.values(document.buttons).filter(button => button.toolSetParentId === owner.id).map(button => button.id)) {
     const child = document.buttons[childId];
     if (!child || child.role !== "tool-set-child" || child.toolSetParentId !== owner.id) {
       throw new Error(`Tool-set owner '${owner.id}' has an invalid child graph.`);
@@ -226,10 +226,13 @@ export function applyInstalledSourceUpdate(
       toolSetSlot: child.slot
     };
   }
-  const previousFields = new Map(unit.fields.map((field) => [field.id.trim().toLocaleLowerCase("en-US"), field]));
-  unit.fields = resolveInstalledToolFields(layout?.fields, installed.children).map((field) => {
-    const previous = previousFields.get(field.id.trim().toLocaleLowerCase("en-US"));
-    return previous ? { ...field, x: previous.x, y: previous.y, width: previous.width, height: previous.height, zIndex: previous.zIndex } : field;
-  });
+  for (const targetUnit of Object.values(document.popoutUnits).filter((candidate): candidate is ToolSetButtonPopoutUnit =>
+    candidate.kind === "tool-set" && candidate.ownerButtonId === owner.id)) {
+    const previousFields = new Map(targetUnit.fields.map((field) => [field.id.trim().toLocaleLowerCase("en-US"), field]));
+    targetUnit.fields = resolveInstalledToolFields(layout?.fields, installed.children).map((field) => {
+      const previous = previousFields.get(field.id.trim().toLocaleLowerCase("en-US"));
+      return previous ? { ...field, x: previous.x, y: previous.y, width: previous.width, height: previous.height, zIndex: previous.zIndex } : field;
+    });
+  }
   if (usesPreviousDefaultLabel) owner.label = installed.label;
 }

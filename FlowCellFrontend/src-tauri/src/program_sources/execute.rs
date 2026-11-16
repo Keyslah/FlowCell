@@ -664,6 +664,22 @@ fn button_bridge_data(record: &ActiveSourceRecord, modifiers: Option<ButtonModif
     data
 }
 
+fn with_button_input_values(record: &ActiveSourceRecord, mut payload: Value) -> Result<Value, String> {
+    if record.input_setup.is_none() { return Ok(payload); }
+    let cache = crate::commands::execution::button_inputs_cache_path(&record.owner_button_id)?;
+    if !cache.is_file() { return Ok(payload); } // Self-persisted configure handlers need no core cache.
+    let state: Value = serde_json::from_slice(&fs::read(&cache).map_err(|error| error.to_string())?)
+        .map_err(|error| format!("Button inputs are unavailable. Run the Button in FlowCell again. {error}"))?;
+    if state.get("configured").and_then(Value::as_bool) != Some(true) {
+        return Err("Button inputs are awaiting a successful save. Run the Button in FlowCell again.".into());
+    }
+    let values = state.get("values").filter(|values| values.is_object())
+        .ok_or("Saved Button input values are invalid.")?;
+    payload.as_object_mut().ok_or("Button input values require an object action payload.")?
+        .insert("buttonInputs".into(), values.clone());
+    Ok(payload)
+}
+
 pub(crate) fn run_active_source(
     resolution: &ActiveSourceResolution,
     modifiers: Option<ButtonModifiers>,
@@ -675,7 +691,7 @@ pub(crate) fn run_active_source(
     }
     let source_path = PathBuf::from(&record.source_path);
     if super::records::is_portable_windows_execution(record.runner_data.as_ref()) {
-        crate::run_windows_panel_script_file(&source_path, source_window_handle)?;
+        crate::run_windows_panel_script_file(&source_path, source_window_handle, &record.owner_button_id)?;
         return Ok(json!({ "message": format!("Started {}.", record.label) }));
     }
     let manifest = load_program_manifest(&record.program_name)?;
@@ -684,7 +700,7 @@ pub(crate) fn run_active_source(
     }
     match record.runner.as_str() {
         "windows-script" => {
-            crate::run_windows_panel_script_file(&source_path, source_window_handle)?;
+            crate::run_windows_panel_script_file(&source_path, source_window_handle, &record.owner_button_id)?;
             Ok(json!({ "message": format!("Started {}.", record.label) }))
         }
         "illustrator-direct" => {
@@ -728,7 +744,7 @@ pub(crate) fn run_active_source(
             run_managed_bridge_action(
                 &record.runner,
                 record.bridge_action.trim(),
-                button_bridge_data(record, modifiers),
+                with_button_input_values(record, button_bridge_data(record, modifiers))?,
             )
         }
         "fusion-bridge" => {
@@ -741,7 +757,7 @@ pub(crate) fn run_active_source(
             run_managed_bridge_action(
                 &record.runner,
                 record.bridge_action.trim(),
-                record.bridge_data.clone().unwrap_or_else(|| json!({})),
+                with_button_input_values(record, record.bridge_data.clone().unwrap_or_else(|| json!({})))?,
             )
         }
         value => Err(format!("Unsupported installed Button runner '{value}'.")),
@@ -757,7 +773,7 @@ pub(crate) fn run_active_toolset_action(
     if record.children.is_empty() {
         return Err(format!("Button '{}' is not a tool set.", record.label));
     }
-    let payload = merge_toolset_payload(record, slot, runtime_payload)?;
+    let payload = with_button_input_values(record, merge_toolset_payload(record, slot, runtime_payload)?)?;
     let manifest = load_program_manifest(&record.program_name)?;
     crate::require_running_program(&manifest)?;
     match record.runner.as_str() {
@@ -959,6 +975,7 @@ mod tests {
             bridge_data: None,
             state_query: None,
             events: None::<BTreeMap<String, serde_json::Value>>,
+            input_setup: None,
             children: Vec::new(),
             layout: None,
             page: None,

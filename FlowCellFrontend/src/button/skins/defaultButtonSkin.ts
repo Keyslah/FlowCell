@@ -1,6 +1,7 @@
 import type { ButtonSkin } from "../types.js";
 
 export const DEFAULT_BUTTON_SKIN_ID = "skin-default-neutral";
+const sizingPreset = "--flowcell-sizing-default: proportional;";
 
 // DefaultGray geometry and edge effects with an exact Surface color face.
 export const DEFAULT_BUTTON_SKIN: ButtonSkin = {
@@ -22,11 +23,22 @@ export const DEFAULT_BUTTON_SKIN: ButtonSkin = {
   "compileCache": null
 };
 
+DEFAULT_BUTTON_SKIN.base = `${sizingPreset}\n${DEFAULT_BUTTON_SKIN.base}`;
+
 // Exact legacy geometry identifies saved color variants without rewriting other skins.
 export const LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE = DEFAULT_BUTTON_SKIN.structure.replace(
   "background-color:var(--flowcell-button-color-surface,#E6E6E6);",
   "background-image:linear-gradient(135deg,var(--flowcell-button-shade-surface-face-light,rgba(230,230,230,1)),var(--flowcell-button-shade-surface-face-dark,rgba(180,180,180,1)));"
 );
+
+/** This skin defaults to proportional scaling; Responsive remains available. */
+export function applyDefaultGraySizingPreset(skin: ButtonSkin): boolean {
+  if (skin.base.includes("--flowcell-sizing-default") ||
+    (skin.structure !== DEFAULT_BUTTON_SKIN.structure && skin.structure !== LEGACY_DEFAULT_BUTTON_SKIN_STRUCTURE)) return false;
+  skin.base = `${sizingPreset}\n${skin.base}`;
+  skin.compileCache = null;
+  return true;
+}
 
 /** Size the bundled neutral pill from its actual label and padding before packing a new layout. */
 export function getDefaultButtonSize(

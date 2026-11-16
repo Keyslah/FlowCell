@@ -6255,6 +6255,212 @@ test("selection sizing fails atomically when the preserved row cannot fit", () =
   assert.deepEqual(input, original);
 });
 
+test("individual selection sizes shrink and grow independently without moving a fitting layout", () => {
+  const input = [
+    { id: "a", rect: { x: 10, y: 5, width: 50, height: 30 } },
+    { id: "b", rect: { x: 90, y: 5, width: 30, height: 20 } },
+    { id: "c", rect: { x: 170, y: 5, width: 40, height: 20 } }
+  ];
+  const original = structuredClone(input);
+  const targetSizes = new Map([
+    ["a", { width: 25, height: 15 }],
+    ["b", { width: 60, height: 35 }],
+    ["c", { width: 1, height: 1 }]
+  ]);
+  const originalTargets = structuredClone(targetSizes);
+
+  const result = resizeButtonPlacementSelection({
+    placements: input,
+    selectedPlacementIds: ["a", "b"],
+    targetSizes,
+    surface: { width: 220, height: 60 }
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.reflowed, false);
+  assert.equal(result.reason, null);
+  assert.deepEqual(result.placements, [
+    { id: "a", rect: { x: 10, y: 5, width: 25, height: 15 } },
+    { id: "b", rect: { x: 90, y: 5, width: 60, height: 35 } },
+    original[2]
+  ]);
+  assert.deepEqual(input, original);
+  assert.deepEqual(targetSizes, originalTargets);
+});
+
+test("individual selection sizes retain rows and the independent Fan owner during reflow", () => {
+  const input = [
+    { id: "a", rect: { x: 10, y: 5, width: 40, height: 20 } },
+    { id: "b", rect: { x: 50, y: 5, width: 40, height: 20 } },
+    { id: "c", rect: { x: 90, y: 5, width: 40, height: 20 } },
+    { id: "d", rect: { x: 10, y: 40, width: 60, height: 20 } },
+    { id: "owner", rect: { x: -25, y: 5, width: 80, height: 25 } }
+  ];
+  const original = structuredClone(input);
+  const result = resizeButtonPlacementSelection({
+    placements: input,
+    selectedPlacementIds: ["a", "b"],
+    targetSizes: new Map([
+      ["a", { width: 65, height: 25 }],
+      ["b", { width: 20, height: 15 }]
+    ]),
+    surface: { width: 170, height: 100 },
+    gap: 0,
+    independentPlacementIds: ["owner"]
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.reflowed, true);
+  assert.deepEqual(result.placements, [
+    { id: "a", rect: { x: 10, y: 5, width: 65, height: 25 } },
+    { id: "b", rect: { x: 75, y: 5, width: 20, height: 15 } },
+    { id: "c", rect: { x: 95, y: 5, width: 40, height: 20 } },
+    original[3],
+    original[4]
+  ]);
+  assert.deepEqual(
+    inferButtonPlacementRows(result.placements.filter((item) => item.id !== "owner"))
+      .map((row) => row.placements.map((placement) => placement.id)),
+    [["a", "b", "c"], ["d"]]
+  );
+  assert.deepEqual(input, original);
+});
+
+test("individual selection sizing can resize an independent owner without moving it", () => {
+  const input = [
+    { id: "a", rect: { x: 0, y: 0, width: 40, height: 20 } },
+    { id: "b", rect: { x: 40, y: 0, width: 40, height: 20 } },
+    { id: "owner", rect: { x: -30, y: -10, width: 50, height: 25 } }
+  ];
+  const original = structuredClone(input);
+  const result = resizeButtonPlacementSelection({
+    placements: input,
+    selectedPlacementIds: ["a", "owner"],
+    targetSizes: new Map([
+      ["a", { width: 60, height: 20 }],
+      ["owner", { width: 35, height: 18 }]
+    ]),
+    surface: { width: 120, height: 40 },
+    gap: 0,
+    independentPlacementIds: ["owner"]
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.reflowed, true);
+  assert.deepEqual(result.placements, [
+    { id: "a", rect: { x: 0, y: 0, width: 60, height: 20 } },
+    { id: "b", rect: { x: 60, y: 0, width: 40, height: 20 } },
+    { id: "owner", rect: { x: -30, y: -10, width: 35, height: 18 } }
+  ]);
+  assert.deepEqual(input, original);
+});
+
+test("individual selection sizes reject missing and invalid dimensions before any resize", () => {
+  const input = [
+    { id: "a", rect: { x: 0, y: 0, width: 40, height: 20 } },
+    { id: "b", rect: { x: 40, y: 0, width: 40, height: 20 } }
+  ];
+  const original = structuredClone(input);
+  for (const invalidSize of [
+    null,
+    { width: 0, height: 20 },
+    { width: 20, height: -1 },
+    { width: NaN, height: 20 },
+    { width: 20, height: Infinity }
+  ]) {
+    const targetSizes = new Map([["a", { width: 55, height: 25 }]]);
+    if (invalidSize) targetSizes.set("b", invalidSize);
+    const originalTargets = structuredClone(targetSizes);
+    const result = resizeButtonPlacementSelection({
+      placements: input,
+      selectedPlacementIds: ["a", "b"],
+      targetSizes,
+      surface: { width: 120, height: 40 }
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.reflowed, false);
+    assert.match(result.reason, invalidSize ? /'b'.*positive finite/ : /'b'.*no target dimensions/);
+    assert.deepEqual(result.placements, original);
+    assert.deepEqual(input, original);
+    assert.deepEqual(targetSizes, originalTargets);
+  }
+});
+
+test("individual selection sizes fail atomically when their preserved row cannot fit", () => {
+  const input = [
+    { id: "a", rect: { x: 0, y: 0, width: 40, height: 20 } },
+    { id: "b", rect: { x: 40, y: 0, width: 40, height: 20 } }
+  ];
+  const original = structuredClone(input);
+  const result = resizeButtonPlacementSelection({
+    placements: input,
+    selectedPlacementIds: ["a", "b"],
+    targetSizes: new Map([
+      ["a", { width: 20, height: 20 }],
+      ["b", { width: 70, height: 20 }]
+    ]),
+    surface: { width: 80, height: 40 },
+    gap: 0
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.reflowed, false);
+  assert.match(result.reason, /row 1 is wider/i);
+  assert.deepEqual(result.placements, original);
+  assert.deepEqual(input, original);
+});
+
+test("selection sizing with reflow disabled rejects overlap even when the row could be repacked", () => {
+  const input = [
+    { id: "a", rect: { x: 0, y: 0, width: 40, height: 20 } },
+    { id: "b", rect: { x: 40, y: 0, width: 40, height: 20 } }
+  ];
+  const original = structuredClone(input);
+  const result = resizeButtonPlacementSelection({
+    placements: input,
+    selectedPlacementIds: ["a"],
+    targetSizes: new Map([["a", { width: 60, height: 20 }]]),
+    surface: { width: 150, height: 50 },
+    reflow: false
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.reflowed, false);
+  assert.match(result.reason, /overlap/i);
+  assert.deepEqual(result.placements, original);
+  assert.deepEqual(input, original);
+});
+
+test("selection sizing with reflow disabled changes only fitting selected dimensions", () => {
+  const input = [
+    { id: "a", rect: { x: 0, y: 0, width: 40, height: 20 } },
+    { id: "b", rect: { x: 80, y: 0, width: 40, height: 30 } },
+    { id: "owner", rect: { x: -30, y: -10, width: 50, height: 25 } }
+  ];
+  const original = structuredClone(input);
+  const result = resizeButtonPlacementSelection({
+    placements: input,
+    selectedPlacementIds: ["a", "b"],
+    targetSizes: new Map([
+      ["a", { width: 65, height: 20 }],
+      ["b", { width: 25, height: 30 }]
+    ]),
+    surface: { width: 150, height: 50 },
+    independentPlacementIds: ["owner"],
+    reflow: false
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.reflowed, false);
+  assert.deepEqual(result.placements, [
+    { id: "a", rect: { x: 0, y: 0, width: 65, height: 20 } },
+    { id: "b", rect: { x: 80, y: 0, width: 25, height: 30 } },
+    original[2]
+  ]);
+  assert.deepEqual(input, original);
+});
+
 test("selection alignment packs the existing rows against their top-left Button", () => {
   const input = [
     { id: "a", rect: { x: 20, y: 10, width: 40, height: 20 } },
@@ -7269,7 +7475,7 @@ test("shared document operations normalize duplicate selections deterministicall
   assert.equal(document.placements[popout.memberPlacementIds[0]].matchHitboxToSkin, true);
   assert.equal(document.placements[popout.memberPlacementIds[0]].allowStretching, false);
   assert.deepEqual(Object.keys(popout).sort(), [
-    "canonicalBounds", "closeRule", "desktopBounds", "desktopBoundsEnvelope",
+    "automaticLayout", "canonicalBounds", "closeRule", "desktopBounds", "desktopBoundsEnvelope",
     "desktopBoundsFitMode", "id", "interactionMode", "kind",
     "memberPlacementIds", "memberSourceIdentities", "name", "openRule",
     "ownerButtonId", "ownerPlacementId", "pinnedDefault", "selectionKey", "surfaceId",
@@ -9191,4 +9397,144 @@ test("gradient curve editing matches the Theme Editor's rules", () => {
   const steps = BUTTON_CURVE_PRESETS.find((preset) => preset.label === "Steps").build();
   assert.ok(steps.every((point, position) => position === 0 || point.x > steps[position - 1].x));
   assert.match(buttonCurvePathData(fade, 2), /^M0 0L50 50L100 100$/);
+});
+
+
+import { addPopoutButtons, removePopoutButtons, forkToolsetPopout, mergeAddedButtonRecords, topLeftButtonPlacement, popoutAddCandidates, hydrateEditorPopout } from "./.compiled-button-system/button/editor/buttonEditorMembership.js";
+import { withRemovedCanonicalButtons } from "./.compiled-button-system/button/state/panelPopoutReconciliation.js";
+
+test("panel selection uses spatial top-left rather than dropdown or paint order", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  const surface = document.surfaces[ids.toolsPanelSurface];
+  const [a, b, c] = surface.placementIds;
+  document.placements[c].y = 0;
+  assert.equal(topLeftButtonPlacement(document, surface.id), c);
+  document.placements[b].y = 0;
+  assert.equal(topLeftButtonPlacement(document, surface.id), b);
+  assert.equal(topLeftButtonPlacement(document, ids.utilityPanelSurface), null);
+});
+
+test("toolset copy retains fields and payloads, mixes scripts, and leaves the original unchanged", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  const original = structuredClone(document.popoutUnits[ids.toolUnit]);
+  const originalSurface = structuredClone(document.surfaces[original.surfaceId]);
+  const child = structuredClone(document.buttons[original.childButtonIds[0]]);
+  document.buttons["scope-script"].metadata.buttonInputs = { folder: "D:/shots" };
+  const fork = forkToolsetPopout(document, original.surfaceId);
+  const added = addPopoutButtons(document, fork.surfaceId, ["scope-script", "scope-script"]);
+  assert.equal(added.length, 1);
+  assert.deepEqual(document.popoutUnits[ids.toolUnit], original);
+  assert.deepEqual(document.surfaces[original.surfaceId], originalSurface);
+  assert.deepEqual(document.buttons[child.id], child);
+  assert.deepEqual(document.buttons["scope-script"].metadata.buttonInputs, { folder: "D:/shots" });
+  const unit = Object.values(document.popoutUnits).find(u => u.surfaceId === fork.surfaceId);
+  assert.deepEqual(unit.fields, original.fields);
+  assertValidScopeFixture(document);
+  const file = buildButtonSettingsFile(document, fork.surfaceId, { programName: "Blender", panelName: "Tools" });
+  const reopened = buildTransientButtonPopoutSettingsDocument(document, file, { programName: "Blender", panelName: "Tools" }, "mixed");
+  assertValidScopeFixture(reopened.document);
+  assert.ok(reopened.document.popoutUnits[reopened.popoutUnitId].childButtonIds.includes("scope-script"));
+});
+
+test("multi-selection popout removal keeps sources and can restore hidden toolset children", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  const original = document.popoutUnits[ids.toolUnit];
+  const fork = forkToolsetPopout(document, original.surfaceId);
+  addPopoutButtons(document, fork.surfaceId, ["scope-script"]);
+  const records = structuredClone(document.buttons);
+  removePopoutButtons(document, fork.surfaceId, [...document.surfaces[fork.surfaceId].placementIds]);
+  assert.deepEqual(document.buttons, records);
+  assert.equal(document.surfaces[fork.surfaceId].placementIds.length, 0);
+  assert.ok(popoutAddCandidates(document, fork.surfaceId, "Blender", "Tools").some(b => b.id === original.childButtonIds[0]));
+  addPopoutButtons(document, fork.surfaceId, [original.childButtonIds[0]]);
+  assertValidScopeFixture(document);
+});
+
+test("saved custom popouts retain gaps and open after a Main Page member is deleted", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  const unit = document.popoutUnits[ids.regular];
+  unit.automaticLayout = false;
+  const surfaceId = unit.surfaceId;
+  const file = buildButtonSettingsFile(document, surfaceId, { programName: "Blender", panelName: "Tools" });
+  const survivorId = unit.memberPlacementIds.find(id => document.placements[id].buttonId === "scope-core");
+  const survivor = structuredClone(document.placements[survivorId]);
+  const result = removeOwnedButtonGraph(document, "scope-script");
+  assert.deepEqual(result.uninstallOwnerButtonIds, ["scope-script"]);
+  assert.deepEqual(document.placements[survivorId], survivor);
+  const opened = buildTransientButtonPopoutSettingsDocument(document, file, { programName: "Blender", panelName: "Tools" }, "deleted-member");
+  const members = opened.document.popoutUnits[opened.popoutUnitId].memberPlacementIds.map(id => opened.document.placements[id]);
+  assert.equal(members.length, 1);
+  assert.equal(members[0].x, survivor.x);
+  assert.equal(members[0].y, survivor.y);
+  assertValidScopeFixture(opened.document);
+});
+
+test("automatic popouts close the gap after normal Main Page deletion", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  const unit = document.popoutUnits[ids.regular];
+  const survivorId = unit.memberPlacementIds.find(id => document.placements[id].buttonId === "scope-core");
+  const oldX = document.placements[survivorId].x;
+  removeOwnedButtonGraph(document, "scope-script");
+  assert.ok(document.placements[survivorId].x < oldX);
+  assert.equal(document.placements[survivorId].x, document.settings.defaultSurfacePadding);
+  assertValidScopeFixture(document);
+});
+
+test("deleting a toolset owner leaves independent scripts in its custom popout working", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  const fork = forkToolsetPopout(document, document.popoutUnits[ids.toolUnit].surfaceId);
+  const [added] = addPopoutButtons(document, fork.surfaceId, ["scope-script"]);
+  const rect = structuredClone(document.placements[added]);
+  const file = buildButtonSettingsFile(document, fork.surfaceId, { programName: "Blender", panelName: "Tools" });
+  removeOwnedButtonGraph(document, "scope-tool-owner");
+  assert.deepEqual(document.placements[added], rect);
+  assert.equal(document.surfaces[fork.surfaceId].kind, "regular-popout");
+  const opened = buildTransientButtonPopoutSettingsDocument(document, file, { programName: "Blender", panelName: "Tools" }, "removed-tool");
+  assert.equal(opened.document.popoutUnits[opened.popoutUnitId].kind, "regular");
+  assertValidScopeFixture(opened.document);
+});
+
+test("new import merge persists additions without saving draft labels or undoing other commits", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  const before = structuredClone(document);
+  before.buttons["scope-script"].label = "Unsaved label";
+  const after = structuredClone(before);
+  after.buttons.newScript = button("newScript", "single-script", source("Blender", "Tools", "new.py"));
+  const template = after.placements[after.surfaces[ids.toolsPanelSurface].placementIds[0]];
+  after.placements.newPlacement = { ...structuredClone(template), id: "newPlacement", buttonId: "newScript", x: 540 };
+  after.surfaces[ids.toolsPanelSurface].placementIds.push("newPlacement");
+  document.buttons["scope-core"].tooltip = "Concurrent saved edit";
+  mergeAddedButtonRecords(document, before, after);
+  assert.notEqual(document.buttons["scope-script"].label, "Unsaved label");
+  assert.equal(document.buttons["scope-core"].tooltip, "Concurrent saved edit");
+  assert.ok(document.surfaces[ids.toolsPanelSurface].placementIds.includes("newPlacement"));
+  const history = structuredClone(before);
+  mergeAddedButtonRecords(history, before, document);
+  assert.equal(history.buttons["scope-script"].label, "Unsaved label");
+  assert.ok(history.buttons.newScript);
+  assertValidScopeFixture(document);
+});
+
+test("open saved drafts remove deleted canonical members without moving survivors", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  document.popoutUnits[ids.regular].automaticLayout = false;
+  const canonical = structuredClone(document);
+  removeOwnedButtonGraph(canonical, "scope-script");
+  canonical.revision = document.revision + 1;
+  const next = withRemovedCanonicalButtons(document, canonical);
+  assert.ok(document.buttons["scope-script"]);
+  assert.equal(next.buttons["scope-script"], undefined);
+  const survivorId = document.popoutUnits[ids.regular].memberPlacementIds.find(id => document.placements[id].buttonId === "scope-core");
+  assert.deepEqual(next.placements[survivorId], document.placements[survivorId]);
+  assertValidScopeFixture(next);
+});
+
+test("draft-only default popout can be materialized without unrelated draft edits", () => {
+  const { document } = buildButtonDocumentScopeFixture();
+  const draft = structuredClone(document);
+  const unit = ensureRegularPopout(draft, [draft.buttons["scope-core"]]);
+  draft.buttons["scope-script"].label = "Keep in editor only";
+  hydrateEditorPopout(document, draft, unit.surfaceId);
+  assert.notEqual(document.buttons["scope-script"].label, "Keep in editor only");
+  assertValidScopeFixture(document);
 });

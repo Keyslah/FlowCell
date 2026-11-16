@@ -11,6 +11,7 @@ saved folder; the Buttons do not share configuration.
 - First run: choose that Button's destination folder.
 - Normal run: save the current clipboard text to that folder.
 - Hold **Shift** while running: choose a different folder for that Button.
+- Right-click **Edit Inputs**: change the saved folder without reading or saving clipboard text.
 - Import the manifest again: create another independently configured Button.
 
 Rename each Button in the FlowCell Buttons Editor to match its destination if
@@ -30,6 +31,8 @@ To choose a different standalone destination later:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\save_clipboard_text.ps1 -Configure
 ```
+
+Use `-ConfigureOnly` to change the folder without saving clipboard text.
 
 Standalone settings are stored under the current user's Local AppData. No user,
 repository, or destination path is hardcoded in the package.

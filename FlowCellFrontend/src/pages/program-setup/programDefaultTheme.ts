@@ -4,7 +4,7 @@ import { getThemeToolDescriptors, preparePortableThemeImport } from "../../theme
 import { BUTTON_SKIN_SECTION_ORDER } from "../../button/skins/buttonSkinFormat.js";
 import { getEmbeddedButtonSkinFamilySources } from "../../button/skins/buttonSkinFamily.js";
 import { buttonStateDocumentsEqual, reconcileBundledProgramSources } from "../../button/state/ButtonStateRepository.js";
-import { createButtonStateDocument } from "../../button/state/buttonDefaults.js";
+import { createButtonStateDocument, ensureButtonSkinSizingPresets } from "../../button/state/buttonDefaults.js";
 import { reconcileProgramPanelOwners } from "../../button/state/panelOwnerButtonOperations.js";
 import { validateButtonStateDocument } from "../../button/state/buttonStateValidation.js";
 import { buildPanelRailOwnerEntries, panelRailOwnerSurfaceBounds } from "../main/mainLayout.js";
@@ -201,6 +201,8 @@ export async function buildProgramSetupDocument(
     ...owners.map((owner) => owner.buttonId)
   ].filter(Boolean);
   if (theme) stampProgramAppearanceReceipt(document, expectedButtonIds, setup.defaultThemeReceipt);
+  // Theme imports and the optional extra-source pass must end with the same skin-owned presets.
+  ensureButtonSkinSizingPresets(document);
   const validation = validateButtonStateDocument(document);
   if (!validation.valid) throw new Error(`Program setup layout is invalid: ${validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`);
   return { document, expectedButtonIds };

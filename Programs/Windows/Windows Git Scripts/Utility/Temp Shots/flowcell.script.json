@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "windows.temp-shots",
-  "label": "Temp Shots",
-  "tooltip": "Capture a rectangle directly to the Temp Shots folder. Escape cancels without saving.",
-  "program": "Windows",
-  "source": "Temp_Shots.vbs"
-}

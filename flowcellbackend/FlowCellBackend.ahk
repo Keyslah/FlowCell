@@ -8,6 +8,8 @@ Persistent
 
 #Include vendor\UIA-v2\Lib\UIA.ahk
 #Include helpers\TempShotsCapture.ahk
+#Include helpers\TempShotsSettings.ahk
+#Include helpers\JsonStringValues.ahk
 #Include helpers\BackendIdentity.ahk
 #Include helpers\AutoHotkeyState.ahk
 #Include helpers\ProgramBindActions.ahk
@@ -133,56 +135,7 @@ GetCliIntValue(prefix, defaultValue) {
         return defaultValue
 }
 
-JsonStringValue(raw, key) {
-    pattern := '"' key '"\s*:\s*"((?:\\.|[^"\\])*)"'
-    if RegExMatch(raw, pattern, &match)
-        return JsonUnescape(match[1])
-    return ""
-}
 
-JsonUnescape(value) {
-    output := ""
-    index := 1
-    length := StrLen(value)
-    while index <= length {
-        char := SubStr(value, index, 1)
-        if char != "\" {
-            output .= char
-            index += 1
-            continue
-        }
-
-        index += 1
-        if index > length {
-            output .= "\"
-            break
-        }
-
-        escaped := SubStr(value, index, 1)
-        switch escaped {
-            case '"':
-                output .= '"'
-            case "\":
-                output .= "\"
-            case "/":
-                output .= "/"
-            case "b":
-                output .= Chr(8)
-            case "f":
-                output .= Chr(12)
-            case "n":
-                output .= "`n"
-            case "r":
-                output .= "`r"
-            case "t":
-                output .= "`t"
-            default:
-                output .= escaped
-        }
-        index += 1
-    }
-    return output
-}
 
 JsonEscape(value) {
     text := value ""
@@ -1327,7 +1280,7 @@ class FlowCellApp {
     IsTempShotsScript(scriptPath) {
         resolvedScriptPath := NormalizeFlowCellProgramPath(scriptPath)
         SplitPath resolvedScriptPath, &fileName
-        return StrLower(Trim(fileName)) = "temp_shots.vbs"
+        return StrLower(Trim(fileName)) = "temp_shots.vbs" || StrLower(Trim(fileName)) = "screenshots.vbs"
     }
 
     IsSnapshotsScript(scriptPath) {
@@ -1357,7 +1310,7 @@ class FlowCellApp {
     HandleTempShotsShortcutInvocation(binding) {
         global flowCellLastActionStatusPath
         scriptPath := NormalizeFlowCellProgramPath(binding.scriptPath)
-        this.logger.Info("Temp Shots hotkey requested. Shortcut=" binding.shortcut " | Script=" scriptPath)
+        this.logger.Info("Screenshots hotkey requested. Shortcut=" binding.shortcut " | Script=" scriptPath)
 
         result := this.RunTempShotsScript(scriptPath)
         lines := [
@@ -1371,7 +1324,7 @@ class FlowCellApp {
         statusText := JoinLines(lines)
         this.SetShortcutStatus(statusText)
         WriteTextFile(flowCellLastActionStatusPath, statusText)
-        this.logger.Info("Temp Shots hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
+        this.logger.Info("Screenshots hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
     }
 
     RegisterSnippingOverlayEscapeFallback() {
@@ -1412,6 +1365,12 @@ class FlowCellApp {
         if result.attempted
             return result
 
+        if FlowCellTempShotsSettings.OwnerId(launcherPath) != "" {
+            result.attempted := true
+            result.detail := "In FlowCell, right-click this Screenshots Button and choose Edit Inputs to set or repair its destination folder and name, then run the Button again."
+            return result
+        }
+
         result := {
             attempted: true,
             succeeded: false,
@@ -1420,7 +1379,7 @@ class FlowCellApp {
         }
         launcherPath := NormalizeFlowCellProgramPath(launcherPath)
         if !FileExist(launcherPath) {
-            result.detail := "Temp Shots launcher was not found."
+            result.detail := "Screenshots launcher was not found."
             return result
         }
 
@@ -1430,9 +1389,9 @@ class FlowCellApp {
         try {
             Run('"' wscriptPath '" //nologo "' launcherPath '"', , "Hide")
             result.succeeded := true
-            result.detail := "Temp Shots launched."
+            result.detail := "Screenshots launched."
         } catch as err {
-            result.detail := "Launching Temp Shots failed. " err.Message
+            result.detail := "Launching Screenshots failed. " err.Message
         }
         return result
     }
@@ -1470,13 +1429,13 @@ class FlowCellApp {
 
         psScript := this.ResolveTempShotsPowerShellScriptPath(launcherPath)
         if psScript = "" {
-            result.detail := "Temp Shots package launcher was not found."
+            result.detail := "Screenshots package launcher was not found."
             return result
         }
 
-        folder := this.ReadTempShotsFastFolder()
+        folder := this.ReadTempShotsFastFolder(launcherPath)
         if folder = "" {
-            result.detail := "Temp Shots folder has not been selected yet."
+            result.detail := "Screenshots folder has not been selected yet."
             return result
         }
 
@@ -1488,7 +1447,7 @@ class FlowCellApp {
             result.succeeded := true
             result.detail := "Drag to select a Temp Shot. Escape cancels."
         } catch as err {
-            result.detail := "Starting direct Temp Shots capture failed. " err.Message
+            result.detail := "Starting direct Screenshots capture failed. " err.Message
         }
         return result
     }
@@ -1527,22 +1486,15 @@ class FlowCellApp {
             return ""
 
         SplitPath launcherPath, , &launcherDir
-        siblingScript := launcherDir "\Temp Shots.ps1"
+        siblingScript := launcherDir "\Screenshots.ps1"
+        if !FileExist(siblingScript)
+            siblingScript := launcherDir "\Temp Shots.ps1"
         return FileExist(siblingScript) ? siblingScript : ""
     }
 
-    ReadTempShotsFastFolder() {
+    ReadTempShotsFastFolder(launcherPath := "") {
         global flowCellLocalRoot
-        folderCachePath := flowCellLocalRoot "\windows\temp-shots\temp-shots.folder.txt"
-        if !FileExist(folderCachePath)
-            return ""
-
-        try {
-            folder := Trim(ReadUtf8TextFileWithoutBom(folderCachePath), "`r`n`t ")
-            return folder != "" && DirExist(folder) ? folder : ""
-        } catch {
-            return ""
-        }
+        return FlowCellTempShotsSettings.ReadFolder(launcherPath, flowCellLocalRoot)
     }
 
     GetIllustratorScanner() {

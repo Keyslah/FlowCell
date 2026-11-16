@@ -135,15 +135,19 @@ export interface ButtonLayoutGeometryIssue {
   message: string;
 }
 
-export interface ButtonSelectionSizeOptions {
+export type ButtonSelectionSizeOptions = {
   placements: readonly NamedButtonRect[];
   selectedPlacementIds: readonly string[];
-  targetSize: Pick<ButtonRect, "width" | "height">;
   surface: Pick<ButtonRect, "width" | "height">;
   gap?: number;
+  /** False requires the new sizes to fit at every original position. Defaults to true. */
+  reflow?: boolean;
   /** Placements such as a movable Fan owner stay fixed while content rows repack. */
   independentPlacementIds?: readonly string[];
-}
+} & (
+  | { targetSize: Pick<ButtonRect, "width" | "height">; targetSizes?: never }
+  | { targetSizes: ReadonlyMap<string, Pick<ButtonRect, "width" | "height">>; targetSize?: never }
+);
 
 export interface ButtonSelectionSizeResult {
   success: boolean;
@@ -1594,7 +1598,7 @@ export function resizeUniformButtonPlacementsInPlace(
 }
 
 /**
- * Applies one exact host box to a selection. The original coordinates win when
+ * Applies exact host boxes to a selection. The original coordinates win when
  * they remain valid. If a tight layout would overlap, the same inferred rows
  * are packed from their current top-left anchor without changing row
  * membership or order. Independent placements (notably a Fan owner) never
@@ -1625,30 +1629,44 @@ export function resizeButtonPlacementSelection(
       reason: "A selected Button placement no longer exists on this surface."
     };
   }
-  if (
-    !Number.isFinite(options.targetSize.width) ||
-    !Number.isFinite(options.targetSize.height) ||
-    options.targetSize.width <= 0 ||
-    options.targetSize.height <= 0
-  ) {
-    return {
-      success: false,
-      placements: original,
-      reflowed: false,
-      reason: "Copied Button dimensions must be positive finite values."
-    };
+  const targetSizes = new Map<string, Pick<ButtonRect, "width" | "height">>();
+  for (const placementId of selectedIds) {
+    const targetSize = options.targetSizes ? options.targetSizes.get(placementId) : options.targetSize;
+    if (!targetSize) {
+      return {
+        success: false,
+        placements: original,
+        reflowed: false,
+        reason: `Selected Button '${placementId}' has no target dimensions.`
+      };
+    }
+    if (
+      !Number.isFinite(targetSize.width) ||
+      !Number.isFinite(targetSize.height) ||
+      targetSize.width <= 0 ||
+      targetSize.height <= 0
+    ) {
+      return {
+        success: false,
+        placements: original,
+        reflowed: false,
+        reason: options.targetSizes
+          ? `Selected Button '${placementId}' dimensions must be positive finite values.`
+          : "Copied Button dimensions must be positive finite values."
+      };
+    }
+    targetSizes.set(placementId, { width: targetSize.width, height: targetSize.height });
   }
 
-  const resized = original.map((placement) => selectedIds.has(placement.id)
-    ? {
-        id: placement.id,
-        rect: {
-          ...placement.rect,
-          width: options.targetSize.width,
-          height: options.targetSize.height
+  const resized = original.map((placement) => {
+    const targetSize = targetSizes.get(placement.id);
+    return targetSize
+      ? {
+          id: placement.id,
+          rect: { ...placement.rect, ...targetSize }
         }
-      }
-    : placement);
+      : placement;
+  });
   const independentIds = new Set(options.independentPlacementIds ?? []);
   const invalidIndependentPlacement = resized.find((placement) =>
     independentIds.has(placement.id) && !isFinitePositiveButtonRect(placement.rect)
@@ -1671,6 +1689,14 @@ export function resizeButtonPlacementSelection(
       placements: resized,
       reflowed: false,
       reason: null
+    };
+  }
+  if (options.reflow === false) {
+    return {
+      success: false,
+      placements: original,
+      reflowed: false,
+      reason: directIssues[0].message
     };
   }
 

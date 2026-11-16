@@ -507,14 +507,15 @@ export async function resolveButtonSettingsFilePath(
 
 export async function saveButtonSettingsFile(
   path: string,
-  file: ButtonSettingsFile
+  file: ButtonSettingsFile,
+  createNew = false
 ): Promise<string> {
   const validation = validateButtonSettingsFile(file);
   if (!validation.valid) throw new Error(validation.issues.join("\n"));
   if (!isTauriWindowHost()) {
     throw new Error("Button settings files can only be saved from the FlowCell desktop host.");
   }
-  return invoke<string>("save_button_settings_file", { path, file });
+  return invoke<string>("save_button_settings_file", { path, file, createNew });
 }
 
 export async function loadButtonSettingsFile(path: string): Promise<ButtonSettingsFile> {

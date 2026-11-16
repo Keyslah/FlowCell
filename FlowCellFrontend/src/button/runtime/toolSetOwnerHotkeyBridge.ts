@@ -46,7 +46,7 @@ export function resolveToolSetOwnerActivationTarget(
   }
 
   const units = Object.values(document.popoutUnits).filter(
-    (candidate) => candidate.kind === "tool-set" && candidate.ownerButtonId === ownerButtonId
+    (candidate) => candidate.kind === "tool-set" && candidate.ownerButtonId === ownerButtonId && !candidate.templateUnitId
   );
   if (units.length !== 1) {
     throw new Error(

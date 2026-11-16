@@ -28,6 +28,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\save_clipboard_text.ps
 [CmdletBinding()]
 param(
     [switch]$Configure,
+    [switch]$ConfigureOnly,
     [switch]$ValidateOnly
 )
 
@@ -52,6 +53,9 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne [Threading.Apartme
     $childArguments = "-NoProfile -STA -ExecutionPolicy Bypass -File $quotedScriptPath"
     if ($Configure) {
         $childArguments += ' -Configure'
+    }
+    if ($ConfigureOnly) {
+        $childArguments += ' -ConfigureOnly'
     }
     if ($ValidateOnly) {
         $childArguments += ' -ValidateOnly'
@@ -315,10 +319,11 @@ try {
     $destinationFolder = Resolve-DestinationFolder `
         -SettingsDirectory $settingsDirectory `
         -SettingsPath $settingsPath `
-        -ForcePrompt:($Configure -or $shiftHeld)
+        -ForcePrompt:($ConfigureOnly -or $Configure -or $shiftHeld)
     if ([string]::IsNullOrWhiteSpace($destinationFolder)) {
         return
     }
+    if ($ConfigureOnly) { return }
 
     $clipboard = Get-ClipboardTextResult
     if (-not $clipboard.HasText) {

@@ -112,6 +112,8 @@ pub(crate) struct ActiveSourceRecord {
     pub state_query: Option<ToolsetStateQuery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub events: Option<BTreeMap<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_setup: Option<Value>,
     #[serde(default)]
     pub children: Vec<ActiveSourceChild>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

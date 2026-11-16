@@ -330,8 +330,8 @@ export function buildButtonEditorPlacementOptions(
   const button = document.buttons[buttonId];
   const matchingToolSetUnit = button?.role === "tool-set-owner"
     ? Object.values(document.popoutUnits).find(
-        (candidate) => candidate.kind === "tool-set" && candidate.ownerButtonId === buttonId
-      )
+        (candidate) => candidate.kind === "tool-set" && candidate.ownerButtonId === buttonId && candidate.surfaceId === preferredSurfaceId
+      ) ?? Object.values(document.popoutUnits).find(candidate => candidate.kind === "tool-set" && candidate.ownerButtonId === buttonId && !candidate.templateUnitId)
     : undefined;
   const toolSetUnit = matchingToolSetUnit?.kind === "tool-set"
     ? matchingToolSetUnit

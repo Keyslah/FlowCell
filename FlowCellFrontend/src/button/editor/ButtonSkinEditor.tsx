@@ -27,6 +27,7 @@ import {
 import { compileButtonSkin, diagnosticsBySkinSection } from "../skins/skinCompiler";
 import { ButtonSkinRenderer } from "../skins/ButtonSkinRenderer";
 import { withButtonSkinFamily } from "../skins/buttonSkinFamily";
+import { readButtonSkinSizing, resolveButtonSkinSizingMode } from "../skins/buttonSkinSizing";
 import { BUTTON_TEXT_GLOW_DEFAULT_CURVE, buttonSkinHasTextGlowTarget } from "../skins/buttonTextGlow";
 import {
   buttonSkinColorWithPreservedAlpha,
@@ -201,12 +202,13 @@ function sizeAssignmentFromPlacement(placement: ButtonPlacement): ButtonSizeAssi
   };
 }
 
-function responsiveSizeAssignmentFromPlacement(
-  placement: ButtonPlacement
+function defaultSizeAssignmentFromPlacement(
+  placement: ButtonPlacement,
+  skin: ButtonSkin | null
 ): ReturnType<typeof sizeAssignmentFromPlacement> {
   return {
     ...sizeAssignmentFromPlacement(placement),
-    sizingMode: "responsive"
+    sizingMode: readButtonSkinSizing(skin).defaultMode
   };
 }
 
@@ -411,10 +413,10 @@ export function ButtonSkinEditor({
   const [previewAppearanceTrigger, setPreviewAppearanceTrigger] = useState<ButtonAppearanceTrigger>("rest");
   const [previewVisualStateOverride, setPreviewVisualStateOverride] = useState<ButtonSkinVisualState | null>(null);
   const [workingSize, setWorkingSize] = useState<ReturnType<typeof sizeAssignmentFromPlacement> | null>(
-    () => placement ? responsiveSizeAssignmentFromPlacement(placement) : null
+    () => placement ? defaultSizeAssignmentFromPlacement(placement, skin) : null
   );
   const [appliedPreviewSizingMode, setAppliedPreviewSizingMode] = useState<ButtonPlacementSizingMode>(
-    "responsive"
+    () => readButtonSkinSizing(skin).defaultMode
   );
   const [workingPreviewUsesNaturalSize, setWorkingPreviewUsesNaturalSize] = useState(false);
   const loadedSkinAssignmentRef = useRef<{ skinContextKey: string; skinId: string } | null>(null);
@@ -485,9 +487,9 @@ export function ButtonSkinEditor({
     }
     setWorkingSkin(skin ? cloneButtonDocument(skin) : null);
     setWorkingSkinFilePath(null);
-    setWorkingSize(placement ? responsiveSizeAssignmentFromPlacement(placement) : null);
-    setAppliedPreviewSizingMode("responsive");
-    onSizingModePreviewChange("responsive");
+    setWorkingSize(placement ? defaultSizeAssignmentFromPlacement(placement, skin) : null);
+    setAppliedPreviewSizingMode(readButtonSkinSizing(skin).defaultMode);
+    onSizingModePreviewChange(readButtonSkinSizing(skin).defaultMode);
     setWorkingPreviewUsesNaturalSize(false);
     setBenchMeasurement(null);
     setBenchNaturalMeasurement(null);
@@ -512,9 +514,9 @@ export function ButtonSkinEditor({
 
   useEffect(() => {
     if (!placement || !allSurfaceButtonsSameSize) return;
-    setWorkingSize(responsiveSizeAssignmentFromPlacement(placement));
-    setAppliedPreviewSizingMode("responsive");
-    onSizingModePreviewChange("responsive");
+    setWorkingSize(defaultSizeAssignmentFromPlacement(placement, workingSkin));
+    setAppliedPreviewSizingMode(readButtonSkinSizing(workingSkin).defaultMode);
+    onSizingModePreviewChange(readButtonSkinSizing(workingSkin).defaultMode);
   }, [placement?.id, allSurfaceButtonsSameSize]);
 
   useEffect(() => {
@@ -556,9 +558,11 @@ export function ButtonSkinEditor({
     );
   }
 
-  const activeSize = workingSize?.placementId === placement.id
+  const pendingSize = workingSize?.placementId === placement.id
     ? workingSize
     : sizeAssignmentFromPlacement(placement);
+  const sizingPolicy = readButtonSkinSizing(workingSkin);
+  const activeSize = { ...pendingSize, sizingMode: resolveButtonSkinSizingMode(workingSkin, pendingSize.sizingMode) };
   const sizeForAssignment = {
     ...activeSize,
     ...(workingPreviewUsesNaturalSize && benchNaturalMeasurement
@@ -577,7 +581,7 @@ export function ButtonSkinEditor({
       : {})
   };
   const sizingMode = activeSize.sizingMode;
-  const previewSizingMode = appliedPreviewSizingMode;
+  const previewSizingMode = resolveButtonSkinSizingMode(workingSkin, appliedPreviewSizingMode);
   const sizeActionsDisabled = busy;
   const previewWidth = workingPreviewUsesNaturalSize ? undefined : activeSize.width;
   const previewHeight = workingPreviewUsesNaturalSize ? undefined : activeSize.height;
@@ -609,18 +613,19 @@ export function ButtonSkinEditor({
     setUpdatedSections((current) => new Set([...current, ...changedSections]));
   };
 
-  const resetWorkingSizingMode = () => {
+  const resetWorkingSizingMode = (nextSkin: ButtonSkin = workingSkin) => {
+    const defaultMode = readButtonSkinSizing(nextSkin).defaultMode;
     setWorkingSize((current) => {
       const base = current?.placementId === placement.id
         ? current
         : sizeAssignmentFromPlacement(placement);
       return {
         ...base,
-        sizingMode: "responsive"
+        sizingMode: defaultMode
       };
     });
-    setAppliedPreviewSizingMode("responsive");
-    onSizingModePreviewChange("responsive");
+    setAppliedPreviewSizingMode(defaultMode);
+    onSizingModePreviewChange(defaultMode);
   };
 
   const captureWorkingTextColor = (element: HTMLElement | SVGElement | null) => {
@@ -747,7 +752,7 @@ export function ButtonSkinEditor({
       const sections = applyNamedButtonSkinSections(skinSections(workingSkin), parsed);
       const next = withSections(workingSkin, sections);
       setWorkingSkin(next);
-      resetWorkingSizingMode();
+      resetWorkingSizingMode(next);
       setWorkingPreviewUsesNaturalSize(true);
       setBenchMeasurement(null);
       setBenchNaturalMeasurement(null);
@@ -768,7 +773,7 @@ export function ButtonSkinEditor({
     if (!result) return;
     setWorkingSkin(cloneButtonDocument(result.skin));
     setWorkingSkinFilePath(result.path);
-    resetWorkingSizingMode();
+    resetWorkingSizingMode(result.skin);
     setWorkingPreviewUsesNaturalSize(true);
     setBenchMeasurement(null);
     setBenchNaturalMeasurement(null);
@@ -779,7 +784,7 @@ export function ButtonSkinEditor({
     applySkinFileResult(result);
     if (!compileButtonSkin(result.skin).ok) return;
     loadedSkinAssignmentRef.current = { skinContextKey, skinId: result.skin.id };
-    onAssignSkinToSelection(result.skin, "responsive");
+    onAssignSkinToSelection(result.skin, readButtonSkinSizing(result.skin).defaultMode);
   };
   return (
     <aside className="button-skin-editor">
@@ -795,6 +800,17 @@ export function ButtonSkinEditor({
           <span>Button Text</span>
           <small>Text + tooltip</small>
         </summary>
+        <button
+          type="button"
+          className="button-text-apply-all"
+          title={stateTextBlocked
+            ? "Save Settings first because the cycle state structure changed. Button Text stays in preview until then."
+            : "Apply every pending Button Text change across the editor: base or cycle labels, Button tooltips, and each placement's fit, alignment, size, X/Y position, and glow."}
+          disabled={busy || stateTextBlocked}
+          onClick={onApplyAllButtonText}
+        >
+          Apply All
+        </button>
         {activationCycle ? (
           <label title="Choose which cycle state's label to edit and preview.">
             <span>State</span>
@@ -1043,17 +1059,6 @@ export function ButtonSkinEditor({
           ) : null}
         </div>
         {benchTextOverflow ? <p className="button-editor-error">The current text does not fit inside this Button size.</p> : null}
-        <button
-          type="button"
-          className="button-text-apply-all"
-          title={stateTextBlocked
-            ? "Save Settings first because the cycle state structure changed. Button Text stays in preview until then."
-            : "Apply every pending Button Text change across the editor: base or cycle labels, Button tooltips, and each placement's fit, alignment, size, X/Y position, and glow."}
-          disabled={busy || stateTextBlocked}
-          onClick={onApplyAllButtonText}
-        >
-          Apply All
-        </button>
       </details>
       <details className="button-skin-section button-color-section" open>
         <summary title="Edit the active working skin's authored semantic color profile without changing shadows, effects, geometry, or assignment.">
@@ -1248,7 +1253,7 @@ export function ButtonSkinEditor({
               });
             }}
           >
-            <option value="responsive">Responsive - independent box</option>
+            <option value="responsive" disabled={!sizingPolicy.supportsResponsive}>Responsive - independent box</option>
             <option value="proportional">Proportional scale</option>
             <option value="stretch">Stretch entire skin</option>
           </select>
@@ -1570,7 +1575,7 @@ export function ButtonSkinEditor({
                   [section]: event.currentTarget.value
                 });
                 setWorkingSkin(next);
-                resetWorkingSizingMode();
+                resetWorkingSizingMode(next);
                 setWorkingPreviewUsesNaturalSize(true);
                 setBenchMeasurement(null);
                 setBenchNaturalMeasurement(null);

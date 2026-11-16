@@ -183,7 +183,7 @@ export function ButtonPopoutRenderer({
   );
 
   const stateTarget = unit.kind === "tool-set"
-    ? unit.childButtonIds.map((id) => document.buttons[id]?.executionTarget)
+    ? Object.values(document.buttons).filter(button => button.toolSetParentId === unit.ownerButtonId).map(button => button.executionTarget)
       .find((target) => target?.kind === "tool-set-action")
     : undefined;
   const stateProgram = stateTarget?.kind === "tool-set-action" ? stateTarget.programName : "";

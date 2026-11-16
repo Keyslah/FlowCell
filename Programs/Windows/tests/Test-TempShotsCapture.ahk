@@ -1,6 +1,8 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Off
 #Include %A_ScriptDir%\..\..\..\flowcellbackend\helpers\TempShotsCapture.ahk
+#Include %A_ScriptDir%\..\..\..\flowcellbackend\helpers\TempShotsSettings.ahk
+#Include %A_ScriptDir%\..\..\..\flowcellbackend\helpers\JsonStringValues.ahk
 
 ; Invoke only geometry, naming, cancellation without a GUI, and the encoder.
 ; Clipboard payloads go to an in-memory mock, never to the real clipboard.
@@ -73,6 +75,38 @@ try {
     prefix := RTrim(A_Temp, "\/") "\flowcell-temp-shots-tests-"
     if StrLower(SubStr(fixture, 1, StrLen(prefix))) != StrLower(prefix) || !DirExist(fixture) || InStr(fixture, "..")
         throw Error("Refusing an unexpected fixture directory.")
+
+    settingsRoot := fixture "\settings"
+    DirCreate settingsRoot "\windows\temp-shots"
+    DirCreate settingsRoot "\button-inputs"
+    firstFolder := fixture "\destination-one", secondFolder := fixture "\destination-two"
+    DirCreate firstFolder
+    DirCreate secondFolder
+    legacyCache := settingsRoot "\windows\temp-shots\temp-shots.folder.txt"
+    FileAppend firstFolder, legacyCache, "UTF-8-RAW"
+    launchers := Map()
+    for owner in ["button-one", "button-two", "button-migrated-existing"] {
+        package := fixture "\packages\" owner
+        DirCreate package "\source"
+        FileAppend '{"ownerButtonId":"' owner '"}', package "\flowcell.install.json", "UTF-8-RAW"
+        launchers[owner] := package "\source\Temp_Shots.vbs"
+        Assert(FlowCellTempShotsSettings.OwnerId(launchers[owner]) = owner, "Screenshot owner was not read from its install record.")
+    }
+    Assert(FlowCellTempShotsSettings.ReadFolder(launchers["button-one"], settingsRoot) = "", "A new Button inherited the global destination.")
+    Assert(FlowCellTempShotsSettings.ReadFolder(launchers["button-two"], settingsRoot) = "", "A second new Button inherited the global destination.")
+    Assert(FlowCellTempShotsSettings.ReadFolder(launchers["button-migrated-existing"], settingsRoot) = firstFolder, "The migrated Button lost its existing destination.")
+    FileAppend '{"configured":true,"values":{"folder":"' StrReplace(firstFolder, "\", "\\") '"}}', settingsRoot "\button-inputs\button-one.json", "UTF-8-RAW"
+    FileAppend '{"configured":true,"values":{"folder":"' StrReplace(secondFolder, "\", "\\") '"}}', settingsRoot "\button-inputs\button-two.json", "UTF-8-RAW"
+    Assert(FlowCellTempShotsSettings.ReadFolder(launchers["button-one"], settingsRoot) = firstFolder, "The first Button did not keep its own destination.")
+    Assert(FlowCellTempShotsSettings.ReadFolder(launchers["button-two"], settingsRoot) = secondFolder, "The second Button did not keep its own destination.")
+    FileAppend '{"configured":true,"values":{"folder":"' StrReplace(secondFolder, "\", "\\") '"}}', settingsRoot "\button-inputs\button-migrated-existing.json", "UTF-8-RAW"
+    Assert(FlowCellTempShotsSettings.ReadFolder(launchers["button-migrated-existing"], settingsRoot) = secondFolder, "A configured migrated Button ignored its own destination.")
+    FileOpen(settingsRoot "\button-inputs\button-one.json", "w", "UTF-8-RAW").Write('{"configured":false}')
+    Assert(FlowCellTempShotsSettings.ReadFolder(launchers["button-one"], settingsRoot) = "", "A disabled Button reused its previous destination.")
+    FileOpen(settingsRoot "\button-inputs\button-migrated-existing.json", "w", "UTF-8-RAW").Write('{"configured":false}')
+    Assert(FlowCellTempShotsSettings.ReadFolder(launchers["button-migrated-existing"], settingsRoot) = "", "A disabled migrated Button fell back to the global destination.")
+    Assert(FlowCellTempShotsSettings.ReadFolder("", settingsRoot) = firstFolder, "Snapshots lost the legacy shared destination.")
+    Assert(FlowCellTempShotsSettings.OwnerId(fixture "\unowned\Temp_Shots.vbs") = "", "An unowned source acquired another Button's identity.")
 
     AssertRectangle(FlowCellTempShotsCapture.NormalizeRectangle(2, 1, 6, 4, 8, 6), 2, 1, 4, 3, "Forward rectangle is incorrect.")
     AssertRectangle(FlowCellTempShotsCapture.NormalizeRectangle(6, 4, 2, 1, 8, 6), 2, 1, 4, 3, "Reverse rectangle is incorrect.")

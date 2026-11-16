@@ -1098,13 +1098,17 @@ pub(crate) fn load_button_settings_file(path: String) -> Result<ButtonSettingsFi
 pub(crate) fn save_button_settings_file(
     path: String,
     file: ButtonSettingsFileV1,
+    create_new: Option<bool>,
 ) -> Result<String, String> {
     let trimmed_path = path.trim();
     if trimmed_path.is_empty() {
         return Err("Button settings save path cannot be empty.".to_string());
     }
     let settings_path = normalize_button_settings_file_path(Path::new(trimmed_path));
-    write_button_settings_file(&settings_path, &file, AtomicWriteMode::Replace)
+    if create_new == Some(true) && settings_path.exists() {
+        return Err("Choose a new file name. The original Pop-out settings will not be overwritten.".to_string());
+    }
+    write_button_settings_file(&settings_path, &file, if create_new == Some(true) { AtomicWriteMode::Create } else { AtomicWriteMode::Replace })
 }
 
 fn validate_default_surface_id(surface_id: &str) -> Result<String, String> {
@@ -1791,6 +1795,168 @@ pub(crate) fn load_button_state_sync() -> Result<Option<Value>, String> {
     drop(guard);
     finalize_source_transaction_roots(&cleanup);
     result
+}
+
+fn apply_button_input_configuration(
+    document: &mut Value,
+    owner: &str,
+    values: &Value,
+    label: Option<&str>,
+    tooltip: Option<&str>,
+    expected_button: &Value,
+) -> Result<(), String> {
+    if !values.is_object() || label.is_some_and(|label| label.trim().is_empty()) {
+        return Err("Button input values must be an object and any supplied name must not be empty.".into());
+    }
+    let inputs_revision = document_revision(document)?.checked_add(1).ok_or("Button revision overflow.")?;
+    let button = document.get_mut("buttons").and_then(|buttons| buttons.get_mut(owner))
+        .ok_or("This Button no longer exists. Add it again before configuring it.")?;
+    if button.get("label") != expected_button.get("label")
+        || button.get("tooltip") != expected_button.get("tooltip")
+        || button.pointer("/metadata/buttonInputs") != expected_button.pointer("/metadata/buttonInputs")
+        || button.pointer("/metadata/flowcellSourceRevision") != expected_button.pointer("/metadata/flowcellSourceRevision")
+        || button.get("executionTarget") != expected_button.get("executionTarget")
+        || button.get("sourceIdentity") != expected_button.get("sourceIdentity") {
+        return Err("This Button changed while input setup was open. Run it again to use its current settings.".into());
+    }
+    let button = button.as_object_mut().ok_or("Button state is invalid.")?;
+    let previous_label = button.get("label").cloned();
+    let previous_tooltip = button.get("tooltip").cloned();
+    let metadata = button.entry("metadata").or_insert_with(|| serde_json::json!({}))
+        .as_object_mut().ok_or("Button metadata is invalid.")?;
+    metadata.insert("buttonInputs".into(), values.clone());
+    metadata.insert("buttonInputsRevision".into(), Value::from(inputs_revision));
+    if let Some(label) = label { button.insert("label".into(), Value::String(label.trim().into())); }
+    if let Some(tooltip) = tooltip { button.insert("tooltip".into(), Value::String(tooltip.into())); }
+    if let Some(placements) = document.get_mut("placements").and_then(Value::as_object_mut) {
+        for placement in placements.values_mut() {
+            if placement.get("buttonId").and_then(Value::as_str) != Some(owner) { continue; }
+            let Some(presentation) = placement.get_mut("presentationOverride").and_then(Value::as_object_mut) else { continue; };
+            if let Some(label) = label {
+                if presentation.contains_key("label") && presentation.get("label") == previous_label.as_ref() {
+                    presentation.insert("label".into(), Value::String(label.trim().into()));
+                }
+            }
+            if let Some(tooltip) = tooltip {
+                if presentation.contains_key("tooltip") && presentation.get("tooltip") == previous_tooltip.as_ref() {
+                    presentation.insert("tooltip".into(), Value::String(tooltip.into()));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod button_input_configuration_tests {
+    use super::apply_button_input_configuration;
+    use serde_json::{json, Value};
+
+    fn fixture() -> Value {
+        json!({"revision":4,"buttons":{
+            "first":{"label":"Screenshot","tooltip":"Setup","metadata":{"unrelated":true}},
+            "second":{"label":"Timer","metadata":{"buttonInputs":{"seconds":30,"enabled":true}}}
+        }})
+    }
+
+    #[test]
+    fn input_setup_supports_arbitrary_values_and_changes_only_its_owner() {
+        let mut document = fixture();
+        let expected = document["buttons"]["first"].clone();
+        let values = json!({"folder":"D:/Ideas","quality":90,"enabled":true,"tags":["reference"]});
+        let other = document["buttons"]["second"].clone();
+        apply_button_input_configuration(&mut document,"first",&values,Some("  Ideas  "),Some("Capture ideas"),&expected).unwrap();
+        assert_eq!(document["buttons"]["first"]["label"],"Ideas");
+        assert_eq!(document["buttons"]["first"]["metadata"]["buttonInputs"],values);
+        assert_eq!(document["buttons"]["first"]["metadata"]["unrelated"],true);
+        assert_eq!(document["buttons"]["first"]["metadata"]["buttonInputsRevision"],5);
+        assert_eq!(document["buttons"]["second"],other);
+        assert_eq!(document["revision"],4);
+    }
+
+    #[test]
+    fn input_reconfigure_preserves_name_when_handler_does_not_return_one() {
+        let mut document = fixture();
+        let expected = document["buttons"]["second"].clone();
+        apply_button_input_configuration(&mut document,"second",&json!({"seconds":45}),None,None,&expected).unwrap();
+        assert_eq!(document["buttons"]["second"]["label"],"Timer");
+        assert_eq!(document["buttons"]["second"]["metadata"]["buttonInputs"],json!({"seconds":45}));
+        assert_eq!(document["buttons"]["first"],fixture()["buttons"]["first"]);
+    }
+
+    #[test]
+    fn input_setup_rejects_concurrent_same_owner_edits_without_mutation() {
+        for field in ["label","tooltip","buttonInputs","flowcellSourceRevision","executionTarget","sourceIdentity"] {
+            let mut document = fixture();
+            let expected = document["buttons"]["first"].clone();
+            if field == "buttonInputs" || field == "flowcellSourceRevision" {
+                document["buttons"]["first"]["metadata"][field] = json!("newer");
+            } else { document["buttons"]["first"][field] = json!("newer"); }
+            let before = document.clone();
+            assert!(apply_button_input_configuration(&mut document,"first",&json!({"folder":"D:/Older"}),Some("Older"),None,&expected).is_err());
+            assert_eq!(document,before);
+        }
+    }
+
+    #[test]
+    fn input_setup_never_recreates_deleted_buttons_or_accepts_invalid_values() {
+        let mut document = fixture();
+        let before = document.clone();
+        assert!(apply_button_input_configuration(&mut document,"deleted",&json!({}),None,None,&json!({})).is_err());
+        assert_eq!(document,before);
+        let expected = document["buttons"]["first"].clone();
+        assert!(apply_button_input_configuration(&mut document,"first",&json!([]),None,None,&expected).is_err());
+        assert_eq!(document,before);
+    }
+
+    #[test]
+    fn input_name_updates_default_occurrences_and_keeps_custom_presentations() {
+        let mut document = fixture();
+        document["placements"] = json!({
+            "main":{"buttonId":"first","presentationOverride":{"label":"Screenshot","tooltip":"Setup"}},
+            "custom":{"buttonId":"first","presentationOverride":{"label":"Custom","tooltip":"My tooltip"}},
+            "other":{"buttonId":"second","presentationOverride":{"label":"Screenshot"}}
+        });
+        let expected = document["buttons"]["first"].clone();
+        let custom = document["placements"]["custom"].clone();
+        let other = document["placements"]["other"].clone();
+        apply_button_input_configuration(&mut document,"first",&json!({"folder":"D:/Ideas"}),Some("Ideas"),Some("Capture ideas"),&expected).unwrap();
+        assert_eq!(document["placements"]["main"]["presentationOverride"]["label"],"Ideas");
+        assert_eq!(document["placements"]["main"]["presentationOverride"]["tooltip"],"Capture ideas");
+        assert_eq!(document["placements"]["custom"],custom);
+        assert_eq!(document["placements"]["other"],other);
+    }
+}
+
+pub(crate) fn configure_button_inputs(
+    app: tauri::AppHandle,
+    owner_button_id: &str,
+    values: &Value,
+    label: Option<&str>,
+    tooltip: Option<&str>,
+    expected_button: &Value,
+) -> Result<(), String> {
+    let owner = crate::program_sources::validate_owner_button_id(owner_button_id)?;
+    for attempt in 0..2 {
+        let mut document = load_button_state_sync()?.ok_or("Button state is unavailable.")?;
+        let revision = document_revision(&document)?;
+        apply_button_input_configuration(&mut document,&owner,values,label,tooltip,expected_button)?;
+        document["revision"] = Value::from(revision.checked_add(1).ok_or("Button revision overflow.")?);
+        match commit_button_state_sync(app.clone(), CommitButtonStateRequest {
+            document, expected_revision:revision, uninstall_owner_button_ids:Vec::new(),
+            migration_token:None, program_rename_token:None,
+        }) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                if attempt == 0 {
+                    let latest = load_button_state_sync()?;
+                    if latest.as_ref().map(document_revision).transpose()? != Some(revision) { continue; }
+                }
+                return Err(error);
+            }
+        }
+    }
+    Err("Button changed while configuring its inputs. Run it again.".into())
 }
 
 pub(crate) fn recover_button_source_transactions_on_startup() -> Result<(), String> {
@@ -2536,6 +2702,19 @@ mod tests {
     }
 
     #[test]
+    fn button_settings_writer_create_new_preserves_existing_file() {
+        let root = button_placement_test_root("settings-create-new");
+        fs::create_dir_all(&root).expect("create settings test root");
+        let path = root.join("original.json");
+        let file = valid_button_settings_file();
+        save_button_settings_file(path.display().to_string(), file.clone(), Some(true)).expect("create new settings");
+        let original = fs::read(&path).expect("read original");
+        assert!(save_button_settings_file(path.display().to_string(), file, Some(true)).is_err());
+        assert_eq!(fs::read(&path).expect("preserved file"), original);
+        fs::remove_dir_all(root).expect("remove task-created test data");
+    }
+
+    #[test]
     fn button_settings_writer_preserves_json_file_name_and_round_trips() {
         let root = button_placement_test_root("settings-valid");
         fs::create_dir_all(&root).expect("create settings test root");
@@ -2543,6 +2722,7 @@ mod tests {
         let saved_path = save_button_settings_file(
             requested_path.display().to_string(),
             valid_button_settings_file(),
+            None,
         )
         .expect("save valid Button settings");
 
@@ -2598,7 +2778,7 @@ mod tests {
         file.surface["kind"] = json!("regular-popout");
         file.behavior["kind"] = json!("regular-popout");
         file.entries[0]["popoutColorOverride"] = json!({"surface": "#123456", "text": "#FFFFFFCC"});
-        let saved_path = save_button_settings_file(requested_path.display().to_string(), file.clone())
+        let saved_path = save_button_settings_file(requested_path.display().to_string(), file.clone(), None)
             .expect("save popped color settings");
         let parsed = load_button_settings_file(saved_path).expect("reload popped color settings");
         assert_eq!(parsed.entries, file.entries);

@@ -30,12 +30,14 @@ import {
 } from "../state/ButtonDraftBus";
 import { saveButtonStateDocument } from "../state/ButtonStateRepository";
 import { createButtonPopoutOwnerPlacement } from "../state/buttonPopoutInteractionOperations";
+import { resolveToolSetOwnerActivationTarget } from "../runtime/toolSetOwnerHotkeyBridge";
 import type {
   ButtonCoreMeasurement,
   ButtonDesktopBounds,
   ButtonPlacement,
   ButtonPopoutUnit,
   ButtonRect,
+  ButtonRecord,
   ButtonStateDocument,
   ButtonVisualMeasurement,
   ButtonVisualState
@@ -43,6 +45,7 @@ import type {
 import {
   applyCurrentButtonCanvasForContentBounds,
   closeButtonPopoutWindow,
+  openButtonPopoutWindow,
   listenForButtonWindowContextUpdates,
   type AppliedButtonCanvas
 } from "../windows/buttonWindows";
@@ -1469,7 +1472,14 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   );
 
 
-  const handleOwnerActivate = useCallback(() => {
+  const handleOwnerActivate = useCallback((button?: ButtonRecord) => {
+    if (button?.role === "tool-set-owner" && button.id !== unit?.ownerButtonId && document) {
+      try {
+        const target = resolveToolSetOwnerActivationTarget(document, button.id);
+        void openButtonPopoutWindow({ ...target, displayMode: "expanded" }).catch(error => setRuntimeError(String(error)));
+      } catch (error) { setRuntimeError(String(error)); }
+      return;
+    }
     if (!unit || !collapsiblePopout) {
       return;
     }
@@ -1484,7 +1494,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     }
     setPinned(true);
     setDisplayMode("expanded");
-  }, [collapsiblePopout, displayMode, pinned, unit]);
+  }, [collapsiblePopout, displayMode, pinned, unit, document]);
 
   const persistPopoutBounds = useCallback(async (
     persistedMode: "collapsed" | "expanded" = displayMode

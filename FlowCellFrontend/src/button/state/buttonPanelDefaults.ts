@@ -12,10 +12,11 @@ import { buttonSpacingPixelsFromMillimeters } from "../geometry/buttonGeometry.j
 export function defaultPanelButtonSize(
   document: ButtonStateDocument,
   button: ButtonRecord,
-  placement?: ButtonPlacement
+  placement?: ButtonPlacement,
+  initialHeight?: number
 ): { width: number; height: number } {
   const width = placement?.width ?? 160;
-  const height = placement?.height ?? 44;
+  const height = placement?.height ?? initialHeight ?? 44;
   // A new Main panel occurrence receives Concrete locally; existing occurrences
   // (including neutral Pop-outs) use their own effective assignment.
   const skinId = placement ? placement.skinOverrideId ?? button.defaultSkinId
@@ -27,8 +28,8 @@ export function defaultPanelButtonSize(
   }
   if (skinId !== CHIPPED_CONCRETE_BUTTON_SKIN_ID) return { width, height };
   const presentation = placement ? resolveButtonPlacementPresentation(button, placement) : button;
-  const natural = getChippedConcreteButtonSize(presentation.label, undefined, placement?.textSizeOverride ?? undefined);
-  return { width: natural.width * height / natural.height, height };
+  return getChippedConcreteButtonSize(presentation.label, undefined, placement?.textSizeOverride ?? undefined,
+    placement?.height ?? initialHeight);
 }
 
 /** Main keeps its key spacing; Pop-out defaults pack each Button's individual size tightly. */

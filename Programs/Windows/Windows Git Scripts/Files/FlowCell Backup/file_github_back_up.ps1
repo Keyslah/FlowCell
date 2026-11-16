@@ -1,5 +1,6 @@
 param(
     [switch]$BackgroundWorker,
+    [switch]$ConfigureOnly,
     [ValidateSet('GitHub', 'FlowCell')]
     [string]$BackupFlavor = 'GitHub'
 )
@@ -457,20 +458,20 @@ function Select-BackupRootFolder([string]$InitialPath) {
     return [string]$dialog.SelectedPath
 }
 
-function Resolve-BackupRootInteractive {
+function Resolve-BackupRootInteractive([switch]$ForcePrompt) {
     # Called from the foreground (interactive) invocation so the picker appears
     # before the hidden background worker starts. Returns $true when a backup
     # root is available, $false when the user cancelled the picker.
     $envPath = [string][Environment]::GetEnvironmentVariable('FLOWCELL_GITHUB_BACKUP_ROOT')
-    if (-not [string]::IsNullOrWhiteSpace($envPath)) {
+    if (-not $ForcePrompt -and -not [string]::IsNullOrWhiteSpace($envPath)) {
         return $true
     }
 
-    if (-not [string]::IsNullOrWhiteSpace((Read-PersistedBackupRoot))) {
+    if (-not $ForcePrompt -and -not [string]::IsNullOrWhiteSpace((Read-PersistedBackupRoot))) {
         return $true
     }
 
-    $picked = Select-BackupRootFolder -InitialPath (Get-DefaultBackupRoot)
+    $picked = Select-BackupRootFolder -InitialPath (Get-BackupRoot)
     if ([string]::IsNullOrWhiteSpace($picked)) {
         return $false
     }
@@ -1156,8 +1157,14 @@ function Get-CompletionNotificationText([object[]]$Results, [bool]$HasIssues) {
     return ($lines -join [Environment]::NewLine)
 }
 
-if (-not $BackgroundWorker) {
+if ($ConfigureOnly -or -not $BackgroundWorker) {
     try {
+        if ($ConfigureOnly) {
+            if (Resolve-BackupRootInteractive -ForcePrompt) {
+                Write-Status ($script:BackupUiLabel + ' destination saved. No backup was started.')
+            }
+            exit 0
+        }
         if (-not (Resolve-BackupRootInteractive)) {
             $statusMessage = ('{0} cancelled. No backup folder was selected.' -f $script:BackupUiLabel)
             Write-Status $statusMessage

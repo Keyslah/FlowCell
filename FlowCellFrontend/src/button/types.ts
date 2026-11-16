@@ -509,6 +509,7 @@ interface ButtonPopoutUnitBase {
 
 export interface RegularButtonPopoutUnit extends ButtonPopoutUnitBase {
   kind: "regular";
+  automaticLayout?: boolean;
   ownerButtonId?: ButtonId | null;
   memberPlacementIds: ButtonPlacementId[];
   memberSourceIdentities: ButtonSourceIdentity[];
@@ -517,6 +518,8 @@ export interface RegularButtonPopoutUnit extends ButtonPopoutUnitBase {
 
 export interface ToolSetButtonPopoutUnit extends ButtonPopoutUnitBase {
   kind: "tool-set";
+  /** User-saved arrangement; the package-owned original remains unchanged. */
+  templateUnitId?: string;
   ownerButtonId: ButtonId;
   childButtonIds: ButtonId[];
   childPlacementIds: ButtonPlacementId[];

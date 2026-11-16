@@ -603,7 +603,8 @@ test("Load Settings and placement defaults use the selected type and required bu
   assert.match(editor, /initialDirectory:\s*settingsDirectory/);
   assert.match(editor, /multiselect:\s*false/);
   assert.match(editor, /const settingsFile = await loadButtonSettingsFile\(selectedPath\)/);
-  assert.match(editor, /applyButtonSettingsFile\(\s*store\.current\(\),\s*selectedSurfaceId/);
+  assert.match(editor, /applyButtonSettingsFile\(base, targetSurfaceId, settingsFile/);
+  assert.match(editor, /forkToolsetPopout\(base, selectedSurfaceId\)/);
   assert.match(editor, /initializeButtonSettingsDefault\(/);
   assert.match(editor, /loadButtonSettingsDefault\(/);
   assert.match(editor, /updateButtonSettingsDefault\(/);
@@ -841,6 +842,7 @@ test("Skin Editor exposes one placement-owned cycle with triggers, visuals, and 
   assert.match(skinEditor, /activationCycle \? \([\s\S]{0,700}<span>State<\/span>[\s\S]{0,1000}<span>State label<\/span>/);
   assert.doesNotMatch(skinEditor, /Label condition|Condition label|labelOverrides/);
   assert.equal(skinEditor.match(/>\s*Apply All\s*</g)?.length, 1);
+  assert.match(skinEditor, /<span>Button Text<\/span>[\s\S]*?<\/summary>\s*<button[\s\S]*?className="button-text-apply-all"[\s\S]*?<\/button>[\s\S]*?className="button-text-label-grid"/);
   assert.match(skinEditor, /className="button-text-apply-all"[\s\S]{0,560}onClick=\{onApplyAllButtonText\}[\s\S]{0,120}>\s*Apply All\s*</);
   assert.match(skinEditor, /Apply every pending Button Text change across the editor:[\s\S]{0,120}Button tooltips/);
   assert.match(editor, /activationCycle=\{selectedPlacement\?\.activationCycle \?\? null\}/);
@@ -1008,8 +1010,9 @@ test("Button Sizing remains available without the Same size Buttons checkbox", (
     join(frontendRoot, "src", "button", "state", "buttonDefaults.ts"),
     "utf8"
   );
-  const sizingIndex = editor.indexOf("<legend>Button Sizing</legend>");
-  assert.ok(sizingIndex >= 0);
+  const toolbar = editor.slice(editor.indexOf("reorderControl={"), editor.indexOf("onPlacementOrderChange={applyPlacementOrder}"));
+  assert.match(toolbar, /Re-order[\s\S]*Copy dimensions[\s\S]*Add size to selection[\s\S]*Size snap[\s\S]*id="button-spacing-mm"/);
+  assert.doesNotMatch(editor, /button-editor-sidebar__sizing|button-spacing-mm-help|No Button dimensions copied yet/);
   assert.doesNotMatch(editor, /button-editor-sidebar__same-size|setAllSurfaceButtonsSameSize/);
   assert.match(
     editor,
@@ -1044,11 +1047,11 @@ test("blue-handle resize previews and commits the selected sizing behavior atomi
   );
   assert.match(
     editor,
-    /const selectedWorkingSizingMode = allSurfaceButtonsSameSize\s*\? "responsive"/
+    /const selectedWorkingSizingMode = resolveButtonSkinSizingMode\(selectedSkin,/
   );
   assert.match(
     editor,
-    /workingSizingModeOverride\?\.placementId === selectedPlacement\?\.id[\s\S]{0,160}: "responsive"/
+    /workingSizingModeOverride\?\.placementId === selectedPlacement\?\.id[\s\S]{0,160}: undefined/
   );
   assert.match(
     editor,

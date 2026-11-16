@@ -3,6 +3,7 @@ import { buttonRectsOverlap, buttonSpacingPixelsFromMillimeters } from "../geome
 import { cloneButtonDocument, createStableButtonId } from "./buttonDefaults.js";
 import { deriveRegularPopoutSelectionKey } from "./sourceIdentity.js";
 import type { LayoutSnapshotWindow } from "../../types.js";
+import { removeOwnedButtonGraph } from "./buttonDocumentOperations.js";
 
 export function panelKey(button: ButtonRecord): string | null {
   const identity = button?.sourceIdentity;
@@ -103,7 +104,7 @@ export function reconcileAddedPanelButtons(before: ButtonStateDocument, next: Bu
       }
     }
     for (const unit of Object.values(next.popoutUnits)) {
-      if (unit.kind !== "regular") continue;
+      if (unit.kind !== "regular" || unit.automaticLayout === false) continue;
       if (!windows.some((window) => window.Kind === "button-popout" && !window.ButtonPopoutSettingsPath && window.ButtonPopoutUnitId === unit.id)) continue;
       const ids = unit.memberPlacementIds.map((id) => next.placements[id]?.buttonId);
       if (isPanelGroup(ids)) appendRegularPopoutButtons(next, unit, added);
@@ -136,5 +137,15 @@ export function withAddedCanonicalPanelButtons(draft: ButtonStateDocument, canon
     }
   }
   reconcileAddedPanelButtons(draft, next, windows);
+  return next;
+}
+
+/** Open saved arrangements keep their coordinates, but cannot retain deleted source owners. */
+export function withRemovedCanonicalButtons(draft: ButtonStateDocument, canonical: ButtonStateDocument | null): ButtonStateDocument {
+  if (!canonical || canonical.revision <= draft.revision) return draft;
+  const removed = Object.values(draft.buttons).filter(button => button.sourceIdentity && !canonical.buttons[button.id]);
+  if (!removed.length) return draft;
+  const next = cloneButtonDocument(draft);
+  for (const button of removed) removeOwnedButtonGraph(next, button.id);
   return next;
 }

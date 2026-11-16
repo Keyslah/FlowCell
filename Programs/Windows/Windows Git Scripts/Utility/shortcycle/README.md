@@ -5,6 +5,7 @@ The next press sends the first shortcut to the last active application. Later
 presses send the next shortcut and wrap to the beginning after the last one.
 Restarting FlowCell resets the position; the list stays saved. Hold Shift while
 pressing the button to edit its list and reset the position.
+Right-click **Edit Inputs** to edit that same saved list without sending a shortcut.
 
 Use names such as `Ctrl+S`, `Ctrl+Shift+S`, `Alt+Tab`, `F5`, `Win+E` or `Space`.
 For punctuation use `Plus`, `Minus`, `Comma`, `Period`, `Slash`, `Backslash`,

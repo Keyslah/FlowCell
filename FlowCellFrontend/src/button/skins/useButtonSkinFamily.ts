@@ -38,6 +38,43 @@ function loadFamilyVariant(relativePath: string): Promise<ButtonSkin | null> {
   return request;
 }
 
+function embeddedButtonSkinVariant(
+  skin: ButtonSkin,
+  placementId: string,
+  label: string,
+  preferredWidth?: number,
+  textSizeOverride?: number
+): ButtonSkin | null {
+  if (isBundledChippedConcreteDefaultSkin(skin)) {
+    return getChippedConcreteButtonSkin(label, preferredWidth, textSizeOverride);
+  }
+  const variant = resolveEmbeddedButtonSkinFamilySource(skin, placementId, label);
+  if (!variant) return null;
+  try {
+    const rendered = createButtonSkinFromFile(
+      variant.source,
+      `${skin.name}${BUTTON_SKIN_FILE_EXTENSION}`,
+      `${skin.id}-variant-${variant.count}`
+    );
+    return validateButtonSkin(rendered).valid ? rendered : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve the same authored variant for an explicit text-size action without a saved width hint. */
+export async function resolveButtonSkinFamilyForTextSize(
+  skin: ButtonSkin,
+  placementId: string,
+  label: string,
+  textSizeOverride?: number
+): Promise<ButtonSkin> {
+  const embedded = embeddedButtonSkinVariant(skin, placementId, label, undefined, textSizeOverride);
+  if (embedded) return embedded;
+  const path = buttonSkinFamilyVariantPath(skin, placementId, label);
+  return (path ? await loadFamilyVariant(path) : null) ?? skin;
+}
+
 export function useButtonSkinFamily(
   skin: ButtonSkin,
   placementId: string,
@@ -46,23 +83,10 @@ export function useButtonSkinFamily(
   textSizeOverride?: number
 ): ButtonSkin {
   const path = buttonSkinFamilyVariantPath(skin, placementId, label);
-  const embedded = useMemo(() => {
-    if (isBundledChippedConcreteDefaultSkin(skin)) {
-      return getChippedConcreteButtonSkin(label, preferredWidth, textSizeOverride);
-    }
-    const variant = resolveEmbeddedButtonSkinFamilySource(skin, placementId, label);
-    if (!variant) return null;
-    try {
-      const rendered = createButtonSkinFromFile(
-        variant.source,
-        `${skin.name}${BUTTON_SKIN_FILE_EXTENSION}`,
-        `${skin.id}-variant-${variant.count}`
-      );
-      return validateButtonSkin(rendered).valid ? rendered : null;
-    } catch {
-      return null;
-    }
-  }, [skin, placementId, label, preferredWidth, textSizeOverride]);
+  const embedded = useMemo(
+    () => embeddedButtonSkinVariant(skin, placementId, label, preferredWidth, textSizeOverride),
+    [skin, placementId, label, preferredWidth, textSizeOverride]
+  );
   const [variant, setVariant] = useState<{ path: string; skin: ButtonSkin } | null>(null);
   useEffect(() => {
     setVariant(null);

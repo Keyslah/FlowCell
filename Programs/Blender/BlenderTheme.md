@@ -116,9 +116,9 @@ network access.
 
 Theme controls:
 
-- The page opens without a decorative header. Four slightly taller bucket cards
-  fit per row; each card keeps its original label visible and keeps swatch, hex,
-  and `Apply` on one control line. Gradient 2 carries one unlabeled checkbox
+- The page opens without a decorative header. Bucket cards wrap to the available
+  width; each has its label and `Apply` above a full-width clickable color box.
+  Gradient 2 carries one unlabeled checkbox
   directly beside its name instead of a separate description row. Darkness
   profile controls sit directly after `Load Buckets`. Every action Button has
   its original explanatory hover tooltip, with behavior-accurate descriptions

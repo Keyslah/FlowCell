@@ -1,4 +1,4 @@
-; Temp Shots owns capture and saving. No native Snipping Tool or disk intermediary.
+; Screenshots owns capture and saving. No native Snipping Tool or disk intermediary.
 class FlowCellTempShotsCapture {
     __New() {
         this.active := false
@@ -26,7 +26,7 @@ class FlowCellTempShotsCapture {
             if mode != "temp-shots" && mode != "snapshots"
                 throw Error("Unknown capture mode: " mode)
             if !DirExist(folder)
-                throw Error("The Temp Shots folder does not exist: " folder)
+                throw Error("The Screenshots folder does not exist: " folder)
             this.folder := folder
             this.mode := mode
             this.callback := statusCallback
@@ -40,7 +40,7 @@ class FlowCellTempShotsCapture {
             ; Freeze before constructing or showing a window, so focus changes cannot
             ; remove a dropdown from the image the user is about to select.
             this.bitmap := FlowCellTempShotsCapture.CaptureDesktop(this.left, this.top, this.width, this.height)
-            this.window := Gui("+AlwaysOnTop -Caption +ToolWindow -DPIScale", "Temp Shots selection")
+            this.window := Gui("+AlwaysOnTop -Caption +ToolWindow -DPIScale", "Screenshots selection")
             this.window.MarginX := 0
             this.window.MarginY := 0
             this.window.AddPicture("x0 y0 w" this.width " h" this.height, "HBITMAP:*" this.bitmap)
@@ -67,7 +67,7 @@ class FlowCellTempShotsCapture {
             this.active := true
             this.window.Show("x" this.left " y" this.top " w" this.width " h" this.height)
             SetTimer this.timer, 16
-            this.Report(mode = "snapshots" ? "Snapshots: drag a rectangle; then press Space for each shot or Escape to finish." : "Temp Shots: drag a rectangle; press Escape to cancel.")
+            this.Report(mode = "snapshots" ? "Snapshots: drag a rectangle; then press Space for each shot or Escape to finish." : "Screenshots: drag a rectangle; press Escape to cancel.")
             return true
         } catch {
             this.Cleanup()
@@ -124,7 +124,7 @@ class FlowCellTempShotsCapture {
             this.wasDown := down
         } catch as err {
             this.Cleanup()
-            this.Report("Temp Shots failed: " err.Message)
+            this.Report("Screenshots failed: " err.Message)
         } finally {
             if previousDpi
                 DllCall("user32\SetThreadDpiAwarenessContext", "Ptr", previousDpi, "Ptr")
@@ -168,7 +168,7 @@ class FlowCellTempShotsCapture {
             writer := ObjBindMethod(FlowCellTempShotsCapture, "WriteClipboardImage", this.window.Hwnd)
             FlowCellTempShotsCapture.SaveBitmapArea(this.bitmap, rect, path, writer)
             this.Cleanup()
-            this.Report("Temp Shots saved and copied to clipboard: " path)
+            this.Report("Screenshots saved and copied to clipboard: " path)
         } finally {
             Critical previousCritical
         }
@@ -179,7 +179,7 @@ class FlowCellTempShotsCapture {
         wasSnapshots := this.mode = "snapshots"
         this.Cleanup()
         if wasActive
-            this.Report(wasSnapshots ? "Snapshots finished." : "Temp Shots cancelled. No image saved.")
+            this.Report(wasSnapshots ? "Snapshots finished." : "Screenshots cancelled. No image saved.")
     }
 
     BeginSnapshots(rect) {

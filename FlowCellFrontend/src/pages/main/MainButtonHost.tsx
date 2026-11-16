@@ -63,17 +63,13 @@ export function MainButtonHost({
   onHoverCancel
 }: MainButtonHostProps) {
   const { button: canonical, placement, skin } = canonicalPresentation;
-  const renderedPlacement = targetHeightOverride === undefined
-    ? placement
-    : { ...placement, height: targetHeightOverride };
-  const railPosition = useMainRailPosition(button, absolute, renderedPlacement.width);
   const mainPageDefaultLabel = typeof canonical.metadata.mainPageDefaultLabel === "string"
     ? canonical.metadata.mainPageDefaultLabel
     : null;
   const mainPageDefaultTooltip = typeof canonical.metadata.mainPageDefaultTooltip === "string"
     ? canonical.metadata.mainPageDefaultTooltip
     : null;
-  const effectiveCanonical = mainPageDefaultLabel !== null
+  const canonicalPresentationButton = mainPageDefaultLabel !== null
     ? {
         ...canonical,
         label: canonical.label === mainPageDefaultLabel ? button.label : canonical.label,
@@ -85,6 +81,20 @@ export function MainButtonHost({
         disabled: canonical.disabled || Boolean(button.disabled)
       }
     : canonical;
+  // Older saved Buttons can have an empty tooltip even when their source now
+  // declares one. Keep authored text, then use the current source description.
+  const tooltip = canonicalPresentationButton.tooltip?.trim() || button.tooltip?.trim() ||
+    (button.scriptFileName
+      ? `Run ${placement.presentationOverride?.label || canonicalPresentationButton.label}.`
+      : canonicalPresentationButton.label);
+  const effectiveCanonical = { ...canonicalPresentationButton, tooltip };
+  const sizedPlacement = targetHeightOverride === undefined
+    ? placement
+    : { ...placement, height: targetHeightOverride };
+  const renderedPlacement = placement.presentationOverride && !placement.presentationOverride.tooltip?.trim()
+    ? { ...sizedPlacement, presentationOverride: { ...placement.presentationOverride, tooltip } }
+    : sizedPlacement;
+  const railPosition = useMainRailPosition(button, absolute, renderedPlacement.width);
 
   return (
     <span

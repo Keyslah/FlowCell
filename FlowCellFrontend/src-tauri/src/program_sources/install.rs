@@ -36,6 +36,34 @@ const INSTALL_TRANSACTION_DISCARD_PACKAGE: &str = "discard-package";
 const INSTALL_TRANSACTION_DISCARD_ACTIVE: &str = "discard-active.json";
 const INSTALL_TRANSACTION_SCHEMA_VERSION: u32 = 1;
 
+// Shell display names keep Explorer/file pickers readable without changing the
+// owner-ID paths used by execution, bindings, runtime data, and rollback.
+#[cfg(windows)]
+fn set_local_package_display_name(package: &Path, label: &str) -> Result<(), String> {
+    use std::os::windows::{ffi::OsStrExt, fs::MetadataExt};
+    use windows_sys::Win32::Storage::FileSystem::{
+        SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM,
+    };
+    let name = label.trim().replace(['\r', '\n', '\0'], " ");
+    if name.is_empty() || name.starts_with('@') {
+        return Err("Script name cannot be used as a Windows folder display name.".into());
+    }
+    let ini = package.join("desktop.ini");
+    let contents = format!("[.ShellClassInfo]\r\nLocalizedResourceName={name}\r\n");
+    let bytes: Vec<u8> = std::iter::once(0xfeffu16)
+        .chain(contents.encode_utf16()).flat_map(u16::to_le_bytes).collect();
+    fs::write(&ini, bytes).map_err(|error| format!("Failed to write script folder name: {error}"))?;
+    for (path, flags) in [(ini.as_path(), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM),
+                          (package, FILE_ATTRIBUTE_READONLY)] {
+        let attributes = fs::metadata(path).map_err(|error| error.to_string())?.file_attributes();
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        if unsafe { SetFileAttributesW(wide.as_ptr(), attributes | flags) } == 0 {
+            return Err(format!("Failed to set script folder display attributes: {}", std::io::Error::last_os_error()));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum InstallTransactionPhase {
@@ -174,6 +202,8 @@ struct ToolsetManifest {
     #[serde(default)]
     program: String,
     source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    input_setup: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bridge_data: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -977,6 +1007,8 @@ struct ScriptManifest {
     #[serde(default)]
     program: String,
     source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    input_setup: Option<Value>,
     #[serde(default)]
     import_aliases: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1065,6 +1097,7 @@ struct PreparedSource {
     state_query: Option<ToolsetStateQuery>,
     execution_target: Option<Value>,
     events: Option<BTreeMap<String, Value>>,
+    input_setup: Option<Value>,
     children: Vec<ActiveSourceChild>,
     layout: Option<Value>,
     page: Option<InstalledPageManifest>,
@@ -1234,6 +1267,40 @@ fn ensure_relative_source_path(value: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+pub(crate) fn validate_input_setup(package_root: &Path, setup: &Value) -> Result<(), String> {
+    let object = setup.as_object().ok_or("inputSetup must be an object.")?;
+    if object.keys().any(|key| !matches!(key.as_str(), "source" | "arguments" | "firstRun")) {
+        return Err("inputSetup only supports source, arguments and firstRun.".into());
+    }
+    let source = object.get("source").and_then(Value::as_str)
+        .ok_or("inputSetup requires its package-owned PowerShell source.")?;
+    if source.is_empty() || source != source.trim() || source.contains('\0') || source.contains(':') {
+        return Err("inputSetup source must be a relative file inside its package.".into());
+    }
+    let relative = ensure_relative_source_path(source)?;
+    let handler = package_root.join(relative);
+    reject_package_source_reparse_point(&handler)?;
+    if !handler.is_file() || !handler.extension().and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ps1")) {
+        return Err("inputSetup source must name an existing package-owned .ps1 file.".into());
+    }
+    let root = package_root.canonicalize().map_err(|error| error.to_string())?;
+    let resolved = handler.canonicalize().map_err(|error| error.to_string())?;
+    if !resolved.starts_with(&root) {
+        return Err("inputSetup source must stay inside its package.".into());
+    }
+    if let Some(arguments) = object.get("arguments") {
+        let arguments = arguments.as_array().ok_or("inputSetup arguments must be an array of strings.")?;
+        if arguments.iter().any(|argument| argument.as_str().is_none_or(|text| text.contains('\0'))) {
+            return Err("inputSetup arguments must contain strings without null characters.".into());
+        }
+    }
+    if object.get("firstRun").is_some_and(|value| !value.is_boolean()) {
+        return Err("inputSetup firstRun must be true or false.".into());
+    }
+    Ok(())
+}
+
 fn validate_script_import_aliases(
     package_root: &Path,
     aliases: &[String],
@@ -1321,36 +1388,31 @@ fn recognized_root_manifest(
     }
 }
 
+// The nearest enclosing package owns any selected file, including nested assets.
+fn selected_file_package(source_path: &Path) -> Result<Option<(PathBuf, &'static str)>, String> {
+    if !source_path.is_file() { return Ok(None); }
+    reject_selected_source_reparse_point(source_path)?;
+    for folder in source_path.parent().into_iter().flat_map(Path::ancestors) {
+        reject_selected_source_reparse_point(folder)?;
+        let script = recognized_root_manifest(folder, SCRIPT_MANIFEST_FILE_NAME)?;
+        let toolset = recognized_root_manifest(folder, TOOLSET_MANIFEST_FILE_NAME)?;
+        match (script, toolset) {
+            (Some(_), Some(_)) => return Err(format!(
+                "Source folder '{}' is ambiguous because it contains both {} and {}.",
+                folder.display(), SCRIPT_MANIFEST_FILE_NAME, TOOLSET_MANIFEST_FILE_NAME
+            )),
+            (Some(path), None) => return Ok(Some((path, "script"))),
+            (None, Some(path)) => return Ok(Some((path, "tool-set"))),
+            (None, None) => {}
+        }
+        if folder.join("flowcell.program.json").is_file() { break; }
+    }
+    Ok(None)
+}
+
 fn detect_import_kind(source_path: &Path) -> Result<&'static str, String> {
     if source_path.is_file() {
-        let parent = source_path
-            .parent()
-            .ok_or_else(|| "Selected Button source has no parent folder.".to_string())?;
-        let script_manifest = recognized_root_manifest(parent, SCRIPT_MANIFEST_FILE_NAME)?;
-        let toolset_manifest = recognized_root_manifest(parent, TOOLSET_MANIFEST_FILE_NAME)?;
-        if script_manifest.is_some() && toolset_manifest.is_some() {
-            return Err(format!(
-                "Source folder '{}' is ambiguous because it contains both {} and {}.",
-                parent.display(),
-                SCRIPT_MANIFEST_FILE_NAME,
-                TOOLSET_MANIFEST_FILE_NAME
-            ));
-        }
-        let file_name = source_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default();
-        if file_name.eq_ignore_ascii_case(SCRIPT_MANIFEST_FILE_NAME) {
-            return Ok("script");
-        }
-        if file_name.eq_ignore_ascii_case(TOOLSET_MANIFEST_FILE_NAME) {
-            return Ok("tool-set");
-        }
-        return Ok(if toolset_manifest.is_some() {
-            "tool-set"
-        } else {
-            "script"
-        });
+        return Ok(selected_file_package(source_path)?.map(|(_, kind)| kind).unwrap_or("script"));
     }
     if !source_path.is_dir() {
         return Err(format!(
@@ -1396,17 +1458,14 @@ fn prepare_source(
     source_path: &Path,
     import_kind: &str,
 ) -> Result<PreparedSource, String> {
+    let selected_package = selected_file_package(source_path)?;
+    if let Some((_, kind)) = selected_package.as_ref() {
+        if *kind != import_kind {
+            return Err("The selected file belongs to a different package kind. Use Add Button to detect it automatically.".into());
+        }
+    }
+    let source_path = selected_package.as_ref().map(|(path, _)| path.as_path()).unwrap_or(source_path);
     if import_kind == "script" {
-        let selected_package_file = source_path
-            .is_file()
-            .then(|| source_path.to_path_buf())
-            .filter(|path| {
-                !path
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .map(|value| value.eq_ignore_ascii_case(SCRIPT_MANIFEST_FILE_NAME))
-                    .unwrap_or(false)
-            });
         let script_manifest_path = if source_path.is_dir() {
             Some(source_path.join(SCRIPT_MANIFEST_FILE_NAME))
         } else if source_path
@@ -1495,27 +1554,15 @@ fn prepare_source(
                     executable.display()
                 ));
             }
-            let import_aliases = validate_script_import_aliases(package_root, &script.import_aliases)?;
-            if let Some(selected) = selected_package_file.as_ref() {
-                let selected = selected.canonicalize().map_err(|error| {
-                    format!(
-                        "Selected package file '{}' could not be resolved: {error}",
-                        selected.display()
-                    )
-                })?;
-                let executable = executable.canonicalize().map_err(|error| {
-                    format!(
-                        "Script package source '{}' could not be resolved: {error}",
-                        executable.display()
-                    )
-                })?;
-                if selected != executable && !import_aliases.contains(&selected) {
-                    return Err(format!(
-                        "'{}' is a companion file in a script package. Add the declared source '{}' or its {} instead.",
-                        selected.display(),
-                        executable.display(),
-                        SCRIPT_MANIFEST_FILE_NAME
-                    ));
+            validate_script_import_aliases(package_root, &script.import_aliases)?;
+            if let Some(setup) = script.input_setup.as_ref() {
+                validate_input_setup(package_root, setup)?;
+                if script.page.is_some() && setup.get("firstRun").and_then(Value::as_bool) == Some(true) {
+                    return Err("Page-enabled Buttons own their first-use setup. Their inputSetup handler may replay setup, but firstRun must be false or omitted.".into());
+                }
+                if script.events.as_ref().is_some_and(|events| !events.is_empty())
+                    && setup.get("firstRun").and_then(Value::as_bool) == Some(true) {
+                    return Err("Event-driven Buttons own their first-use setup. Their inputSetup handler may replay setup, but firstRun must be false or omitted.".into());
                 }
             }
             if script.page.is_some() && script.execution_target.is_some() {
@@ -1552,6 +1599,7 @@ fn prepare_source(
                 state_query: None,
                 execution_target,
                 events: script.events,
+                input_setup: script.input_setup,
                 children: Vec::new(),
                 layout: None,
                 page,
@@ -1589,6 +1637,7 @@ fn prepare_source(
             state_query: None,
             execution_target: None,
             events: None,
+            input_setup: None,
             children: Vec::new(),
             layout: None,
             page: None,
@@ -1602,16 +1651,7 @@ fn prepare_source(
             manifest.label
         ));
     }
-    let selected_package_file = source_path
-        .is_file()
-        .then(|| source_path.to_path_buf())
-        .filter(|path| {
-            !path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .map(|value| value.eq_ignore_ascii_case(TOOLSET_MANIFEST_FILE_NAME))
-                .unwrap_or(false)
-        });
+
     let manifest_path = if source_path.is_dir() {
         source_path.join(TOOLSET_MANIFEST_FILE_NAME)
     } else if source_path
@@ -1666,6 +1706,13 @@ fn prepare_source(
         return Err("Tool-set manifest must define at least one child.".to_string());
     }
     let source_relative = ensure_relative_source_path(&toolset.source)?;
+    if let Some(setup) = toolset.input_setup.as_ref() {
+        validate_input_setup(package_root, setup)?;
+        if toolset.events.as_ref().is_some_and(|events| !events.is_empty())
+            && setup.get("firstRun").and_then(Value::as_bool) == Some(true) {
+            return Err("Event-driven Buttons own their first-use setup. Their inputSetup handler may replay setup, but firstRun must be false or omitted.".into());
+        }
+    }
     let executable = package_root.join(&source_relative);
     if !executable.is_file() || !extension_is_allowed(manifest, &executable) {
         return Err(format!(
@@ -1673,28 +1720,7 @@ fn prepare_source(
             executable.display()
         ));
     }
-    if let Some(selected) = selected_package_file.as_ref() {
-        let selected = selected.canonicalize().map_err(|error| {
-            format!(
-                "Selected package file '{}' could not be resolved: {error}",
-                selected.display()
-            )
-        })?;
-        let executable = executable.canonicalize().map_err(|error| {
-            format!(
-                "Tool-set package source '{}' could not be resolved: {error}",
-                executable.display()
-            )
-        })?;
-        if selected != executable {
-            return Err(format!(
-                "'{}' is a companion file in a tool-set package. Add the declared source '{}' or its {} instead.",
-                selected.display(),
-                executable.display(),
-                TOOLSET_MANIFEST_FILE_NAME
-            ));
-        }
-    }
+
     let mut seen_slots = Vec::<String>::new();
     let mut children = Vec::new();
     for child in toolset.children {
@@ -1761,6 +1787,7 @@ fn prepare_source(
         state_query,
         execution_target: None,
         events: toolset.events,
+        input_setup: toolset.input_setup,
         children,
         layout,
         page: None,
@@ -3377,6 +3404,7 @@ fn prepared_active_record(
         bridge_data: prepared.bridge_data,
         state_query: prepared.state_query,
         events: prepared.events,
+        input_setup: prepared.input_setup,
         children: prepared.children,
         layout: prepared.layout,
         page: prepared.page,
@@ -3835,6 +3863,13 @@ fn install_from_path_while_source_locked_with_completion(
     }
     if replace_existing {
         if let Err(error) = preserve_runtime_directory(&final_package, &staged_package) {
+            finalize_install_transaction(&transaction_root);
+            return Err(error);
+        }
+    }
+    #[cfg(windows)]
+    if manifest.program_id.eq_ignore_ascii_case("windows") {
+        if let Err(error) = set_local_package_display_name(&staged_package, &prepared.label) {
             finalize_install_transaction(&transaction_root);
             return Err(error);
         }
@@ -4299,6 +4334,7 @@ mod tests {
         preserve_runtime_directory, previous_owned_record_path_matches,
         read_install_transaction_journal, recover_install_transaction,
         recover_update_residues_with, resolve_awaiting_canonical_transaction, update_residue_name,
+        selected_file_package,
         validate_core_execution_target, validate_toolset_layout, validate_update_shape,
         write_install_transaction_journal, CanonicalSourceProjection, CanonicalUpdateDisposition,
         InstallTransactionCompletionMode, InstallTransactionJournal, InstallTransactionPhase,
@@ -4306,6 +4342,8 @@ mod tests {
         SCRIPT_MANIFEST_FILE_NAME, TOOLSET_MANIFEST_FILE_NAME,
     };
     use crate::program_sources::installed_page::InstalledPageManifest;
+    #[cfg(windows)]
+    use super::set_local_package_display_name;
     use crate::program_sources::manifest::{ProgramManifest, ProgramRunnerManifest};
     use crate::program_sources::records::{
         active_record_file_name, atomic_write_json, read_active_record, ActiveSourceChild,
@@ -4784,6 +4822,7 @@ mod tests {
             bridge_data: Some(json!({"axis":"X","shared":1})),
             state_query: None,
             events: None,
+            input_setup: None,
             children: vec![ActiveSourceChild {
                 slot: "go".into(),
                 label: "Go".into(),
@@ -4863,6 +4902,7 @@ mod tests {
                 bridge_data: None,
                 state_query: None,
                 events: None,
+                input_setup: None,
                 children: Vec::new(),
                 layout: None,
                 page: None,
@@ -5456,7 +5496,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_script_and_toolset_entries_promote_manifest_and_companions_are_rejected() {
+    fn selected_files_promote_their_complete_script_or_toolset_package() {
         let root = std::env::temp_dir().join(format!(
             "flowcell-script-package-{}",
             std::time::SystemTime::now()
@@ -5485,7 +5525,14 @@ mod tests {
             prepared.source_relative_to_package,
             PathBuf::from("entry.vbs")
         );
-        assert!(prepare_source(&windows_manifest(), &root.join("helper.ps1"), "script").is_err());
+        assert_eq!(prepare_source(&windows_manifest(), &root.join("helper.ps1"), "script").unwrap().source_relative_to_package, PathBuf::from("entry.vbs"));
+        fs::create_dir_all(root.join("assets/nested")).unwrap();
+        let asset = root.join("assets/nested/readme.txt");
+        fs::write(&asset, "package asset").unwrap();
+        assert_eq!(detect_import_kind(&asset).unwrap(), "script");
+        let nested = prepare_source(&windows_manifest(), &asset, "script").unwrap();
+        assert_eq!(nested.package_source_root, root);
+        assert_eq!(nested.source_relative_to_package, PathBuf::from("entry.vbs"));
 
         fs::remove_file(root.join(SCRIPT_MANIFEST_FILE_NAME)).expect("remove script manifest");
         fs::write(
@@ -5519,12 +5566,105 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["run"]
         );
-        let error = match prepare_source(&toolset_program, &root.join("helper.ps1"), "tool-set") {
-            Ok(_) => panic!("tool-set companion import must fail closed"),
-            Err(error) => error,
-        };
-        assert!(error.contains("companion file in a tool-set package"));
+        let prepared = prepare_source(&toolset_program, &root.join("helper.ps1"), "tool-set").unwrap();
+        assert_eq!(prepared.source_relative_to_package, PathBuf::from("entry.vbs"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn selected_nested_assets_use_nearest_package_and_reject_ambiguity() {
+        let root = temporary_test_root("nested-package-selection");
+        let nested = root.join("assets/nested");
+        fs::create_dir_all(&nested).unwrap();
+        let asset = nested.join("readme.txt");
+        fs::write(&asset, "asset").unwrap();
+        fs::write(root.join(SCRIPT_MANIFEST_FILE_NAME), "{}").unwrap();
+        assert_eq!(selected_file_package(&asset).unwrap(), Some((root.join(SCRIPT_MANIFEST_FILE_NAME), "script")));
+        fs::write(nested.join(TOOLSET_MANIFEST_FILE_NAME), "{}").unwrap();
+        assert_eq!(selected_file_package(&asset).unwrap(), Some((nested.join(TOOLSET_MANIFEST_FILE_NAME), "tool-set")));
+        fs::write(nested.join(SCRIPT_MANIFEST_FILE_NAME), "{}").unwrap();
+        assert!(selected_file_package(&asset).unwrap_err().contains("ambiguous"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn standalone_illustrator_script_needs_no_package_manifest() {
+        let root = temporary_test_root("standalone-illustrator-script");
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("Example.jsx");
+        fs::write(&source, "// standalone Illustrator script").unwrap();
+        let mut manifest = windows_manifest();
+        manifest.label = "Illustrator".into();
+        manifest.allowed_script_extensions = vec!["jsx".into()];
+        assert!(selected_file_package(&source).unwrap().is_none());
+        assert_eq!(detect_import_kind(&source).unwrap(), "script");
+        let prepared = prepare_source(&manifest, &source, "script").unwrap();
+        assert_eq!(prepared.source_relative_to_package, PathBuf::from("Example.jsx"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_package_shell_name_preserves_owner_path_and_files() {
+        use std::os::windows::fs::MetadataExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM};
+        let root = temporary_test_root("local-package-shell-name");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("flowcell.install.json"), "unchanged").unwrap();
+        set_local_package_display_name(&root, "Screenshots").unwrap();
+        let bytes = fs::read(root.join("desktop.ini")).unwrap();
+        let decoded: Vec<u16> = bytes.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+        assert_eq!(decoded[0], 0xfeff);
+        assert!(String::from_utf16(&decoded[1..]).unwrap().contains("LocalizedResourceName=Screenshots\r\n"));
+        assert_eq!(fs::read_to_string(root.join("flowcell.install.json")).unwrap(), "unchanged");
+        assert_ne!(fs::metadata(&root).unwrap().file_attributes() & FILE_ATTRIBUTE_READONLY, 0);
+        assert_eq!(fs::metadata(root.join("desktop.ini")).unwrap().file_attributes() & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn first_run_input_setup_is_preserved_for_script_and_toolset_packages() {
+        let root = temporary_test_root("first-run-input-setup");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("action.ps1"), "# action").unwrap();
+        fs::write(root.join("configure.ps1"), "# setup only").unwrap();
+        let setup = json!({"source":"configure.ps1","arguments":["-ConfigureOnly"],"firstRun":false});
+        fs::write(root.join(SCRIPT_MANIFEST_FILE_NAME), json!({
+            "schemaVersion":1,"id":"windows.configurable","label":"Configurable","program":"Windows",
+            "source":"action.ps1","inputSetup":setup
+        }).to_string()).unwrap();
+        let script = prepare_source(&windows_manifest(), &root.join(SCRIPT_MANIFEST_FILE_NAME), "script").unwrap();
+        assert_eq!(script.input_setup, Some(setup.clone()));
+        fs::remove_file(root.join(SCRIPT_MANIFEST_FILE_NAME)).unwrap();
+        fs::write(root.join(TOOLSET_MANIFEST_FILE_NAME), json!({
+            "schemaVersion":1,"id":"windows.configurable","label":"Configurable","program":"Windows",
+            "source":"action.ps1","inputSetup":setup,"children":[{"slot":"run","label":"Run"}]
+        }).to_string()).unwrap();
+        let mut manifest = windows_manifest();
+        manifest.supports_toolset_manifests = true;
+        let toolset = prepare_source(&manifest, &root.join(TOOLSET_MANIFEST_FILE_NAME), "tool-set").unwrap();
+        assert_eq!(toolset.input_setup, Some(setup));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn first_run_input_setup_rejects_invalid_or_unowned_handlers() {
+        let root = temporary_test_root("first-run-input-validation");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("configure.ps1"), "# setup only").unwrap();
+        fs::write(root.join("action.py"), "# not a setup handler").unwrap();
+        for setup in [
+            json!(null), json!({}), json!({"source":"../configure.ps1"}),
+            json!({"source":"missing.ps1"}), json!({"source":"action.py"}),
+            json!({"source":" configure.ps1"}), json!({"source":"configure.ps1","arguments":true}),
+            json!({"source":"configure.ps1","arguments":[1]}),
+            json!({"source":"configure.ps1","arguments":["bad\u{0000}argument"]}),
+            json!({"source":"configure.ps1","firstRun":"true"}),
+            json!({"source":"configure.ps1","execute":true}),
+        ] {
+            assert!(super::validate_input_setup(&root, &setup).is_err(), "accepted {setup}");
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -5549,7 +5689,7 @@ mod tests {
             assert_eq!(prepared.source_relative_to_package, PathBuf::from("entry.vbs"));
             assert_eq!(prepared.label, "Monitor Toggle");
         }
-        assert!(prepare_source(&windows_manifest(), &package.join("setup.ps1"), "script").is_err());
+        assert!(prepare_source(&windows_manifest(), &package.join("setup.ps1"), "script").is_ok());
 
         let prepared = prepare_source(&windows_manifest(), &package.join("engine.py"), "script").unwrap();
         let copied = root.join("copied");
@@ -5586,7 +5726,7 @@ mod tests {
     fn shipped_toggle_monitors_helpers_import_the_launcher_package() {
         let package = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../Programs/Windows/Windows Git Scripts/Utility/Toggle Monitors");
-        for name in ["Toggle Monitors Picker.ps1", "toggle_monitors.py"] {
+        for name in ["Toggle Monitors Picker.ps1", "toggle_monitors.py", "Install Startup Safety.ps1"] {
             let selected = package.join(name);
             let kind = detect_import_kind(&selected).expect("detect monitor package alias");
             let prepared = prepare_source(&windows_manifest(), &selected, kind)
@@ -5595,9 +5735,6 @@ mod tests {
             assert_eq!(prepared.label, "Toggle Monitors");
             assert_eq!(prepared.source_relative_to_package, PathBuf::from("Toggle Monitors.vbs"));
         }
-        assert!(prepare_source(
-            &windows_manifest(), &package.join("Install Startup Safety.ps1"), "script",
-        ).is_err());
     }
 
     #[test]
@@ -5672,6 +5809,7 @@ mod tests {
             state_query: None,
             execution_target: None,
             events: None,
+            input_setup: None,
             children: previous.children.clone(),
             layout: None,
             page: None,
@@ -5708,6 +5846,7 @@ mod tests {
             state_query: None,
             execution_target: None,
             events: None,
+            input_setup: None,
             children: Vec::new(),
             layout: None,
             page: Some(installed_page("windows.page", "windows.page.v1")),

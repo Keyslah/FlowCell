@@ -17,7 +17,7 @@ function sourceCallbacks(fileName, componentSource, names, context) {
     if (ts.isVariableDeclaration(node) && names.includes(node.name.getText(parsed))) {
       declarations.set(node.name.getText(parsed), `const ${node.getText(parsed)};`);
     } else if (ts.isFunctionDeclaration(node) && node.name && names.includes(node.name.text)) {
-      declarations.set(node.name.text, node.getText(parsed));
+      declarations.set(node.name.text, node.getText(parsed).replace(/^export\s+/, ""));
     }
     ts.forEachChild(node, visit);
   }
@@ -43,6 +43,7 @@ function loadSkinHarness(result, compiles = true) {
   const requests = [];
   const loadedSkinAssignmentRef = { current: null };
   const callbacks = sourceCallbacks("ButtonSkinEditor.tsx", source, ["applySkinFileResult", "loadSkin"], {
+    ...sourceCallbacks("buttonSkinSizing.ts", readFileSync(join(import.meta.dirname, "..", "src", "button", "skins", "buttonSkinSizing.ts"), "utf8"), ["readButtonSkinSizing"], {}),
     cloneButtonDocument: structuredClone,
     onLoadSkinFile: async (path) => {
       requests.push(path);
@@ -80,6 +81,18 @@ test("Load skin assigns the loaded skin to the selection with a natural Responsi
     skinContextKey: "selected-placement", skinId: result.skin.id
   });
   assert.match(source, /void loadSkin\(\)/);
+});
+
+test("Load skin honors proportional presets without changing its source or dimensions", async () => {
+  for (const responsive of [0, 1]) {
+    const result = { path: "preset.skin", skin: { id: "preset", base: `--flowcell-sizing-default:proportional;--flowcell-sizing-responsive:${responsive};` } };
+    const h = loadSkinHarness(result);
+    await h.loadSkin();
+    assert.deepEqual(h.assignments, [{ skin: result.skin, sizingMode: "proportional" }]);
+    assert.deepEqual(h.state.workingSkin, result.skin);
+    assert.equal(h.state.naturalPreview, true);
+  }
+  assert.match(source, /<option value="responsive" disabled=\{!sizingPolicy.supportsResponsive\}>/);
 });
 
 test("canceling or failing Load skin preserves the working copy and Button assignments", async () => {
@@ -315,8 +328,8 @@ test("Button size uses an isolated preview until an explicit assignment action",
     /const \[appliedPreviewSizingMode, setAppliedPreviewSizingMode\] = useState<ButtonPlacementSizingMode>/
   );
   assert.match(source, /const \[workingPreviewUsesNaturalSize, setWorkingPreviewUsesNaturalSize\] = useState\(false\)/);
-  assert.match(source, /const activeSize = workingSize\?\.placementId === placement\.id/);
-  assert.match(source, /const previewSizingMode = appliedPreviewSizingMode/);
+  assert.match(source, /const pendingSize = workingSize\?\.placementId === placement\.id/);
+  assert.match(source, /const previewSizingMode = resolveButtonSkinSizingMode\(workingSkin, appliedPreviewSizingMode\)/);
   assert.match(source, /const previewWidth = workingPreviewUsesNaturalSize \? undefined : activeSize\.width/);
   assert.match(source, /const previewHeight = workingPreviewUsesNaturalSize \? undefined : activeSize\.height/);
   assert.equal((source.match(/width=\{previewWidth\}/g) ?? []).length, 3);
@@ -338,7 +351,7 @@ test("Button size uses an isolated preview until an explicit assignment action",
   assert.doesNotMatch(source, /onPlacementSizingModeChange/);
 });
 
-test("paste, load, and source editing return the preview to natural geometry and Responsive policy", () => {
+test("paste, load, and source editing return the preview to natural geometry and the skin's declared policy", () => {
   assert.match(
     source,
     /const sizeForAssignment = \{[\s\S]{0,220}workingPreviewUsesNaturalSize && benchNaturalMeasurement/
@@ -348,8 +361,8 @@ test("paste, load, and source editing return the preview to natural geometry and
     "every working-source replacement path must restore natural preview geometry"
   );
   assert.ok(
-    (source.match(/resetWorkingSizingMode\(\)/g) ?? []).length >= 3,
-    "every working-source replacement path must restore Responsive as the pending policy"
+    (source.match(/resetWorkingSizingMode\((?:next|result.skin)\)/g) ?? []).length >= 3,
+    "every working-source replacement path must read the new skin's pending policy"
   );
   assert.match(
     source,
@@ -377,14 +390,14 @@ test("choosing a sizing behavior changes policy without rewriting width or heigh
   );
 });
 
-test("each selected or replaced working skin starts Responsive without changing geometry", () => {
+test("each selected or replaced working skin starts with its declared default without changing geometry", () => {
   assert.match(
     source,
-    /function responsiveSizeAssignmentFromPlacement[\s\S]{0,320}sizingMode: "responsive"/
+    /function defaultSizeAssignmentFromPlacement[\s\S]{0,320}sizingMode: readButtonSkinSizing\(skin\).defaultMode/
   );
   assert.match(
     source,
-    /setWorkingSkin\(skin \? cloneButtonDocument\(skin\) : null\);[\s\S]{0,260}responsiveSizeAssignmentFromPlacement\(placement\)[\s\S]{0,160}onSizingModePreviewChange\("responsive"\)/
+    /setWorkingSkin\(skin \? cloneButtonDocument\(skin\) : null\);[\s\S]{0,260}defaultSizeAssignmentFromPlacement\(placement, skin\)[\s\S]{0,200}onSizingModePreviewChange\(readButtonSkinSizing\(skin\).defaultMode\)/
   );
 
   const geometrySync = source.match(
@@ -411,7 +424,7 @@ test("Button text fitting remains placement-owned and independent from the worki
   assert.match(source, /onPlacementTextChange/);
 });
 
-test("Button Text preview stays live and ends with its own scoped Apply All", () => {
+test("Button Text preview stays live with its scoped Apply All below the header", () => {
   const textSection = source.match(
     /<summary title="Edit Button labels and the shared Button Tooltip[\s\S]*?<\/details>/
   );
@@ -424,8 +437,8 @@ test("Button Text preview stays live and ends with its own scoped Apply All", ()
   assert.match(textSection[0], /onClick=\{onApplyAllButtonText\}[\s\S]{0,120}>\s*Apply All\s*</);
   assert.match(textSection[0], /disabled=\{busy \|\| stateTextBlocked\}/);
   assert.ok(
-    textSection[0].lastIndexOf("Apply All") > textSection[0].lastIndexOf("button-text-bench-preview"),
-    "Apply All must remain below the live Button Text preview"
+    textSection[0].lastIndexOf("Apply All") < textSection[0].lastIndexOf("button-text-bench-preview"),
+    "Apply All remains under the header, ahead of the live preview"
   );
   assert.doesNotMatch(textSection[0], /onApplyButtonStateSetup/);
 });

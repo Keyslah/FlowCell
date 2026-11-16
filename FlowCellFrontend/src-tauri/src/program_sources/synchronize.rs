@@ -113,6 +113,82 @@ struct BundledSourcePlan {
     source: BundledSourceManifest,
     source_path: PathBuf,
     action: PlannedAction,
+    adopt_input_setup: bool,
+}
+
+fn existing_source_update_request(
+    program_name: &str,
+    source_path: &Path,
+    source: &BundledSourceManifest,
+    record: &ActiveSourceRecord,
+    adopt_input_setup: bool,
+) -> InstallButtonSourceRequest {
+    InstallButtonSourceRequest {
+        owner_button_id: record.owner_button_id.clone(),
+        program_name: program_name.into(),
+        panel_name: if adopt_input_setup { record.panel_name.clone() } else { source.panel_name.clone() },
+        source_path: source_path.to_string_lossy().into_owned(),
+        import_kind: source.import_kind.clone(),
+        bundled_source_id: (!adopt_input_setup).then(|| source.id.clone()),
+        bundled_source_version: (!adopt_input_setup).then(|| source.version.clone()),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct InputSetupPackageIdentity {
+    manifest_file: &'static str,
+    id: String,
+    source: String,
+}
+
+fn input_setup_package_identity(
+    source_path: &Path,
+    import_kind: &str,
+) -> Result<Option<InputSetupPackageIdentity>, String> {
+    let manifest_file = match import_kind {
+        "script" => "flowcell.script.json",
+        "tool-set" => "flowcell.toolset.json",
+        _ => return Ok(None),
+    };
+    let root = if source_path.is_dir() { source_path } else {
+        source_path.parent().ok_or("Input setup package has no parent directory.")?
+    };
+    let path = root.join(manifest_file);
+    if !path.is_file() { return Ok(None); }
+    super::installed_page::reject_selected_source_reparse_point(&path)?;
+    let document: serde_json::Value = serde_json::from_slice(&fs::read(&path)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?)
+        .map_err(|error| format!("Invalid package manifest {}: {error}", path.display()))?;
+    let Some(setup) = document.get("inputSetup").filter(|value| !value.is_null()) else { return Ok(None); };
+    super::install::validate_input_setup(root, setup)?;
+    let id = document.get("id").and_then(serde_json::Value::as_str).unwrap_or("").trim();
+    let source = document.get("source").and_then(serde_json::Value::as_str).unwrap_or("").trim();
+    if id.is_empty() || source.is_empty() { return Ok(None); }
+    Ok(Some(InputSetupPackageIdentity { manifest_file, id:id.into(), source:source.into() }))
+}
+
+fn copied_package_matches_input_setup(
+    catalog: &InputSetupPackageIdentity,
+    copied_manifest: &serde_json::Value,
+) -> bool {
+    copied_manifest.get("id").and_then(serde_json::Value::as_str)
+        .is_some_and(|id| id == catalog.id)
+        && copied_manifest.get("source").and_then(serde_json::Value::as_str)
+            .is_some_and(|source| source == catalog.source)
+}
+
+fn legacy_input_setup_match(
+    source: &BundledSourceManifest,
+    catalog: &InputSetupPackageIdentity,
+    record: &RecordMatchView,
+    owned_source: &Path,
+) -> bool {
+    record.owner_button_id.starts_with("button-migrated-")
+        && record.panel_name.eq_ignore_ascii_case(&source.panel_name)
+        && source.legacy_match_label.as_deref().is_some_and(|label| record.label.eq_ignore_ascii_case(label))
+        && record.kind.eq_ignore_ascii_case(source.legacy_match_kind.as_deref().unwrap_or(&source.import_kind))
+        && record.source_display_leaf.eq_ignore_ascii_case(&path_leaf(&catalog.source))
+        && path_leaf(&owned_source.to_string_lossy()).eq_ignore_ascii_case(&path_leaf(&catalog.source))
 }
 
 #[derive(Clone, Debug)]
@@ -569,7 +645,45 @@ fn plan_registered_program_sources(
                 source,
                 source_path,
                 action,
+                adopt_input_setup: false,
             });
+        }
+        // Old Add Script/migrated copies remain independently owned. Adopt only
+        // the missing saved-input hook, without turning them into singleton
+        // managed catalog contributions or changing their actual panel.
+        for source in &manifest.bundled_sources {
+            let Ok(source_path) = resolve_bundled_source_path(&program_root, source) else { continue; };
+            let Ok(Some(identity)) = input_setup_package_identity(&source_path, &source.import_kind) else { continue; };
+            for entry in &records {
+                let record = &entry.record;
+                if record.bundled_source_id.is_some() || record.input_setup.is_some()
+                    || claimed_owners.contains_key(&record.owner_button_id.to_ascii_lowercase()) {
+                    continue;
+                }
+                let kind = if record.children.is_empty() { "script" } else { "tool-set" };
+                if kind != source.import_kind { continue; }
+                let Ok(paths) = super::execute::resolve_owned_source_paths(&manifest, record) else { continue; };
+                let owned_root = paths.package_path.join("source");
+                let owned_manifest = owned_root.join(identity.manifest_file);
+                let matches = if owned_manifest.is_file() {
+                    if super::installed_page::reject_selected_source_reparse_point(&owned_manifest).is_err() { continue; }
+                    let Ok(bytes) = fs::read(&owned_manifest) else { continue; };
+                    let Ok(copied) = serde_json::from_slice::<serde_json::Value>(&bytes) else { continue; };
+                    copied_package_matches_input_setup(&identity, &copied)
+                        && owned_root.join(&identity.source).canonicalize().ok().as_ref() == Some(&paths.source_path)
+                } else {
+                    legacy_input_setup_match(source, &identity, &RecordMatchView::from(entry), &paths.source_path)
+                };
+                if !matches { continue; }
+                let mut owned_source = source.clone();
+                owned_source.panel_name = record.panel_name.clone();
+                claimed_owners.insert(record.owner_button_id.to_ascii_lowercase(), format!("inputs:{}", source.id));
+                plans.push(BundledSourcePlan {
+                    program_name: program_name.clone(), manifest: manifest.clone(), source: owned_source,
+                    source_path: source_path.clone(), action: PlannedAction::Update(entry.clone()),
+                    adopt_input_setup: true,
+                });
+            }
         }
     }
     Ok(plans)
@@ -613,15 +727,8 @@ fn synchronize_registered_program_sources(
             PlannedAction::Update(entry) => {
                 let owner = entry.record.owner_button_id.clone();
                 install_from_path(
-                    InstallButtonSourceRequest {
-                        owner_button_id: owner.clone(),
-                        program_name: plan.program_name.clone(),
-                        panel_name: plan.source.panel_name.clone(),
-                        source_path: plan.source_path.to_string_lossy().to_string(),
-                        import_kind: plan.source.import_kind.clone(),
-                        bundled_source_id: Some(plan.source.id.clone()),
-                        bundled_source_version: Some(plan.source.version.clone()),
-                    },
+                    existing_source_update_request(&plan.program_name, &plan.source_path,
+                        &plan.source, &entry.record, plan.adopt_input_setup),
                     true,
                 ).map(|descriptor| (
                     "update",
@@ -681,7 +788,7 @@ fn synchronize_registered_program_sources(
                 None,
             ),
         };
-        if !plan.source.display_label.is_empty() {
+        if !plan.adopt_input_setup && !plan.source.display_label.is_empty() {
             if let Some(descriptor) = descriptor.as_mut() {
                 let previous_label = match &plan.action {
                     PlannedAction::Current(entry) | PlannedAction::Update(entry) => {
@@ -702,7 +809,9 @@ fn synchronize_registered_program_sources(
             bundled_source_version: plan.source.version,
             panel_name: plan.source.panel_name,
             import_kind: plan.source.import_kind,
-            install_policy: if plan.source.install_if_missing {
+            install_policy: if plan.adopt_input_setup {
+                "manual"
+            } else if plan.source.install_if_missing {
                 "required"
             } else if plan.source.install_on_add {
                 "starter"
@@ -796,6 +905,65 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir().join(format!("flowcell-{name}-{}-{token}", std::process::id()))
+    }
+
+    #[test]
+    fn input_setup_adoption_requires_the_copied_package_id_and_entry_source() {
+        let identity = super::InputSetupPackageIdentity {
+            manifest_file:"flowcell.script.json", id:"windows.temp-shots".into(), source:"Temp_Shots.vbs".into(),
+        };
+        assert!(super::copied_package_matches_input_setup(&identity, &serde_json::json!({
+            "id":"windows.temp-shots","source":"Temp_Shots.vbs","label":"Custom label"
+        })));
+        assert!(!super::copied_package_matches_input_setup(&identity, &serde_json::json!({
+            "id":"unrelated","source":"Temp_Shots.vbs"
+        })));
+        assert!(!super::copied_package_matches_input_setup(&identity, &serde_json::json!({
+            "id":"windows.temp-shots","source":"other.vbs"
+        })));
+    }
+
+    #[test]
+    fn input_setup_adoption_preserves_multiple_owners_actual_panels_and_unmanaged_identity() {
+        let source = bundled_source();
+        for (owner,panel,label) in [("custom-one","Tools","Dummy"),("custom-two","Custom","Odyssey")] {
+            let record: ActiveSourceRecord = serde_json::from_value(serde_json::json!({
+                "schemaVersion":1,"ownerButtonId":owner,"installId":owner,"programId":"example",
+                "programName":"Example","panelName":panel,"label":label,"kind":"script",
+                "localPackagePath":"owned","sourcePath":"owned/source/entry.ps1","runner":"windows-script"
+            })).unwrap();
+            let request = super::existing_source_update_request("Example",std::path::Path::new("catalog"),&source,&record,true);
+            assert_eq!(request.owner_button_id,owner);
+            assert_eq!(request.panel_name,panel);
+            assert_eq!(request.bundled_source_id,None);
+            assert_eq!(request.bundled_source_version,None);
+            assert_eq!(record.label,label);
+            let managed = super::existing_source_update_request("Example",std::path::Path::new("catalog"),&source,&record,false);
+            assert_eq!(managed.bundled_source_id.as_deref(),Some(source.id.as_str()));
+            assert_eq!(managed.bundled_source_version.as_deref(),Some(source.version.as_str()));
+        }
+    }
+
+    #[test]
+    fn raw_input_setup_adoption_requires_explicit_legacy_identity_and_actual_source() {
+        let source = bundled_source();
+        let identity = super::InputSetupPackageIdentity {
+            manifest_file:"flowcell.script.json", id:"example.page".into(), source:"entry.ps1".into(),
+        };
+        let mut candidate = record("button-migrated-example",None);
+        candidate.source_display_leaf = "entry.ps1".into();
+        let actual = std::path::Path::new("owned/source/entry.ps1");
+        assert!(super::legacy_input_setup_match(&source,&identity,&candidate,actual));
+        assert!(!super::legacy_input_setup_match(&source,&identity,&candidate,std::path::Path::new("owned/source/other.ps1")));
+        candidate.panel_name = "Custom".into();
+        assert!(!super::legacy_input_setup_match(&source,&identity,&candidate,actual));
+        candidate.panel_name = source.panel_name.clone();
+        candidate.owner_button_id = "manual-example".into();
+        assert!(!super::legacy_input_setup_match(&source,&identity,&candidate,actual));
+        candidate.owner_button_id = "button-migrated-example".into();
+        let mut no_legacy_label = source.clone();
+        no_legacy_label.legacy_match_label = None;
+        assert!(!super::legacy_input_setup_match(&no_legacy_label,&identity,&candidate,actual));
     }
 
     #[test]
@@ -953,6 +1121,7 @@ mod tests {
                 bridge_data: None,
                 state_query: None,
                 events: None,
+                input_setup: None,
                 children: Vec::new(),
                 layout: None,
                 page: None,

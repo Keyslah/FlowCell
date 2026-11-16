@@ -4,5 +4,6 @@
   "label": "Snapshots",
   "tooltip": "Select a box once; Space saves each snapshot to the sibling snapshots folder, Escape finishes.",
   "program": "Windows",
-  "source": "Snapshots.vbs"
+  "source": "Snapshots.vbs",
+  "inputSetup": { "source": "Snapshots.ps1", "arguments": ["-ConfigureOnly"], "firstRun": false }
 }

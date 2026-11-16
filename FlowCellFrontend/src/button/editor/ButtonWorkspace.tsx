@@ -934,7 +934,10 @@ export function ButtonWorkspace({
     windowFitPreviewMode
   ]);
 
-  if (!surface) return <div className="button-editor-empty">Select a Button surface.</div>;
+  if (!surface) return <div className="button-editor-empty">
+    {mode === "edit" ? <div className="button-workspace-empty-controls">{reorderControl}</div> : null}
+    Select a panel or add its first Button.
+  </div>;
   const overlayPlacement = selectedPlacement && renderedDocument.placements[selectedPlacement.id];
   const overlayNaturalMeasurement = overlayPlacement
     ? naturalMeasurements[overlayPlacement.id]

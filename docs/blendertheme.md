@@ -31,10 +31,9 @@ fans. Common Button scope supports all panels and pop-outs, pop-outs only, or a
 selected panel; Blender interface, picture and environment features remain
 program-wide. Desktop window positions and layouts stay in the Layout system.
 
-The compact default page starts directly at `Theme Palette`: four slightly
-taller bucket cards fit per row, each bucket's swatch, hex value, and `Apply`
-share one control line, and the darkness profile controls sit directly after
-`Load Buckets`. `Gradient 2` has one unlabeled checkbox directly beside its
+The default page starts directly at `Theme Palette`: bucket cards wrap to the
+available width, with the label and `Apply` above a full-width clickable color
+box. The darkness profile controls sit directly after `Load Buckets`. `Gradient 2` has one unlabeled checkbox directly beside its
 name instead of a separate gradient row. A separate `Popped Button Colors`
 section follows Theme Palette; Place Picture controls remain in the palette,
 with HDRI controls below the Button colors. Every action Button exposes its original

@@ -283,7 +283,17 @@ pub(crate) fn spawn_powershell_output_bounded(
     maximum_stdout_bytes: usize,
     maximum_stderr_bytes: usize,
 ) -> Result<std::process::Output, String> {
+    spawn_powershell_output_bounded_with_env(arguments, maximum_stdout_bytes, maximum_stderr_bytes, &[])
+}
+
+pub(crate) fn spawn_powershell_output_bounded_with_env(
+    arguments: &[String],
+    maximum_stdout_bytes: usize,
+    maximum_stderr_bytes: usize,
+    environment: &[(&str, String)],
+) -> Result<std::process::Output, String> {
     let mut command = build_powershell_output_command(arguments);
+    for (name, value) in environment { command.env(name, value); }
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command
         .spawn()

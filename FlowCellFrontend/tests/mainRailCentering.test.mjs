@@ -38,6 +38,81 @@ function hostHarness(exportName) {
   return props => { cursor = 0; return exports[exportName](props); };
 }
 
+function resolveMainPanelScripts(presentation, sourceRecord) {
+  const source = readFileSync(new URL("../src/pages/main/MainPage.tsx", import.meta.url), "utf8");
+  const parsed = ts.createSourceFile("MainPage.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let initializer;
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(parsed) === "resolvedPanelScripts") {
+      initializer = node.initializer.getText(parsed);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  assert.ok(initializer, "Main's source-to-presentation resolution must be available");
+  const compiled = ts.transpileModule(initializer, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText;
+  return vm.runInNewContext(compiled, {
+    useMemo: callback => callback(),
+    canonicalPresentationsBySource: new Map([["Windows/Files/backup.flowcell-source.json", presentation]]),
+    orderedPanelScripts: [sourceRecord],
+    selectedProgramName: "Windows", selectedPanelName: "Files",
+    canonicalButtonSourceKey: (...parts) => parts.join("/")
+  });
+}
+
+test("Main restores a missing saved tooltip from the FlowCell Backup source description", () => {
+  const manifest = JSON.parse(readFileSync(new URL(
+    "../../Programs/Windows/Windows Git Scripts/Files/FlowCell Backup/flowcell.script.json", import.meta.url
+  ), "utf8"));
+  const presentation = {
+    button: { id: "backup", label: "FlowCell Back Up", tooltip: "", metadata: {} },
+    placement: { x: 0, y: 0, width: 100, height: 40 }, skin: {}
+  };
+  const sourceRecord = { fileName: "backup.flowcell-source.json", tooltip: manifest.tooltip };
+  const [resolved] = resolveMainPanelScripts(presentation, sourceRecord);
+  const rendered = hostHarness("MainButtonHost")({
+    button: { ...resolved, scriptFileName: sourceRecord.fileName, railId: "buttons-rail" },
+    canonicalPresentation: presentation
+  });
+  assert.equal(rendered.props.children.props.button.tooltip, manifest.tooltip);
+  assert.equal(presentation.button.tooltip, "", "rendering does not rewrite saved state");
+});
+
+for (const savedTooltip of ["", "   ", "Custom backup instructions"]) {
+  test(`Main uses source descriptions for blank tooltips and preserves ${JSON.stringify(savedTooltip)}`, () => {
+    const presentation = {
+      button: { id: "backup", label: "Backup", tooltip: savedTooltip, metadata: {} },
+      placement: { x: 0, y: 0, width: 100, height: 40,
+        presentationOverride: { label: "My backup", tooltip: "" } }, skin: {}
+    };
+    const sourceRecord = { fileName: "backup.flowcell-source.json", tooltip: "Create a backup." };
+    const before = structuredClone(presentation);
+    const [resolved] = resolveMainPanelScripts(presentation, sourceRecord);
+    const rendered = hostHarness("MainButtonHost")({
+      button: { ...resolved, scriptFileName: sourceRecord.fileName }, canonicalPresentation: presentation
+    });
+    const expected = savedTooltip.trim() || sourceRecord.tooltip;
+    assert.equal(rendered.props.children.props.button.tooltip, expected);
+    assert.equal(rendered.props.children.props.placement.presentationOverride.tooltip, expected);
+    assert.deepEqual(presentation, before);
+  });
+}
+
+test("Main provides an action hint when no source description exists and keeps authored occurrence tooltips", () => {
+  const presentation = {
+    button: { id: "screenshot", label: "Screenshot", tooltip: "", metadata: {} },
+    placement: { x: 0, y: 0, width: 100, height: 40 }, skin: {}
+  };
+  const props = { button: { label: "Screenshot", scriptFileName: "shot.ps1" }, canonicalPresentation: presentation };
+  const render = hostHarness("MainButtonHost");
+  assert.equal(render(props).props.children.props.button.tooltip, "Run Screenshot.");
+  presentation.placement.presentationOverride = { tooltip: "Save this screenshot to my project." };
+  assert.equal(render(props).props.children.props.placement.presentationOverride.tooltip,
+    "Save this screenshot to my project.");
+});
+
 for (const hostName of ["MainButtonHost", "MainControlHost"]) {
   for (const [railId, actionId] of [
     ["program-rail", "select-program-folder"], ["program-rail", "add-program-folder"],

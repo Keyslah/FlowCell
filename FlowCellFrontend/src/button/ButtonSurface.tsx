@@ -666,8 +666,8 @@ export function ButtonSurface({
             mode={mode}
             selected={selected}
             ownerPlacement={placementId === ownerPlacementId}
-            fields={fields}
-            fieldValues={values}
+            fields={surface.kind === "tool-set-popout" && button?.role !== "tool-set-child" ? [] : fields}
+            fieldValues={surface.kind === "tool-set-popout" && button?.role !== "tool-set-child" ? {} : values}
             onFieldActivate={activateField}
             onFieldPatch={applyFieldPatch}
             onRequestInlineEditorFocus={onRequestInlineEditorFocus}

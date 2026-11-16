@@ -1,4 +1,6 @@
 import { editButtonPlacementPresentation, resolveButtonPlacementPresentation } from "../state/buttonPresentation.js";
+import { addPopoutButtons, removePopoutButtons, forkToolsetPopout, hydrateEditorPopout, mergeAddedButtonRecords, popoutAddCandidates, topLeftButtonPlacement } from "./buttonEditorMembership";
+import { resolveButtonSkinSizingMode } from "../skins/buttonSkinSizing";
 import {
   useCallback,
   useEffect,
@@ -85,6 +87,7 @@ import { validateInstalledButtonLayout } from "../state/installedButtonLayoutVal
 import { resolveInstalledToolFields } from "../state/installedToolFields";
 import {
   ensureDefaultPanelPopout,
+  removeOwnedButtonGraph,
   resolveDiscardedStagedOwnerButtonIds
 } from "../state/buttonDocumentOperations";
 import { arrangeDefaultPanelButtons, defaultPanelButtonSize } from "../state/buttonPanelDefaults";
@@ -125,6 +128,8 @@ import {
   type NamedButtonRect
 } from "../geometry/buttonGeometry";
 import { buttonSkinFamilyFromPath, withButtonSkinFamily } from "../skins/buttonSkinFamily";
+import { resolveButtonSkinFamilyForTextSize } from "../skins/useButtonSkinFamily";
+import { measureButtonTextSize } from "../skins/ButtonSkinRenderer";
 import {
   BUTTON_SKIN_FILE_EXTENSION,
   buttonSkinNameFromPath,
@@ -380,8 +385,10 @@ function addPlacement(
 ): ButtonPlacement {
   const surface = document.surfaces[surfaceId];
   if (!surface) throw new Error("The selected Button surface no longer exists.");
+  const topLeft = surface.placementIds.map((id) => document.placements[id]).filter(Boolean)
+    .sort((a, b) => a.y - b.y || a.x - b.x)[0];
   const defaultSize = surface.kind === "panel"
-    ? defaultPanelButtonSize(document, document.buttons[buttonId])
+    ? defaultPanelButtonSize(document, document.buttons[buttonId], undefined, desired?.height ?? topLeft?.height)
     : { width: 160, height: 44 };
   const width = surface.uniformButtonSize?.width ?? desired?.width ?? defaultSize.width;
   const height = surface.uniformButtonSize?.height ?? desired?.height ?? defaultSize.height;
@@ -398,7 +405,8 @@ function addPlacement(
         otherRects,
         padding: surface.uniformButtonSize ? 0 : document.settings.defaultSurfacePadding,
         gap: buttonSpacing,
-        gridSize: document.settings.gridSize
+        // Main's skin has already supplied the exact row-sized rectangle.
+        gridSize: surface.kind === "panel" ? 0 : document.settings.gridSize
       });
   if (!available) throw new Error("The selected surface has no non-overlapping space for another Button.");
   const id = createStableButtonId("placement");
@@ -654,6 +662,8 @@ function ButtonEditorContent({
   const handledAutoImportRequestRef = useRef(0);
   const [activePage, setActivePage] = useState<"placement" | "animation">("placement");
   const [reorderMode, setReorderMode] = useState(false);
+  const [addSurfaceId, setAddSurfaceId] = useState<string | null>(null);
+  const [addButtonIds, setAddButtonIds] = useState<Set<string>>(new Set());
   const [selectedSurfaceId, setSelectedSurfaceId] = useState(initialSelection.surfaceId);
   const [focusedPlacementId, setFocusedPlacementId] = useState<string | null>(initialSelection.placementId);
   const [selectedPlacementIds, setSelectedPlacementIds] = useState<Set<string>>(
@@ -708,15 +718,14 @@ function ButtonEditorContent({
   useEffect(() => {
     setWorkingSizingModeOverride(null);
   }, [selectedPlacement?.id]);
-  const selectedWorkingSizingMode = allSurfaceButtonsSameSize
-    ? "responsive"
-    : (
-        workingSizingModeOverride?.placementId === selectedPlacement?.id
-          ? workingSizingModeOverride?.sizingMode
-          : "responsive"
-      );
   const selectedCanonicalButton = selectedPlacement ? store.draft.buttons[selectedPlacement.buttonId] ?? null : null;
   const selectedButton = selectedCanonicalButton ? resolveButtonPlacementPresentation(selectedCanonicalButton, selectedPlacement) : null;
+  const selectedSkin = selectedButton && selectedPlacement
+    ? store.draft.skins[selectedPlacement.skinOverrideId ?? selectedButton.defaultSkinId] ?? null
+    : null;
+  const selectedWorkingSizingMode = resolveButtonSkinSizingMode(selectedSkin,
+    workingSizingModeOverride?.placementId === selectedPlacement?.id
+      ? workingSizingModeOverride?.sizingMode : undefined);
   const editorButtonPresentation = (document: ButtonStateDocument, buttonId: string) => {
     const button = document.buttons[buttonId];
     return button && resolveButtonPlacementPresentation(button,
@@ -812,11 +821,8 @@ function ButtonEditorContent({
   useEffect(() => {
     if (mainPageControlScope && reorderMode) setReorderMode(false);
   }, [mainPageControlScope, reorderMode]);
-  const selectedSkin = selectedButton && selectedPlacement
-    ? store.draft.skins[selectedPlacement.skinOverrideId ?? selectedButton.defaultSkinId] ?? null
-    : null;
   const exportableToolSet = selectedSurfaceUnit?.kind === "tool-set" ? selectedSurfaceUnit
-    : Object.values(store.draft.popoutUnits).find((unit) => unit.kind === "tool-set" && unit.ownerButtonId === selectedButton?.id);
+    : Object.values(store.draft.popoutUnits).find((unit) => unit.kind === "tool-set" && unit.ownerButtonId === selectedButton?.id && !unit.templateUnitId);
   const programOptions = useMemo(
     () => buildButtonEditorProgramOptions(store.draft, programs),
     [store.draft, programs]
@@ -1182,7 +1188,153 @@ function ButtonEditorContent({
     }
   };
 
-  const importSource = useCallback(async () => {
+  // Commit additions without saving unrelated editor drafts; rebase Undo as well.
+  const commitMembership = async (
+    before: ButtonStateDocument, after: ButtonStateDocument, surfaceId: string | null,
+    onCommitted?: () => void
+  ): Promise<ButtonStateDocument> => {
+    let committed = await loadButtonStateDocument();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let next = cloneButtonDocument(committed);
+      mergeAddedButtonRecords(next, before, after);
+      if (surfaceId) hydrateEditorPopout(next, after, surfaceId);
+      if (surfaceId) next = buildButtonSettingsScopedDocument(next, after, surfaceId, { programName, panelName }, before);
+      let saved: ButtonStateDocument;
+      try { saved = await saveButtonStateDocument(next, committed.revision); }
+      catch (error) {
+        if (attempt === 2 || !String(error).includes("Button state changed before Save.")) throw error;
+        committed = await loadButtonStateDocument();
+        continue;
+      }
+      onCommitted?.();
+      store.acceptScopedSaved(saved, (draft, canonical) => {
+        mergeAddedButtonRecords(draft, before, canonical);
+        if (surfaceId) applyButtonSettingsSavedScope(draft, canonical, surfaceId, { programName, panelName });
+      });
+      try { await publishButtonCommit(saved); }
+      catch (error) { setMessage(`Buttons were saved, but another window could not refresh: ${String(error)}`); }
+      return saved;
+    }
+    throw new Error("The Button change could not be saved.");
+  };
+
+  const prepareMembershipSurface = async (): Promise<string | null> => {
+    const before = cloneButtonDocument(store.current());
+    const unit = Object.values(before.popoutUnits).find(unit => unit.surfaceId === selectedSurfaceId);
+    if (!unit || unit.kind !== "tool-set" || unit.templateUnitId) return selectedSurfaceId;
+    const path = await showSaveFileDialog({
+      title: "Save a new Pop-out Settings file before editing this Tool Set",
+      filter: "JSON Files (*.json)|*.json", defaultFileName: "Custom Pop-out.json",
+      initialDirectory: await getButtonSettingsDirectory("pop-out", programName, panelName)
+    });
+    if (!path) return null;
+    const after = cloneButtonDocument(before);
+    const fork = forkToolsetPopout(after, selectedSurfaceId);
+    after.surfaces[fork.surfaceId].name = path.split(/[\\/]/).at(-1)?.replace(/\.json$/i, "") || "Custom Pop-out";
+    const written = await saveButtonSettingsFile(path, buildButtonSettingsFile(after, fork.surfaceId, { programName, panelName }), true);
+    await commitMembership(before, after, fork.surfaceId);
+    const choice = createButtonDefaultPopoutChoice(unit.ownerButtonId, fork.surfaceId, written);
+    const associated = await commitScopedDocument(committed => {
+      const next = cloneButtonDocument(committed);
+      setButtonSavedPopoutChoice(next, unit.ownerButtonId, choice);
+      return next;
+    }, draft => { setButtonSavedPopoutChoice(draft, unit.ownerButtonId, choice); }, "New Pop-out Settings saved. The original Tool Set is unchanged.");
+    setBusy(true);
+    if (!associated) throw new Error("The new file was created, but its Pop-out association could not be saved. The original Tool Set is unchanged.");
+    setSettingsFilePaths(current => ({ ...current, [fork.surfaceId]: written }));
+    setSelectedSurfaceId(fork.surfaceId);
+    const focused = focusedPlacementId ? fork.placementIds.get(focusedPlacementId) ?? null : null;
+    setFocusedPlacementId(focused);
+    setSelectedPlacementIds(new Set([...selectedSetForSurface].flatMap(id => fork.placementIds.get(id) ?? [])));
+    return fork.surfaceId;
+  };
+
+  const openAddButtons = async () => {
+    if (busyRef.current || mainPageControlScope) return;
+    setBusy(true);
+    try {
+      const surfaceId = settingsPlacementKind === "pop-out" ? await prepareMembershipSurface() : "";
+      if (surfaceId === null) return;
+      setAddButtonIds(new Set());
+      setAddSurfaceId(surfaceId);
+    } catch (error) { setMessage(String(error)); }
+    finally { setBusy(false); }
+  };
+
+  const saveCustomMembershipFile = async (saved: ButtonStateDocument, surfaceId: string) => {
+    const unit = Object.values(saved.popoutUnits).find(unit => unit.surfaceId === surfaceId);
+    if (!unit) return;
+    const ownerId = resolveButtonDefaultPopoutOwnerId(saved, surfaceId, { programName, panelName });
+    const path = settingsFilePaths[surfaceId] ?? (ownerId ? getButtonSavedPopoutChoice(saved, ownerId, surfaceId)?.path : null);
+    if (path) await saveButtonSettingsFile(path, buildButtonSettingsFile(saved, surfaceId, { programName, panelName }));
+  };
+
+  const addExistingButtons = async () => {
+    if (!addSurfaceId || busyRef.current || !addButtonIds.size) return;
+    setBusy(true);
+    let committed = false;
+    try {
+      const before = cloneButtonDocument(store.current());
+      const after = cloneButtonDocument(before);
+      const ids = addPopoutButtons(after, addSurfaceId, [...addButtonIds]);
+      const saved = await commitMembership(before, after, addSurfaceId, () => { committed = true; });
+      await saveCustomMembershipFile(saved, addSurfaceId);
+      setFocusedPlacementId(ids[0] ?? null);
+      setSelectedPlacementIds(new Set(ids));
+      setAddSurfaceId(null);
+      setMessage(`${ids.length} Buttons added to the Pop-out.`);
+    } catch (error) { setMessage(`${committed ? "Buttons were added, but the settings file could not be updated. Save Pop-out Settings to retry. " : ""}${String(error)}`); }
+    finally { setBusy(false); }
+  };
+
+  const removeSelectedButtons = async () => {
+    if (busyRef.current || mainPageControlScope || !selectedSetForSurface.size) return;
+    const buttonIds = [...new Set([...selectedSetForSurface].map(id => store.current().placements[id]?.buttonId).filter(Boolean))];
+    if (settingsPlacementKind === "main-page" && !window.confirm(buttonIds.length === 1
+      ? "Delete the selected Button and its owned Local Scripts package?"
+      : `Delete ${buttonIds.length} selected Buttons and their owned Local Scripts packages?`)) return;
+    setBusy(true);
+    let canonicalSaved = false;
+    try {
+      if (settingsPlacementKind === "pop-out") {
+        const surfaceId = await prepareMembershipSurface();
+        if (!surfaceId) return;
+        const latest = await loadButtonStateDocument();
+        const before = cloneButtonDocument(store.current());
+        mergeAddedButtonRecords(before, store.committed, latest);
+        const after = cloneButtonDocument(before);
+        const ids = after.surfaces[surfaceId].placementIds.filter(id => buttonIds.includes(after.placements[id].buttonId));
+        removePopoutButtons(after, surfaceId, ids);
+        const saved = await commitMembership(before, after, surfaceId, () => { canonicalSaved = true; });
+        await saveCustomMembershipFile(saved, surfaceId);
+        setSelectedSurfaceId(surfaceId);
+      } else {
+        let current = await loadButtonStateDocument();
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const next = cloneButtonDocument(current);
+          const uninstall = new Set<string>();
+          for (const id of buttonIds) removeOwnedButtonGraph(next, id).uninstallOwnerButtonIds.forEach(id => uninstall.add(id));
+          let saved: ButtonStateDocument;
+          try { saved = await saveButtonStateDocument(next, current.revision, [...uninstall]); }
+          catch (error) {
+            if (attempt === 2 || !String(error).includes("Button state changed before Save.")) throw error;
+            current = await loadButtonStateDocument();
+            continue;
+          }
+          canonicalSaved = true;
+          store.acceptScopedSaved(saved, draft => { for (const id of buttonIds) removeOwnedButtonGraph(draft, id); });
+          await publishButtonCommit(saved);
+          break;
+        }
+      }
+      setFocusedPlacementId(null);
+      setSelectedPlacementIds(new Set());
+      setMessage(`${buttonIds.length} selected Buttons removed${settingsPlacementKind === "pop-out" ? " from this Pop-out only" : ""}.`);
+    } catch (error) { setMessage(`${canonicalSaved ? "Removal was saved, but a file or another window could not update: " : ""}${String(error)}`); }
+    finally { setBusy(false); }
+  };
+
+  const importSource = useCallback(async (popoutSurfaceId?: string) => {
     const importProgramName = lockedImportDestination?.programName ?? programName;
     const importPanelName = lockedImportDestination?.panelName ?? panelName;
     if (!importProgramName || !importPanelName || busyRef.current) return;
@@ -1193,10 +1345,11 @@ function ButtonEditorContent({
     setBusy(true);
     setMessage(null);
     let installed: InstallButtonSourceResult | null = null;
+    let canonicalSaved = false;
     try {
       const paths = await showOpenFileDialog({
-        title: "Choose FlowCell Button Content",
-        filter: "FlowCell Buttons (*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json)|*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json|All Files (*.*)|*.*",
+        title: "Pick any script or file within a package to add the button.",
+        filter: "All files (*.*)|*.*",
         multiselect: false
       });
       const sourcePath = paths[0];
@@ -1212,7 +1365,9 @@ function ButtonEditorContent({
       stagedInstallsRef.current.set(ownerButtonId, installed);
       let nextSurface = "";
       let selectedPlacement = "";
-      store.transact((draft) => {
+      const before = cloneButtonDocument(store.current());
+      const draft = cloneButtonDocument(before);
+      {
         const panelSurface = ensureProgramPanelSurface(draft, importProgramName, importPanelName);
         nextSurface = panelSurface.id;
         if (installed!.children.length === 0) {
@@ -1226,13 +1381,23 @@ function ButtonEditorContent({
           selectedPlacement = created.ownerPlacement.id;
           freshPlacementsRef.current.add(created.ownerPlacement.id);
         }
-      }, { label: "Add Button content" });
+      }
+      if (popoutSurfaceId && !installed.themeContributionOnly) {
+        selectedPlacement = addPopoutButtons(draft, popoutSurfaceId, [installed.ownerButtonId])[0];
+        nextSurface = popoutSurfaceId;
+      }
+      const saved = await commitMembership(before, draft, popoutSurfaceId ?? null, () => {
+        canonicalSaved = true;
+        stagedInstallsRef.current.delete(installed!.ownerButtonId);
+      });
+      if (popoutSurfaceId) await saveCustomMembershipFile(saved, popoutSurfaceId);
+      setMessage("Button added and saved to Main Page" + (popoutSurfaceId ? " and this Pop-out." : "."));
       setSelectedSurfaceId(nextSurface);
       setFocusedPlacementId(selectedPlacement);
       setSelectedPlacementIds(new Set(selectedPlacement ? [selectedPlacement] : []));
     } catch (error) {
       let cleanupError: unknown = null;
-      if (installed) {
+      if (installed && !canonicalSaved) {
         try {
           await uninstallButtonSource({
             ownerButtonId: installed.ownerButtonId,
@@ -1246,11 +1411,11 @@ function ButtonEditorContent({
       const message = error instanceof Error ? error.message : String(error);
       setMessage(cleanupError
         ? `${message}\n\nThe staged local source package could not be discarded. It remains tracked in this Editor so Cancel or window close can retry cleanup.`
-        : message);
+        : canonicalSaved ? `Button was saved, but its Pop-out file could not update: ${message}` : message);
     } finally {
       setBusy(false);
     }
-  }, [lockedImportDestination, panelName, programName, setBusy, store]);
+  }, [lockedImportDestination, panelName, programName, setBusy, store, settingsFilePaths]);
 
   useEffect(() => {
     if (autoImportRequest <= handledAutoImportRequestRef.current || busy) return;
@@ -1501,16 +1666,15 @@ function ButtonEditorContent({
     sourceLabel: string,
     sourcePath: string | null = null
   ) => {
-    const loadedDocument = applyButtonSettingsFile(
-      store.current(),
-      selectedSurfaceId,
-      settingsFile,
-      { programName, panelName }
-    );
+    const base = cloneButtonDocument(store.current());
+    const unit = Object.values(base.popoutUnits).find(unit => unit.surfaceId === selectedSurfaceId);
+    const targetSurfaceId = unit?.kind === "tool-set" && !unit.templateUnitId
+      ? forkToolsetPopout(base, selectedSurfaceId).surfaceId : selectedSurfaceId;
+    const loadedDocument = applyButtonSettingsFile(base, targetSurfaceId, settingsFile, { programName, panelName });
     store.transact(() => loadedDocument, { label: `Load ${settingsPlacementLabel} settings` });
-    setSettingsFilePaths((current) => ({ ...current, [selectedSurfaceId]: sourcePath }));
-    const firstPlacementId = loadedDocument.surfaces[selectedSurfaceId]?.placementIds[0] ?? null;
-    setSelectedSurfaceId(selectedSurfaceId);
+    setSettingsFilePaths((current) => ({ ...current, [targetSurfaceId]: sourcePath }));
+    const firstPlacementId = loadedDocument.surfaces[targetSurfaceId]?.placementIds[0] ?? null;
+    setSelectedSurfaceId(targetSurfaceId);
     setFocusedPlacementId(firstPlacementId);
     setSelectedPlacementIds(new Set(firstPlacementId ? [firstPlacementId] : []));
     setActivePage("placement");
@@ -2300,6 +2464,124 @@ function ButtonEditorContent({
     );
   }, [copiedButtonSizing, selectedPlacementIds, selectedSurfaceId, store]);
 
+  const snapSelectionToText = useCallback(async () => {
+    if (busyRef.current) return;
+    const document = store.current();
+    const surface = document.surfaces[selectedSurfaceId];
+    if (!surface) {
+      setMessage("The selected Button surface no longer exists.");
+      return;
+    }
+    const unit = Object.values(document.popoutUnits).find(
+      (candidate) => candidate.surfaceId === surface.id
+    );
+    const unitOwnerPlacementId = unit &&
+      "ownerPlacementId" in unit &&
+      typeof unit.ownerPlacementId === "string"
+        ? unit.ownerPlacementId
+        : null;
+    const legacyFanSetup = Object.values(document.fanSetups).find(
+      (candidate) => candidate.fanSurfaceId === surface.id
+    );
+    const legacyFanOwnerPlacementId = legacyFanSetup
+      ? surface.placementIds.find((placementId) =>
+          document.placements[placementId]?.buttonId === legacyFanSetup.panelOwnerButtonId
+        ) ?? null
+      : null;
+    const ownerPlacementId = unitOwnerPlacementId ?? legacyFanOwnerPlacementId;
+    const unitShowsOwner = Boolean(
+      unit && "interactionMode" in unit && unit.interactionMode === "fan"
+    );
+    const hiddenOwnerPlacementId = unitOwnerPlacementId && !unitShowsOwner
+        ? unitOwnerPlacementId
+        : null;
+    const visiblePlacementIds = surface.placementIds.filter(
+      (placementId) => placementId !== hiddenOwnerPlacementId
+    );
+    const targetPlacementIds = visiblePlacementIds.filter((placementId) =>
+      selectedPlacementIds.has(placementId)
+    );
+    if (targetPlacementIds.length === 0) {
+      setMessage("Select one or more Buttons before using Size snap.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const targetSizes = new Map<string, Pick<ButtonRect, "width" | "height">>();
+      let skipped = 0;
+      // Fonts and external family variants must settle before any size is committed.
+      await window.document.fonts.ready;
+      for (const placementId of targetPlacementIds) {
+        const placement = document.placements[placementId];
+        const canonicalButton = placement && document.buttons[placement.buttonId];
+        if (!placement || !canonicalButton) throw new Error("A selected Button no longer exists.");
+        const button = resolveButtonPlacementPresentation(canonicalButton, placement);
+        const assignedSkin = document.skins[placement.skinOverrideId ?? button.defaultSkinId];
+        if (!assignedSkin) throw new Error(`The skin for '${button.label}' no longer exists.`);
+        const skin = await resolveButtonSkinFamilyForTextSize(
+          assignedSkin, placement.id, button.label, placement.textSizeOverride ?? undefined
+        );
+        const measured = measureButtonTextSize(
+          skin, button.label, placement.textSizeOverride ?? undefined
+        );
+        if (measured.status === "skipped") {
+          skipped += 1;
+          continue;
+        }
+        if (measured.status === "failed") throw new Error(`${button.label}: ${measured.reason}`);
+        targetSizes.set(placementId, {
+          // Family variants use the same natural-core scaling as ButtonHost.
+          width: placement.matchHitboxToSkin || skin !== assignedSkin
+            ? measured.width * placement.height / measured.height
+            : measured.width,
+          height: placement.height
+        });
+      }
+      if (store.current() !== document) {
+        setMessage("The Buttons changed while measuring. Use Size snap again.");
+        return;
+      }
+      if (targetSizes.size === 0) {
+        setMessage("The selection has no eligible text-responsive skins. Fixed-width, constrained and textless Buttons were skipped.");
+        return;
+      }
+      const currentLayout = visiblePlacementIds.flatMap((placementId) => {
+        const placement = document.placements[placementId];
+        return placement ? [{ id: placement.id, rect: placement }] : [];
+      });
+      if (currentLayout.length !== visiblePlacementIds.length) {
+        throw new Error("The selected surface contains a missing Button placement.");
+      }
+      const resolution = resizeButtonPlacementSelection({
+        placements: currentLayout,
+        selectedPlacementIds: [...targetSizes.keys()],
+        targetSizes,
+        reflow: false,
+        surface,
+        gap: buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm),
+        independentPlacementIds: ownerPlacementId && visiblePlacementIds.includes(ownerPlacementId)
+          ? [ownerPlacementId]
+          : []
+      });
+      if (!resolution.success) {
+        setMessage(resolution.reason ?? "The text sizes do not fit the selected surface.");
+        return;
+      }
+      store.transact((draft) => {
+        draft.surfaces[surface.id].uniformButtonSize = null;
+        for (const placement of resolution.placements) {
+          const target = draft.placements[placement.id];
+          if (target && targetSizes.has(placement.id)) target.width = placement.rect.width;
+        }
+      }, { label: "Size snap selected Buttons to text" });
+      setMessage(`Sized ${targetSizes.size} Button${targetSizes.size === 1 ? "" : "s"} to text.${skipped ? ` Skipped ${skipped} fixed-width, constrained or textless Button${skipped === 1 ? "" : "s"}.` : ""} Use Save Settings to commit it.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [selectedPlacementIds, selectedSurfaceId, setBusy, store]);
+
   const snapSelectedSurfaceToTopLeft = useCallback(() => {
     const document = store.current();
     const surface = document.surfaces[selectedSurfaceId];
@@ -2496,6 +2778,13 @@ function ButtonEditorContent({
       sourceLabel: button.label,
       sourceTextSizeOverride: placement.textSizeOverride
     });
+    // Main imports already measured their label and saved their final row-sized
+    // rectangle. A later native measurement must not replace that saved height
+    // with a grid-rounded height or leave a different, unsaved editor rectangle.
+    if (surface.kind === "panel" || surface.kind === "main") {
+      freshPlacementsRef.current.delete(placementId);
+      return;
+    }
     if (surface.uniformButtonSize) {
       return;
     }
@@ -3080,7 +3369,7 @@ function ButtonEditorContent({
       }
       if (button.role === "tool-set-owner") {
         const unit = Object.values(store.current().popoutUnits).find(
-          (candidate) => candidate.kind === "tool-set" && candidate.ownerButtonId === button.id
+          (candidate) => candidate.kind === "tool-set" && candidate.ownerButtonId === button.id && !candidate.templateUnitId
         );
         if (!unit) throw new Error(`Tool-set owner '${button.label}' has no canonical popout unit.`);
         const identity = button.sourceIdentity;
@@ -3178,11 +3467,11 @@ function ButtonEditorContent({
             }}
             onPanelChange={(value) => {
               setPanelName(value);
-              setSelectedSurfaceId(
-                resolveButtonEditorPanelSurfaceId(store.current(), programName, value) ?? ""
-              );
-              setFocusedPlacementId(null);
-              setSelectedPlacementIds(new Set());
+              const surfaceId = resolveButtonEditorPanelSurfaceId(store.current(), programName, value) ?? "";
+              const placementId = topLeftButtonPlacement(store.current(), surfaceId);
+              setSelectedSurfaceId(surfaceId);
+              setFocusedPlacementId(placementId);
+              setSelectedPlacementIds(new Set(placementId ? [placementId] : []));
             }}
             onButtonChange={selectButton}
             onPlacementChange={(optionId) => {
@@ -3340,67 +3629,6 @@ function ButtonEditorContent({
             >
               Animation
             </button>
-            <fieldset className="button-editor-sidebar__sizing">
-              <legend>Button Sizing</legend>
-              <div className="button-editor-sidebar__size-copy-actions">
-                <button
-                  type="button"
-                  title="Copy the focused Button's exact width, height, and sizing behavior."
-                  disabled={!selectedPlacement || busy}
-                  onClick={copyFocusedButtonDimensions}
-                >
-                  Copy dimensions
-                </button>
-                <button
-                  type="button"
-                  title={!copiedButtonSizing
-                    ? "Copy a Button's dimensions first."
-                    : "Apply the copied width, height, and sizing behavior to every selected Button without moving them."}
-                  disabled={
-                    !copiedButtonSizing ||
-                    selectedSetForSurface.size === 0 ||
-                    busy
-                  }
-                  onClick={addCopiedSizeToSelection}
-                >
-                  Add size to selection
-                </button>
-              </div>
-              <span className="button-editor-sidebar__copied-size">
-                {copiedButtonSizing
-                  ? `Copied: ${formatButtonSize(copiedButtonSizing.width, copiedButtonSizing.height)} from '${copiedButtonSizing.sourceButtonLabel}' (${copiedButtonSizing.sizingMode}).`
-                  : "No Button dimensions copied yet."}
-              </span>
-              <label htmlFor="button-spacing-mm">
-                <span>Button spacing (mm)</span>
-                <input
-                  id="button-spacing-mm"
-                  type="number"
-                  min="0"
-                  step="any"
-                  inputMode="decimal"
-                  value={buttonSpacingInput}
-                  disabled={busy}
-                  aria-describedby="button-spacing-mm-help"
-                  onChange={(event) => setButtonSpacingInput(event.currentTarget.value)}
-                  onBlur={commitButtonSpacing}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      commitButtonSpacing();
-                      event.currentTarget.blur();
-                    } else if (event.key === "Escape") {
-                      setButtonSpacingInput(String(store.current().settings.buttonSpacingMm));
-                      event.currentTarget.blur();
-                    }
-                  }}
-                />
-              </label>
-              <span id="button-spacing-mm-help">
-                Horizontal and vertical for layout actions and new Buttons. Zero
-                keeps Button edges flush.
-              </span>
-            </fieldset>
           </div>
           {message && <pre className="button-editor-message">{message}</pre>}
         </aside>
@@ -3444,18 +3672,75 @@ function ButtonEditorContent({
             selectedPlacementSizingMode={selectedWorkingSizingMode}
             reorderMode={reorderMode}
             reorderControl={
-              <button
-                type="button"
-                className={reorderMode ? "is-active" : undefined}
-                aria-pressed={reorderMode}
-                disabled={mainPageControlScope || selectedSurfaceButtonCount < 2 || busy}
-                onClick={() => {
-                  if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
-                  setReorderMode((current) => !current);
-                }}
-              >
-                Re-order
-              </button>
+              <>
+                <button
+                  type="button"
+                  className={reorderMode ? "is-active" : undefined}
+                  aria-pressed={reorderMode}
+                  disabled={mainPageControlScope || selectedSurfaceButtonCount < 2 || busy}
+                  onClick={() => {
+                    if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
+                    setReorderMode((current) => !current);
+                  }}
+                >
+                  Re-order
+                </button>
+                <button type="button" disabled={mainPageControlScope || busy || selectedSetForSurface.size === 0}
+                  title={settingsPlacementKind === "pop-out" ? "Remove the selected Buttons from this Pop-out only." : "Delete the selected Buttons and their owned Local Scripts packages."}
+                  onClick={() => void removeSelectedButtons()}>Remove</button>
+                <button type="button" disabled={mainPageControlScope || busy || !programName || !panelName}
+                  onClick={() => void openAddButtons()}>Add</button>
+                <button
+                  type="button"
+                  title="Copy the focused Button's width, height, and sizing behavior."
+                  disabled={!selectedPlacement || busy}
+                  onClick={copyFocusedButtonDimensions}
+                >
+                  Copy dimensions
+                </button>
+                <button
+                  type="button"
+                  title={copiedButtonSizing
+                    ? `Apply ${formatButtonSize(copiedButtonSizing.width, copiedButtonSizing.height)} from '${copiedButtonSizing.sourceButtonLabel}' to the selection.`
+                    : "Copy a Button's dimensions first."}
+                  disabled={!copiedButtonSizing || selectedSetForSurface.size === 0 || busy}
+                  onClick={addCopiedSizeToSelection}
+                >
+                  Add size to selection
+                </button>
+                <button
+                  type="button"
+                  title="Fit each selected Button's width to its text while keeping its current height and position. Follow the skin's sizing rules; skip fixed-width and textless skins."
+                  disabled={selectedSetForSurface.size === 0 || busy}
+                  onClick={() => void snapSelectionToText()}
+                >
+                  Size snap
+                </button>
+                <label className="button-editor-sizing-spacing" htmlFor="button-spacing-mm">
+                  <span>Spacing (mm)</span>
+                  <input
+                    id="button-spacing-mm"
+                    type="number"
+                    min="0"
+                    step="any"
+                    inputMode="decimal"
+                    value={buttonSpacingInput}
+                    disabled={busy}
+                    onChange={(event) => setButtonSpacingInput(event.currentTarget.value)}
+                    onBlur={commitButtonSpacing}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        commitButtonSpacing();
+                        event.currentTarget.blur();
+                      } else if (event.key === "Escape") {
+                        setButtonSpacingInput(String(store.current().settings.buttonSpacingMm));
+                        event.currentTarget.blur();
+                      }
+                    }}
+                  />
+                </label>
+              </>
             }
             onPlacementOrderChange={applyPlacementOrder}
             onCloseControlOffsetChange={updateCloseControlOffset}
@@ -3553,6 +3838,27 @@ function ButtonEditorContent({
           onOpenSkinDirectory={openWorkingSkinDirectory}
         />
       </div>
+      {addSurfaceId !== null ? (
+        <div className="button-editor-add-backdrop">
+          <section className="button-editor-add-dialog" role="dialog" aria-modal="true" aria-labelledby="add-buttons-title">
+            <h2 id="add-buttons-title">Add Buttons{addSurfaceId ? " to Pop-out" : " to Main Page"}</h2>
+            {addSurfaceId ? <>
+              <p>Select buttons from Main Page. Hidden buttons from this Tool Set are also available.</p>
+              <div className="button-editor-add-list">
+                {popoutAddCandidates(store.draft, addSurfaceId, programName, panelName).map(button => (
+                  <label key={button.id}><input type="checkbox" checked={addButtonIds.has(button.id)} disabled={busy}
+                    onChange={event => { const checked = event.currentTarget.checked; setAddButtonIds(current => { const next = new Set(current); if (checked) next.add(button.id); else next.delete(button.id); return next; }); }} />
+                    <span>{button.label}</span></label>
+                ))}
+                {popoutAddCandidates(store.draft, addSurfaceId, programName, panelName).length === 0 ? <p>All available buttons are already in this Pop-out.</p> : null}
+              </div>
+              <button type="button" disabled={busy || !addButtonIds.size} onClick={() => void addExistingButtons()}>Add selected</button>
+            </> : <p>Pick any script or file within a package to add the button.</p>}
+            <button type="button" disabled={busy} onClick={() => { const target = addSurfaceId || undefined; setAddSurfaceId(null); void importSource(target); }}>New button…</button>
+            <button type="button" disabled={busy} onClick={() => setAddSurfaceId(null)}>Cancel</button>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }

@@ -5,11 +5,13 @@ import {
 } from "../types.js";
 import {
   DEFAULT_BUTTON_SKIN,
-  DEFAULT_BUTTON_SKIN_ID
+  DEFAULT_BUTTON_SKIN_ID,
+  applyDefaultGraySizingPreset
 } from "../skins/defaultButtonSkin.js";
 import {
   CHIPPED_CONCRETE_BUTTON_SKIN,
-  CHIPPED_CONCRETE_BUTTON_SKIN_ID
+  CHIPPED_CONCRETE_BUTTON_SKIN_ID,
+  applyChippedConcreteSizingPreset
 } from "../skins/chippedConcreteButtonSkin.js";
 import { BUTTON_SKIN_SECTION_ORDER } from "../skins/buttonSkinFormat.js";
 
@@ -62,9 +64,18 @@ export function createButtonStateDocument(): ButtonStateDocument {
   };
 }
 
+export function ensureButtonSkinSizingPresets(document: ButtonStateDocument): boolean {
+  let changed = false;
+  for (const skin of Object.values(document.skins)) {
+    if (applyChippedConcreteSizingPreset(skin)) changed = true;
+    if (applyDefaultGraySizingPreset(skin)) changed = true;
+  }
+  return changed;
+}
+
 /** Main owns its Concrete appearance; shared Button defaults remain neutral. */
 export function ensureMainPageSkinDefaults(document: ButtonStateDocument): boolean {
-  let changed = false;
+  let changed = ensureButtonSkinSizingPresets(document);
   const concrete = document.skins[CHIPPED_CONCRETE_BUTTON_SKIN_ID];
   if (!concrete) {
     document.skins[CHIPPED_CONCRETE_BUTTON_SKIN_ID] = cloneButtonDocument(CHIPPED_CONCRETE_BUTTON_SKIN);

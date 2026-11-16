@@ -13,6 +13,6 @@ Program-window restoration then has its own shared 10,000 ms limit. It checks ac
 
 If a window fails to reach its saved placement, that intended placement is retained while the window remains at exactly the observed failed position, size, and show state. If its arrangement changes afterward, the next toggle saves the new arrangement normally. This protection is scoped to the same living window and connected monitor subset; reopened windows do not inherit an old window's target.
 
-To reopen the monitor checklist, run the owned **Toggle Monitors.vbs** launcher with `--configure`. The picker PowerShell file is a package helper; do not run it directly. Do not run the Python engine directly without its Button configuration.
+Right-click **Edit Inputs** to reopen the monitor checklist without switching displays or changing startup registration. The owned **Toggle Monitors.vbs** launcher also accepts `--configure-only` for this behavior; its existing `--configure` option still switches groups after saving. The picker PowerShell file is a package helper; do not run it directly. Do not run the Python engine directly without its Button configuration.
 
 Startup and wake recovery enable every available display, independently of the two Button groups.

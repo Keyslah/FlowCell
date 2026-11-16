@@ -119,6 +119,7 @@ export function ensureRegularPopout(
     id,
     name: surface.name,
     kind: "regular",
+    automaticLayout: true,
     surfaceId: surface.id,
     canonicalBounds: { x: 0, y: 0, width: surface.width, height: surface.height },
     desktopBounds: null,
@@ -461,6 +462,22 @@ export function removeOwnedButtonGraph(
 ): RemoveOwnedButtonResult {
   const root = document.buttons[rootButtonId];
   if (!root) return { removedButtonIds: [], uninstallOwnerButtonIds: [] };
+  const automaticSurfaces = new Set(Object.values(document.popoutUnits).filter(unit => {
+    if (unit.kind !== "regular" || unit.ownerPlacementId) return false;
+    const saved = Object.values(document.buttons).some(button => {
+      const files = button.metadata.popoutSettingsFiles;
+      return files && typeof files === "object" && Object.hasOwn(files, unit.surfaceId);
+    });
+    if (saved || unit.automaticLayout === false) return false;
+    if (unit.automaticLayout) return true;
+    // Recognize older generated grids by their actual geometry, never by name.
+    const expected = cloneButtonDocument(document);
+    arrangeDefaultPanelButtons(expected, unit.surfaceId);
+    return unit.memberPlacementIds.every(id => {
+      const a = document.placements[id], b = expected.placements[id];
+      return a && b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+    });
+  }).map(unit => unit.surfaceId));
 
   const removed = new Set<string>([rootButtonId]);
   if (root.role === "tool-set-owner") {
@@ -479,6 +496,16 @@ export function removeOwnedButtonGraph(
   for (const [unitId, unit] of Object.entries(document.popoutUnits)) {
     if (unit.kind === "tool-set") {
       if (unit.ownerButtonId === rootButtonId) {
+        const survivors = unit.childPlacementIds.filter(id => Boolean(document.placements[id]));
+        if (unit.templateUnitId && survivors.length) {
+          const identities = survivors.map(id => document.buttons[document.placements[id].buttonId].sourceIdentity!);
+          document.surfaces[unit.surfaceId].kind = "regular-popout";
+          const { templateUnitId: _template, childButtonIds: _buttons, childPlacementIds: _placements, fields: _fields, ...base } = unit;
+          document.popoutUnits[unitId] = { ...base, kind: "regular", automaticLayout: false, ownerButtonId: null, ownerPlacementId: null,
+            interactionMode: "pop", memberPlacementIds: survivors, memberSourceIdentities: identities,
+            selectionKey: deriveRegularPopoutSelectionKey(identities) };
+          continue;
+        }
         removeSurface(document, unit.surfaceId);
         delete document.popoutUnits[unitId];
         continue;
@@ -505,6 +532,13 @@ export function removeOwnedButtonGraph(
       delete document.popoutUnits[unitId];
     } else {
       unit.selectionKey = deriveRegularPopoutSelectionKey(unit.memberSourceIdentities);
+      if (automaticSurfaces.has(unit.surfaceId)) {
+        arrangeDefaultPanelButtons(document, unit.surfaceId);
+        const surface = document.surfaces[unit.surfaceId];
+        unit.canonicalBounds = { x: 0, y: 0, width: surface.width, height: surface.height };
+        unit.desktopBounds = null;
+        delete unit.desktopBoundsEnvelope;
+      }
     }
   }
 

@@ -54,6 +54,7 @@ function fixture(kind = "regular") {
     delete unit.memberPlacementIds;
     delete unit.memberSourceIdentities;
     delete unit.selectionKey;
+    delete unit.automaticLayout;
   }
   const validation = validateButtonStateDocument(document);
   assert.equal(validation.valid, true, JSON.stringify(validation.issues));
