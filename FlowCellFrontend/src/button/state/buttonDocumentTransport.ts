@@ -1,5 +1,3 @@
-import type { ButtonStateDocument } from "../types.js";
-
 const TRANSPORT_MARKER = "__flowcellButtonDocumentTransport";
 const MIN_POOLED_STRING_BYTES = 4096;
 type StringReference = [path: string[], index: number];
@@ -33,7 +31,7 @@ function cloneValues(
 }
 
 /** Pool repeated large JSON string values without changing the saved document format. */
-export function packButtonDocumentTransport(document: ButtonStateDocument): unknown {
+export function packButtonDocumentTransport(document: unknown): unknown {
   const strings: string[] = [];
   const references: StringReference[] = [];
   const indexes = new Map<string, number>();

@@ -235,7 +235,7 @@ pub(crate) fn escape_powershell_single_quoted(value: &str) -> String {
     value.replace('\'', "''")
 }
 
-fn build_powershell_output_command(arguments: &[String]) -> Command {
+pub(crate) fn build_powershell_output_command(arguments: &[String]) -> Command {
     let mut command = Command::new(resolve_powershell_path());
     command
         .arg("-NoProfile")

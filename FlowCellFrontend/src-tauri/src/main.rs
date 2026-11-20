@@ -5,6 +5,8 @@ mod button_state;
 mod krita_brushes;
 mod commands;
 #[cfg(windows)]
+mod hotkey_input_recovery;
+#[cfg(windows)]
 mod main_window_resize;
 mod program_sources;
 
@@ -62,12 +64,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, BOOL, ERROR_ALREADY_EXISTS, HANDLE, HWND, LPARAM, POINT,
+    CloseHandle, GetLastError, BOOL, ERROR_ALREADY_EXISTS, FILETIME, HANDLE, HWND, LPARAM, POINT,
 };
 #[cfg(windows)]
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
-    CreateMutexW, OpenProcess, QueryFullProcessImageNameW, ReleaseMutex,
+    CreateMutexW, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, ReleaseMutex, WaitForSingleObject,
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 #[cfg(windows)]
@@ -79,7 +81,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
     GetSystemMetrics, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, IsWindow,
     IsWindowVisible, SetForegroundWindow as SetForegroundWindowSys, SetWindowLongPtrW,
-    ShowWindowAsync as ShowWindowAsyncSys, WindowFromPoint, GA_ROOT, GWLP_HWNDPARENT, GWL_EXSTYLE,
+    ShowWindow, WindowFromPoint, GA_ROOT, GWLP_HWNDPARENT, GWL_EXSTYLE,
     GW_HWNDNEXT, SM_SWAPBUTTON, SW_RESTORE as SW_RESTORE_SYS, WS_EX_TOPMOST,
 };
 
@@ -110,11 +112,12 @@ impl Drop for FlowCellInstanceGuard {
 fn focus_existing_flowcell_window() {
     let mut title = flowcell_frontend_window_title().encode_utf16().collect::<Vec<_>>();
     title.push(0);
-    for _ in 0..20 {
+    // The other instance can still be creating its hidden main window.
+    for _ in 0..1200 {
         let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
         if !window.is_null() {
             unsafe {
-                let _ = ShowWindowAsyncSys(window, SW_RESTORE_SYS);
+                let _ = ShowWindow(window, SW_RESTORE_SYS);
                 let _ = SetForegroundWindowSys(window);
             }
             return;
@@ -123,8 +126,25 @@ fn focus_existing_flowcell_window() {
     }
 }
 
+/// Serializes a normal launch's window handover with a hidden helper's exit.
 #[cfg(windows)]
-fn acquire_flowcell_instance_guard() -> Result<Option<FlowCellInstanceGuard>, String> {
+fn acquire_frontend_handover_guard() -> Result<FlowCellInstanceGuard, String> {
+    let mut name = format!("{}-handover", flowcell_frontend_instance_mutex())
+        .encode_utf16().collect::<Vec<_>>();
+    name.push(0);
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+    if handle.is_null() { return Err(format!("Cannot create frontend handover lock: {}", std::io::Error::last_os_error())); }
+    let result = unsafe { WaitForSingleObject(handle, 10_000) };
+    // WAIT_OBJECT_0 and WAIT_ABANDONED both grant ownership.
+    if result != 0 && result != 0x80 {
+        unsafe { let _ = CloseHandle(handle); }
+        return Err(format!("Cannot acquire frontend handover lock: {result}"));
+    }
+    Ok(FlowCellInstanceGuard { handle })
+}
+
+#[cfg(windows)]
+fn acquire_flowcell_instance_guard(focus_existing: bool) -> Result<Option<FlowCellInstanceGuard>, String> {
     let mut name = flowcell_frontend_instance_mutex()
         .encode_utf16()
         .collect::<Vec<_>>();
@@ -141,7 +161,9 @@ fn acquire_flowcell_instance_guard() -> Result<Option<FlowCellInstanceGuard>, St
         unsafe {
             let _ = CloseHandle(handle);
         }
-        focus_existing_flowcell_window();
+        if focus_existing {
+            focus_existing_flowcell_window();
+        }
         return Ok(None);
     }
     Ok(Some(FlowCellInstanceGuard { handle }))
@@ -149,13 +171,62 @@ fn acquire_flowcell_instance_guard() -> Result<Option<FlowCellInstanceGuard>, St
 
 fn main() {
     #[cfg(windows)]
-    let Some(_instance_guard) = acquire_flowcell_instance_guard()
-        .expect("failed to initialize FlowCell single-instance protection")
-    else {
+    if env::args().any(|arg| arg == "--flowcell-snapshot-startup-toolsets"
+        || arg.starts_with("--flowcell-startup-toolset=")) {
+        // A previous backend can still send obsolete requests until restarted.
+        // They must never open a normal FlowCell window.
         return;
+    }
+    #[cfg(windows)]
+    let recovery = match hotkey_input_recovery::requested_binding_id() {
+        Ok(value) => value,
+        Err(error) => { hotkey_input_recovery::report_error(&error); return; }
     };
+    #[cfg(windows)]
+    let request = match recovery {
+        Some(id) => match hotkey_input_recovery::enqueue(id) {
+            Ok(path) => Some(path),
+            Err(error) => { hotkey_input_recovery::report_error(&error); return; }
+        },
+        None => None,
+    };
+    #[cfg(windows)]
+    let handover = if recovery.is_none() {
+        match acquire_frontend_handover_guard() {
+            Ok(guard) => Some(guard),
+            Err(error) => { hotkey_input_recovery::report_error(&error); return; }
+        }
+    } else { None };
+    #[cfg(windows)]
+    let _instance_guard = loop {
+        match acquire_flowcell_instance_guard(recovery.is_none())
+            .expect("failed to initialize FlowCell single-instance protection") {
+            Some(guard) => break guard,
+            None if request.is_none() => return,
+            None if !request.as_ref().unwrap().exists() => return,
+            None => thread::sleep(Duration::from_millis(350)),
+        }
+    };
+    #[cfg(windows)]
+    if request.as_ref().is_some_and(|path| !path.exists()) { return; }
+    #[cfg(windows)]
+    drop(handover);
+
+    #[cfg(windows)]
+    if recovery.is_some() {
+        // Do not register frontend-owned global shortcuts while this is only
+        // a hidden first-use helper. Startup bindings stay owned by AHK.
+        env::set_var("FLOWCELL_HOTKEY_RECOVERY", "1");
+    }
 
     let mut context = tauri::generate_context!();
+    #[cfg(windows)]
+    if recovery.is_some() {
+        // First-use setup may need native dialogs but must not open the main app.
+        for window in &mut context.config_mut().app.windows {
+            window.visible = false;
+        }
+    }
     if flowcell_backend_role() == "development" {
         // Tauri derives the default WebView profile for every window from this
         // identifier. Keep source windows out of the installed app's profile.
@@ -307,7 +378,7 @@ fn main() {
             program_sources::installed_page_webview::post_installed_page_webview_message,
             program_sources::installed_page_webview::unmount_installed_page_webview
         ])
-        .setup(|app| {
+        .setup(move |app| {
             initialize_runtime_paths().map_err(std::io::Error::other)?;
             if let Some(window) = app.get_webview_window("main") {
                 window.set_title(flowcell_frontend_window_title()).map_err(std::io::Error::other)?;
@@ -342,6 +413,9 @@ fn main() {
                 append_flowcell_local_log("themes.log", &format!("Theme migration will resume on next startup: {error}"));
             }
             start_flowcell_backend().map_err(std::io::Error::other)?;
+
+            #[cfg(windows)]
+            hotkey_input_recovery::start_worker(app.handle().clone(), recovery.is_some());
 
             if let Err(error) = synchronize_tool_set_hotkeys(app.handle()) {
                 let message =

@@ -1,4 +1,7 @@
 2026-11-20 FlowCell v0.1.13 release:
+- Button settings preserve v1 exports and read legacy files while pooling repeated embedded skins in IPC and managed defaults. Valid settings can exceed the former 16 MiB threshold; file reads and pooled expansion are bounded to 1 GiB, and atomic writes and structural validation remain in place.
+- Only verified Windows Startup panel script shortcuts and Windows Startup-owned macros remain active when the FlowCell main window is closed; other bindings retain their existing scopes while it is open and pass through to Windows while closed. The Pause emergency stop only intercepts a key during a running recorded macro.
+- Windows Startup Button inputs are configured when saving a shortcut, before the binding is committed, so the background backend can run it after Windows startup without opening FlowCell. Cancelling setup leaves the binding unchanged; missing first-run settings use the singleton frontend's hidden canonical setup transaction. Tool-set hotkeys remain owned by the open frontend.
 - Versioned the application and release source 0.1.12 -> 0.1.13. This release includes the current Button Editor Add picker, Windows catalog removal and Screenshots changes, Main sizing, executable discovery, and Blender Theme and Popped Button colors updates described below.
 - Release packaging uses the current installed Blender profile and theme library, and includes the Windows installer and Blender Program ZIP. The portable Core ZIP is provided separately.
 

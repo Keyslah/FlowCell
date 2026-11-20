@@ -111,7 +111,7 @@ class FlowCellAutoHotkeyState {
         DllCall("CloseHandle", "Ptr", handle)
     }
 
-    static RunScriptAndWait(scriptPath) {
+    static RunScriptAndWait(scriptPath, inputCache := "", startProcess := 0) {
         ; Release before waiting: a resident user script must remain stoppable.
         lock := this.Acquire()
         childPid := 0
@@ -122,6 +122,10 @@ class FlowCellAutoHotkeyState {
             ; CreateProcess returns an owned handle atomically with launch, even
             ; for scripts that exit before Run/OpenProcess could observe them.
             command := '"' A_AhkPath '" "' scriptPath '"'
+            if inputCache != "" {
+                SplitPath scriptPath, , &scriptDir
+                startProcess.Call(command, inputCache, &processHandle, &childPid, scriptDir)
+            } else {
             commandBuffer := Buffer((StrLen(command) + 1) * 2, 0)
             StrPut(command, commandBuffer, "UTF-16")
             startupInfo := Buffer(A_PtrSize = 8 ? 104 : 68, 0)
@@ -134,6 +138,7 @@ class FlowCellAutoHotkeyState {
             processHandle := NumGet(processInfo, 0, "Ptr")
             childPid := NumGet(processInfo, A_PtrSize * 2, "UInt")
             DllCall("CloseHandle", "Ptr", NumGet(processInfo, A_PtrSize, "Ptr"))
+            }
         } finally {
             this.Release(lock)
         }

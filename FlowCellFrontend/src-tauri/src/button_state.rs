@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
@@ -19,7 +20,7 @@ const BUTTON_SETTINGS_FILE_FORMAT: &str = "flowcell-button-settings/v1";
 const BUTTON_SETTINGS_FILE_EXTENSION: &str = ".json";
 const BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME: &str = "Defaults";
 const BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION: &str = ".flowcell-button-default.json";
-const BUTTON_SETTINGS_FILE_MAX_BYTES: usize = 16 * 1024 * 1024;
+const BUTTON_SETTINGS_MAX_BYTES: usize = 1024 * 1024 * 1024;
 const BUTTON_PLACEMENT_CYCLE_MAX_STATES: usize = 64;
 pub(crate) const BUTTON_SKIN_FILE_EXTENSION: &str = ".flowcell-button-skin.txt";
 pub(crate) const BUTTON_SKIN_FILE_MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -1049,26 +1050,21 @@ fn validate_button_settings_file(file: &ButtonSettingsFileV1) -> Result<(), Stri
             ));
         }
     }
-    let serialized_size = serde_json::to_vec(file)
-        .map_err(|error| format!("Failed to measure Button settings: {error}"))?
-        .len();
-    if serialized_size > BUTTON_SETTINGS_FILE_MAX_BYTES {
-        return Err(format!(
-            "Button settings cannot exceed {} MiB.",
-            BUTTON_SETTINGS_FILE_MAX_BYTES / (1024 * 1024)
-        ));
-    }
     Ok(())
 }
 
 fn parse_button_settings_file(path: &Path) -> Result<ButtonSettingsFileV1, String> {
-    let raw = fs::read_to_string(path).map_err(|error| {
+    let mut raw = String::new();
+    fs::File::open(path).and_then(|file| file.take((BUTTON_SETTINGS_MAX_BYTES as u64) + 1).read_to_string(&mut raw)).map_err(|error| {
         format!(
             "Failed to read Button settings at {}: {error}",
             path.display()
         )
     })?;
-    let file = serde_json::from_str::<ButtonSettingsFileV1>(&raw)
+    if raw.len() > BUTTON_SETTINGS_MAX_BYTES { return Err("Button settings exceed the 1024 MiB limit.".into()); }
+    let value = serde_json::from_str::<Value>(&raw)
+        .map_err(|error| format!("Button settings at {} are invalid: {error}", path.display()))?;
+    let file = decode_button_settings(value)
         .map_err(|error| format!("Button settings at {} are invalid: {error}", path.display()))?;
     validate_button_settings_file(&file)?;
     Ok(file)
@@ -1078,29 +1074,73 @@ fn write_button_settings_file(
     path: &Path,
     file: &ButtonSettingsFileV1,
     mode: AtomicWriteMode,
+    pooled: bool,
 ) -> Result<String, String> {
     validate_button_settings_file(file)?;
-    let serialized = serde_json::to_string_pretty(file)
+    let value = if pooled { encode_button_settings(file)? }
+        else { serde_json::to_value(file).map_err(|error| error.to_string())? };
+    validate_button_settings_size(&value, BUTTON_SETTINGS_MAX_BYTES)?;
+    let serialized = serde_json::to_string_pretty(&value)
         .map_err(|error| format!("Failed to serialize Button settings: {error}"))?;
     transaction::write_json_file(path, serialized.as_bytes(), mode)?;
     Ok(path.display().to_string())
 }
 
+fn decode_button_settings(value: Value) -> Result<ButtonSettingsFileV1, String> {
+    validate_button_settings_size(&value, BUTTON_SETTINGS_MAX_BYTES)?;
+    let value = crate::button_document_transport::unpack_button_document(value)?;
+    serde_json::from_value(value).map_err(|error| format!("Invalid Button settings: {error}"))
+}
+
+// Bound both the wire/file value and the additional data that a pooled
+// envelope would expand to, before cloning any referenced strings.
+fn validate_button_settings_size(value: &Value, maximum: usize) -> Result<(), String> {
+    struct Counter { count: usize, maximum: usize }
+    impl Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.count = self.count.checked_add(bytes.len()).ok_or_else(|| std::io::Error::other("Button settings size overflow"))?;
+            if self.count > self.maximum { return Err(std::io::Error::other("Button settings are too large")); }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let fail = || "Button settings exceed the size limit or contain invalid pooled data.".to_string();
+    let mut counter = Counter { count: 0, maximum };
+    serde_json::to_writer(&mut counter, value).map_err(|_| fail())?;
+    if value.get("__flowcellButtonDocumentTransport").is_some() {
+        let strings = value.get("strings").and_then(Value::as_array).ok_or_else(fail)?;
+        let references = value.get("references").and_then(Value::as_array).ok_or_else(fail)?;
+        for reference in references {
+            let pair = reference.as_array().filter(|pair| pair.len() == 2).ok_or_else(fail)?;
+            let index = pair[1].as_u64().and_then(|value| usize::try_from(value).ok()).ok_or_else(fail)?;
+            let bytes = strings.get(index).and_then(Value::as_str).ok_or_else(fail)?.len();
+            counter.count = counter.count.checked_add(bytes).filter(|size| *size <= maximum).ok_or_else(fail)?;
+        }
+    }
+    Ok(())
+}
+
+fn encode_button_settings(file: &ButtonSettingsFileV1) -> Result<Value, String> {
+    let value = serde_json::to_value(file).map_err(|error| format!("Failed to serialize Button settings: {error}"))?;
+    Ok(crate::button_document_transport::pack_button_document(value))
+}
+
 #[tauri::command]
-pub(crate) fn load_button_settings_file(path: String) -> Result<ButtonSettingsFileV1, String> {
+pub(crate) fn load_button_settings_file(path: String) -> Result<Value, String> {
     let trimmed_path = path.trim();
     if trimmed_path.is_empty() {
         return Err("Button settings load path cannot be empty.".to_string());
     }
-    parse_button_settings_file(Path::new(trimmed_path))
+    encode_button_settings(&parse_button_settings_file(Path::new(trimmed_path))?)
 }
 
 #[tauri::command]
 pub(crate) fn save_button_settings_file(
     path: String,
-    file: ButtonSettingsFileV1,
+    file: Value,
     create_new: Option<bool>,
 ) -> Result<String, String> {
+    let file = decode_button_settings(file)?;
     let trimmed_path = path.trim();
     if trimmed_path.is_empty() {
         return Err("Button settings save path cannot be empty.".to_string());
@@ -1109,7 +1149,7 @@ pub(crate) fn save_button_settings_file(
     if create_new == Some(true) && settings_path.exists() {
         return Err("Choose a new file name. The original Pop-out settings will not be overwritten.".to_string());
     }
-    write_button_settings_file(&settings_path, &file, if create_new == Some(true) { AtomicWriteMode::Create } else { AtomicWriteMode::Replace })
+    write_button_settings_file(&settings_path, &file, if create_new == Some(true) { AtomicWriteMode::Create } else { AtomicWriteMode::Replace }, false)
 }
 
 fn validate_default_surface_id(surface_id: &str) -> Result<String, String> {
@@ -1174,9 +1214,10 @@ fn verify_button_settings_revision(expected_revision: u64) -> Result<(), String>
 pub(crate) fn initialize_button_settings_default(
     placement_kind: ButtonSettingsPlacementKind,
     surface_id: String,
-    file: ButtonSettingsFileV1,
+    file: Value,
     expected_revision: u64,
 ) -> Result<String, String> {
+    let file = decode_button_settings(file)?;
     let surface_id = validate_default_surface_id(&surface_id)?;
     validate_default_settings_identity(placement_kind, &surface_id, &file)?;
     let _guard = button_state_commit_guard()?;
@@ -1187,7 +1228,7 @@ pub(crate) fn initialize_button_settings_default(
         return Ok(path.display().to_string());
     }
     verify_button_settings_revision(expected_revision)?;
-    match write_button_settings_file(&path, &file, AtomicWriteMode::Create) {
+    match write_button_settings_file(&path, &file, AtomicWriteMode::Create, true) {
         Ok(saved) => Ok(saved),
         Err(_error) if path.is_file() => {
             let existing = parse_button_settings_file(&path)?;
@@ -1202,7 +1243,7 @@ pub(crate) fn initialize_button_settings_default(
 pub(crate) fn load_button_settings_default(
     placement_kind: ButtonSettingsPlacementKind,
     surface_id: String,
-) -> Result<Option<ButtonSettingsFileV1>, String> {
+) -> Result<Option<Value>, String> {
     let surface_id = validate_default_surface_id(&surface_id)?;
     let path = button_settings_default_path(placement_kind, &surface_id)?;
     if !path.exists() {
@@ -1210,22 +1251,23 @@ pub(crate) fn load_button_settings_default(
     }
     let file = parse_button_settings_file(&path)?;
     validate_default_settings_identity(placement_kind, &surface_id, &file)?;
-    Ok(Some(file))
+    encode_button_settings(&file).map(Some)
 }
 
 #[tauri::command]
 pub(crate) fn update_button_settings_default(
     placement_kind: ButtonSettingsPlacementKind,
     surface_id: String,
-    file: ButtonSettingsFileV1,
+    file: Value,
     expected_revision: u64,
 ) -> Result<String, String> {
+    let file = decode_button_settings(file)?;
     let surface_id = validate_default_surface_id(&surface_id)?;
     validate_default_settings_identity(placement_kind, &surface_id, &file)?;
     let _guard = button_state_commit_guard()?;
     verify_button_settings_revision(expected_revision)?;
     let path = button_settings_default_path(placement_kind, &surface_id)?;
-    write_button_settings_file(&path, &file, AtomicWriteMode::Replace)
+    write_button_settings_file(&path, &file, AtomicWriteMode::Replace, true)
 }
 
 #[tauri::command]
@@ -2302,16 +2344,16 @@ fn commit_button_state_sync(
 mod tests {
     use super::{
         button_settings_default_path, button_settings_scope_relative_path,
-        classify_source_transaction, document_source_owners, list_button_skin_files_in,
+        classify_source_transaction, decode_button_settings, document_source_owners, encode_button_settings, list_button_skin_files_in,
         load_button_placement_file, load_button_settings_file, load_button_skin_file,
         read_button_state_document, recover_button_state, resolve_program_rename_post_commit,
         save_button_placement_file, save_button_settings_file, save_button_skin_file,
         validate_button_placement_file, validate_button_settings_file, validate_button_skin_source,
-        validate_button_state, validate_default_surface_id, ButtonPlacementFile,
+        validate_button_state, validate_button_settings_size, validate_default_surface_id, write_button_settings_file, parse_button_settings_file, ButtonPlacementFile,
         ButtonPlacementFileEntryV1, ButtonPlacementFileEntryV2, ButtonPlacementFileSize,
         ButtonPlacementFileSurface, ButtonPlacementFileV1, ButtonPlacementFileV2,
         ButtonPlacementSurfaceKind, ButtonSettingsFileV1, ButtonSettingsPlacementKind,
-        ButtonSourceTransactionJournal, SourceTransactionPhase, SourceTransactionRecovery,
+        AtomicWriteMode, ButtonSourceTransactionJournal, SourceTransactionPhase, SourceTransactionRecovery,
         BUTTON_PLACEMENT_CYCLE_MAX_STATES, BUTTON_PLACEMENT_FILE_EXTENSION,
         BUTTON_PLACEMENT_FILE_FORMAT_V1, BUTTON_PLACEMENT_FILE_FORMAT_V2,
         BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME, BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION,
@@ -2712,9 +2754,9 @@ mod tests {
         fs::create_dir_all(&root).expect("create settings test root");
         let path = root.join("original.json");
         let file = valid_button_settings_file();
-        save_button_settings_file(path.display().to_string(), file.clone(), Some(true)).expect("create new settings");
+        save_button_settings_file(path.display().to_string(), json!(file), Some(true)).expect("create new settings");
         let original = fs::read(&path).expect("read original");
-        assert!(save_button_settings_file(path.display().to_string(), file, Some(true)).is_err());
+        assert!(save_button_settings_file(path.display().to_string(), json!(file), Some(true)).is_err());
         assert_eq!(fs::read(&path).expect("preserved file"), original);
         fs::remove_dir_all(root).expect("remove task-created test data");
     }
@@ -2726,7 +2768,7 @@ mod tests {
         let requested_path = root.join("named-settings.json");
         let saved_path = save_button_settings_file(
             requested_path.display().to_string(),
-            valid_button_settings_file(),
+            json!(valid_button_settings_file()),
             None,
         )
         .expect("save valid Button settings");
@@ -2734,8 +2776,8 @@ mod tests {
         assert_eq!(PathBuf::from(saved_path), requested_path);
         assert!(requested_path.exists());
         let written = fs::read_to_string(&requested_path).expect("read saved settings");
-        let parsed = load_button_settings_file(requested_path.display().to_string())
-            .expect("load saved settings");
+        let parsed = decode_button_settings(load_button_settings_file(requested_path.display().to_string())
+            .expect("load saved settings")).expect("decode loaded settings");
         assert_eq!(
             serde_json::to_value(&parsed).expect("serialize loaded settings"),
             serde_json::from_str::<Value>(&written).expect("parse written settings")
@@ -2745,6 +2787,48 @@ mod tests {
         assert_eq!(parsed.entries[0]["buttonId"], "button-one");
 
         fs::remove_dir_all(&root).expect("remove settings test root");
+    }
+
+    #[test]
+    fn button_settings_round_trip_large_repeated_skins() {
+        let root = button_placement_test_root("settings-large-skins");
+        fs::create_dir_all(&root).expect("create settings test root");
+        let path = root.join("large-settings.json");
+        let mut file = valid_button_settings_file();
+        let skin = json!({"embeddedAsset": "a".repeat(2_500_000)});
+        let template = file.entries[0].clone();
+        file.entries = (0..7).map(|index| {
+            let mut entry = template.clone();
+            entry["placementId"] = json!(format!("placement-{index}"));
+            entry["buttonId"] = json!(format!("button-{index}"));
+            entry["placement"]["zIndex"] = json!(index);
+            entry["skin"] = skin.clone();
+            entry
+        }).collect();
+
+        let payload = encode_button_settings(&file).expect("encode settings for IPC");
+        let packed_bytes = serde_json::to_vec(&payload).unwrap().len();
+        assert!(packed_bytes < 3_000_000, "IPC should pool repeated skins");
+        assert!(validate_button_settings_size(&payload, packed_bytes + 1).is_err(), "expanded references must be bounded before unpacking");
+        assert!(validate_button_settings_size(&payload, 21_000_000).is_ok());
+        save_button_settings_file(path.display().to_string(), payload, Some(true))
+            .expect("save settings containing repeated large skins");
+        assert!(fs::metadata(&path).expect("saved settings metadata").len() > 16 * 1024 * 1024);
+        let output = load_button_settings_file(path.display().to_string())
+            .expect("load settings containing repeated large skins");
+        assert!(serde_json::to_vec(&output).unwrap().len() < 3_000_000, "load IPC should pool repeated skins");
+        let loaded = decode_button_settings(output).expect("decode loaded settings");
+        assert_eq!(loaded.entries.len(), 7);
+        for entry in &loaded.entries {
+            assert_eq!(entry["skin"], skin);
+        }
+        let default = root.join("managed-default.json");
+        write_button_settings_file(&default, &loaded, AtomicWriteMode::Create, true)
+            .expect("write pooled default settings");
+        assert!(fs::metadata(&default).unwrap().len() < 3_000_000, "managed default should pool repeated skins");
+        let restored = parse_button_settings_file(&default).expect("read pooled default settings");
+        assert_eq!(serde_json::to_value(restored).unwrap(), serde_json::to_value(loaded).unwrap());
+        fs::remove_dir_all(root).expect("remove settings test root");
     }
 
     #[test]
@@ -2783,9 +2867,10 @@ mod tests {
         file.surface["kind"] = json!("regular-popout");
         file.behavior["kind"] = json!("regular-popout");
         file.entries[0]["popoutColorOverride"] = json!({"surface": "#123456", "text": "#FFFFFFCC"});
-        let saved_path = save_button_settings_file(requested_path.display().to_string(), file.clone(), None)
+        let saved_path = save_button_settings_file(requested_path.display().to_string(), json!(file), None)
             .expect("save popped color settings");
-        let parsed = load_button_settings_file(saved_path).expect("reload popped color settings");
+        let parsed = decode_button_settings(load_button_settings_file(saved_path).expect("reload popped color settings"))
+            .expect("decode popped color settings");
         assert_eq!(parsed.entries, file.entries);
         fs::remove_dir_all(&root).expect("remove current-task color settings test root");
     }

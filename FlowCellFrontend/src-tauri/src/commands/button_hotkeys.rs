@@ -151,6 +151,7 @@ fn load_desired_tool_set_hotkeys() -> Result<HashMap<u32, RegisteredToolSetHotke
 }
 
 pub(crate) fn synchronize_tool_set_hotkeys(app: &AppHandle) -> Result<(), String> {
+    if std::env::var_os("FLOWCELL_HOTKEY_RECOVERY").is_some() { return Ok(()); }
     if !crate::flowcell_global_hotkeys_enabled() { return Ok(()); }
     let registry = app.state::<ToolSetHotkeyRegistry>();
     let _synchronize_guard = registry
@@ -550,7 +551,7 @@ fn plugin_key_for_ahk_key(value: &str) -> Result<(String, bool), String> {
     Ok((String::from(resolved.0), resolved.1))
 }
 
-fn build_button_popout_window_label(owner_button_id: &str) -> Result<String, String> {
+pub(crate) fn build_button_popout_window_label(owner_button_id: &str) -> Result<String, String> {
     let normalized = owner_button_id.trim();
     if normalized.is_empty() {
         return Err(String::from(

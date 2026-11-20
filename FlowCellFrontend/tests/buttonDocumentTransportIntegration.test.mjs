@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { webcrypto } from "node:crypto";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
-import { createButtonStateDocument } from "./.compiled-button-system/button/state/buttonDefaults.js";
+import { createButtonStateDocument, DEFAULT_BUTTON_SURFACE_ID } from "./.compiled-button-system/button/state/buttonDefaults.js";
 import { packButtonDocumentTransport, unpackButtonDocumentTransport } from "./.compiled-button-system/button/state/buttonDocumentTransport.js";
-import { loadButtonStateDocument, saveButtonStateDocument } from "./.compiled-button-system/button/state/ButtonStateRepository.js";
+import { loadButtonStateDocument, saveButtonStateDocument, saveButtonSettingsFile, loadButtonSettingsFile,
+  initializeButtonSettingsDefault, loadButtonSettingsDefault, updateButtonSettingsDefault } from "./.compiled-button-system/button/state/ButtonStateRepository.js";
+import { buildButtonSettingsFile } from "./.compiled-button-system/button/state/buttonSettingsFile.js";
 import {
   publishButtonCommit, subscribeButtonCommits, publishButtonDraft,
   publishButtonDraftToWindow, subscribeButtonDrafts, registerButtonDraftResponder, requestButtonDraft
@@ -19,6 +21,53 @@ function fixture() {
   }
   return document;
 }
+
+test("settings IPC pools repeated complete skins across all save and load paths", async () => {
+  globalThis.window = { crypto: webcrypto };
+  const document = createButtonStateDocument();
+  const skinId = document.settings.defaultSkinId;
+  document.skins[skinId].metadata.transportFixture = { asset: "skin family source ".repeat(60000) };
+  const surface = document.surfaces[DEFAULT_BUTTON_SURFACE_ID];
+  for (let i = 0; i < 18; i++) {
+    const id = `button-${i}`, placementId = `placement-${i}`;
+    document.buttons[id] = { id, role: "single-script", sourceIdentity: null, label: `Item ${i}`,
+      tooltip: "", executionTarget: null, defaultSkinId: skinId, defaultTextFitMode: "shrink",
+      disabled: false, activationAnimation: null, activationBehavior: null,
+      toolSetParentId: null, toolSetBehavior: null, metadata: {} };
+    document.placements[placementId] = { id: placementId, buttonId: id, surfaceId: surface.id,
+      x: (i % 6) * 65, y: Math.floor(i / 6) * 40, width: 60, height: 30, zIndex: i,
+      skinOverrideId: null, textFitMode: "shrink", textAlignment: "skin", minimumFontSize: 8,
+      textSizeOverride: null, textOffsetX: 0, textOffsetY: 0, allowLabelResize: true,
+      matchHitboxToSkin: true, allowStretching: false, highlightOnHover: false,
+      resizeAnchor: "top-left", activationCycle: null, visualStateMap: null };
+    surface.placementIds.push(placementId);
+  }
+  const settings = buildButtonSettingsFile(document, surface.id, { programName: "Windows", panelName: "Startup" });
+  const commands = [];
+  let legacyReads = false;
+  mockIPC((command, args) => {
+    commands.push(command);
+    if (command === "load_button_settings_file" || command === "load_button_settings_default") {
+      return legacyReads ? settings : packButtonDocumentTransport(settings);
+    }
+    assert.ok(["save_button_settings_file", "initialize_button_settings_default", "update_button_settings_default"].includes(command));
+    assert.equal(args.file.__flowcellButtonDocumentTransport, 1);
+    assert.deepEqual(unpackButtonDocumentTransport(args.file), settings);
+    assert.ok(JSON.stringify(args.file).length < JSON.stringify(settings).length / 4);
+    return "fixture.json";
+  });
+  try {
+    await saveButtonSettingsFile("fixture.json", settings);
+    await initializeButtonSettingsDefault("main-page", surface.id, settings, 0);
+    await updateButtonSettingsDefault("main-page", surface.id, settings, 0);
+    assert.deepEqual(await loadButtonSettingsFile("fixture.json"), settings);
+    assert.deepEqual(await loadButtonSettingsDefault("main-page", surface.id), settings);
+    legacyReads = true;
+    assert.deepEqual(await loadButtonSettingsFile("legacy.json"), settings);
+    assert.deepEqual(await loadButtonSettingsDefault("main-page", surface.id), settings);
+    assert.equal(commands.length, 7);
+  } finally { clearMocks(); delete globalThis.window; }
+});
 
 test("packed native reads and writes retain the complete canonical document and revision conflicts", async () => {
   globalThis.window = { crypto: webcrypto };

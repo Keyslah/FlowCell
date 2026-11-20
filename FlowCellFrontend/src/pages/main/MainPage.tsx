@@ -837,6 +837,7 @@ export default function MainPage() {
   const [buttonBootstrapError, setButtonBootstrapError] = useState<string | null>(null);
   const [buttonBootstrapReady, setButtonBootstrapReady] = useState(false);
   const [windowsSetupComplete, setWindowsSetupComplete] = useState(false);
+  const [mainWindowActive, setMainWindowActive] = useState(false);
   const [windowsSetupPending, setWindowsSetupPending] = useState(true);
   const buttonDocumentRef = useRef<ButtonStateDocument | null>(null);
   const previousButtonDocumentRef = useRef<ButtonStateDocument | null>(null);
@@ -2078,7 +2079,28 @@ export default function MainPage() {
 
   useEffect(() => {
     const currentWindow = getCurrentWindow();
-    if (currentWindow.label !== "main" || !windowsSetupComplete) {
+    if (currentWindow.label !== "main") return;
+    let disposed = false;
+    let timer: number | undefined;
+    const activate = () => {
+      if (disposed) return;
+      setMainWindowActive(true);
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+    const checkVisible = async () => {
+      try { if (await currentWindow.isVisible()) activate(); } catch { /* Retry while the window initializes. */ }
+    };
+    timer = window.setInterval(() => { void checkVisible(); }, 250);
+    void checkVisible();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const currentWindow = getCurrentWindow();
+    if (currentWindow.label !== "main" || !windowsSetupComplete || !mainWindowActive) {
       return;
     }
 
@@ -2134,7 +2156,7 @@ export default function MainPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowsSetupComplete]);
+  }, [windowsSetupComplete, mainWindowActive]);
 
   const activateToolSetOwner = useCallback(async (
     ownerButtonId: string,
@@ -3920,7 +3942,7 @@ export default function MainPage() {
         </div>
       </ExactPageFrame>
     </main>
-    {buttonBootstrapReady && windowsSetupPending ? (
+    {buttonBootstrapReady && windowsSetupPending && mainWindowActive ? (
       <WindowsSetup
         onStartupReady={() => setWindowsSetupComplete(true)}
         onComplete={() => { setWindowsSetupComplete(true); setWindowsSetupPending(false); }}

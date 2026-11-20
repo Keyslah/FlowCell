@@ -2201,6 +2201,22 @@ pub(crate) fn windows_child_process_path(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+fn configure_button_input_environment(command: &mut Command, input_cache_path: Option<&Path>) {
+    if let Some(path) = input_cache_path {
+        command.env("FLOWCELL_BUTTON_INPUTS_PATH", windows_child_process_path(path));
+        command.env("FLOWCELL_BUTTON_INPUTS_JSON", fs::read_to_string(path).unwrap_or_else(|_| "{\"configured\":false}".into()));
+    }
+}
+
+fn build_button_shortcut_command(helper: &Path, script_path: &Path, input_cache_path: Option<&Path>) -> Command {
+    let mut command = crate::commands::filesystem::build_powershell_output_command(&[
+        "-File".into(), windows_child_process_path(helper).to_string_lossy().into_owned(),
+        "-ShortcutPath".into(), script_path.to_string_lossy().into_owned(),
+    ]);
+    configure_button_input_environment(&mut command, input_cache_path);
+    command
+}
+
 pub(crate) fn run_windows_panel_script_file_with_window_mode(
     script_path: &Path,
     hide_window: bool,
@@ -2249,6 +2265,7 @@ pub(crate) fn run_windows_panel_script_file_with_window_mode(
             let mut command = build_gated_autohotkey_command(&executable, script_directory, &[
                 script_path.to_string_lossy().into_owned(),
             ])?;
+            configure_button_input_environment(&mut command, input_cache_path);
             let output = command.arg("-Detach").output()
                 .map_err(|error| format!("Failed to start AutoHotkey script: {error}"))?;
             return if output.status.success() { Ok(()) } else {
@@ -2258,10 +2275,8 @@ pub(crate) fn run_windows_panel_script_file_with_window_mode(
         "lnk" => {
             let root = resolve_repo_root().ok_or("FlowCell resource root could not be resolved.")?;
             let helper = root.join("flowcellbackend/helpers/Start-FlowCellShortcut.ps1");
-            let output = spawn_powershell_output(&[
-                "-File".into(), windows_child_process_path(&helper).to_string_lossy().into_owned(),
-                "-ShortcutPath".into(), script_path.to_string_lossy().into_owned(),
-            ])?;
+            let output = build_button_shortcut_command(&helper, script_path, input_cache_path)
+                .output().map_err(|error| format!("Failed to start PowerShell: {error}"))?;
             return if output.status.success() { Ok(()) } else {
                 Err(format_process_failure(&output, "Windows shortcut launch failed."))
             };
@@ -2275,10 +2290,7 @@ pub(crate) fn run_windows_panel_script_file_with_window_mode(
     }
 
     configure_windows_script_source_window(&mut command, source_window_handle);
-    if let Some(path) = input_cache_path {
-        command.env("FLOWCELL_BUTTON_INPUTS_PATH", windows_child_process_path(path));
-        command.env("FLOWCELL_BUTTON_INPUTS_JSON", fs::read_to_string(path).unwrap_or_else(|_| "{\"configured\":false}".into()));
-    }
+    configure_button_input_environment(&mut command, input_cache_path);
     command
         .env("FLOWCELL_SESSION_ID", {
             static SESSION: OnceLock<String> = OnceLock::new();
@@ -2498,7 +2510,7 @@ fn write_button_inputs_cache(cache: &Path, values: Option<&Value>) -> Result<(),
     )
 }
 
-fn prepare_button_inputs(
+pub(crate) fn prepare_button_inputs(
     app: &AppHandle,
     resolution: &program_sources::execute::ActiveSourceResolution,
     edit_inputs: bool,
@@ -2717,6 +2729,30 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[cfg(windows)]
+    #[test]
+    fn shortcut_and_gated_script_commands_receive_the_button_inputs() {
+        let root = std::env::temp_dir().join(format!("flowcell-input-child-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(&root).unwrap();
+        let cache = root.join("button.json");
+        let helper = root.join("shortcut-helper.ps1");
+        let values = r#"{"configured":true,"values":{"example":"one"}}"#;
+        fs::write(&cache, values).unwrap();
+        fs::write(&helper, "param([string]$ShortcutPath)\n[Console]::Out.Write($env:FLOWCELL_BUTTON_INPUTS_PATH + [char]10 + $env:FLOWCELL_BUTTON_INPUTS_JSON)").unwrap();
+
+        let output = super::build_button_shortcut_command(&helper, &root.join("button.lnk"), Some(&cache)).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout), format!("{}\n{}", cache.display(), values));
+
+        let mut gated = Command::new(crate::resolve_powershell_path());
+        gated.args(["-NoProfile", "-Command", "[Console]::Out.Write($env:FLOWCELL_BUTTON_INPUTS_JSON)"]);
+        super::configure_button_input_environment(&mut gated, Some(&cache));
+        let output = gated.output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), values);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[cfg(windows)]
     #[test]

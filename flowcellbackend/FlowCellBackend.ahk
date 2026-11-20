@@ -11,6 +11,7 @@ Persistent
 #Include helpers\TempShotsSettings.ahk
 #Include helpers\JsonStringValues.ahk
 #Include helpers\BackendIdentity.ahk
+#Include helpers\StartupShortcutPolicy.ahk
 #Include helpers\AutoHotkeyState.ahk
 #Include helpers\ProgramBindActions.ahk
 
@@ -368,7 +369,12 @@ class FlowCellApp {
         if this.isVisualHost && flowCellBackendRole = "installed" {
             this.LoadBindings()
             this.RegisterSnippingOverlayEscapeFallback()
+            ; Pause is an emergency stop only while a recorded macro is
+            ; actually executing; otherwise the OS/application receives it.
+            this.macroStopCondition := ObjBindMethod(this, "MacroRunningCondition")
+            HotIf this.macroStopCondition
             Hotkey "Pause", ObjBindMethod(this, "HandleEmergencyMacroStop"), "On"
+            HotIf
             this.logger.Info("Application started.")
         } else {
             this.logger.Info("Backend started without global shortcuts. Role=" flowCellBackendRole)
@@ -1252,7 +1258,11 @@ class FlowCellApp {
     }
 
     HandleShortcutInvocation(binding) {
-        global flowCellLastActionStatusPath
+        global flowCellLastActionStatusPath, flowCellProgramsRoot, flowCellLocalRoot
+        if FlowCellStartupShortcutPolicy.NeedsFirstRunSetup(binding.scriptPath, flowCellProgramsRoot, flowCellLocalRoot) {
+            this.StartStartupInputRecovery(binding)
+            return
+        }
         if this.IsTempShotsScript(binding.scriptPath) {
             this.HandleTempShotsShortcutInvocation(binding)
             return
@@ -1275,6 +1285,24 @@ class FlowCellApp {
         this.SetShortcutStatus(JoinLines(lines))
         WriteTextFile(flowCellLastActionStatusPath, JoinLines(lines))
         this.logger.Info("Script hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
+    }
+
+    StartStartupInputRecovery(binding) {
+        global flowCellLastActionStatusPath, flowCellResourceRoot
+        try {
+            if !RegExMatch(binding.id "", '^\d+$') || binding.id < 1
+                throw Error("Invalid shortcut binding ID.")
+            ; This process must not wait: setup dispatches back to this backend.
+            Run('"' flowCellResourceRoot '\flowcell_frontend.exe" --flowcell-hotkey-input=' binding.id, , "Hide")
+            message := "Opening first-use setup for the Startup shortcut."
+            WriteTextFile(flowCellLastActionStatusPath, message)
+            this.logger.Info(message " BindingId=" binding.id)
+        } catch as err {
+            message := "Could not start the Startup shortcut setup: " err.Message
+            WriteTextFile(flowCellLastActionStatusPath, message)
+            this.logger.Warn(message)
+            MsgBox(message, "FlowCell - Startup shortcut setup", "Icon!")
+        }
     }
 
     IsTempShotsScript(scriptPath) {
@@ -1325,6 +1353,10 @@ class FlowCellApp {
         this.SetShortcutStatus(statusText)
         WriteTextFile(flowCellLastActionStatusPath, statusText)
         this.logger.Info("Screenshots hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
+        ; The installed backend normally runs without a window. A missing or
+        ; removed destination must never fail silently for an existing binding.
+        if !result.succeeded && InStr(result.detail, "Edit Inputs") && FlowCellTempShotsSettings.IsStartupOwner(scriptPath)
+            MsgBox(result.detail, "FlowCell - Screenshots setup needed", "Icon!")
     }
 
     RegisterSnippingOverlayEscapeFallback() {
@@ -2369,7 +2401,7 @@ class FlowCellApp {
     }
 
     RunGenericScript(scriptPath, source, activateExe := "", methodPrefix := "generic", programConfig := 0) {
-        global flowCellLastActionStatusPath
+        global flowCellLastActionStatusPath, flowCellProgramsRoot, flowCellLocalRoot
         result := {
             attempted: false,
             succeeded: false,
@@ -2413,9 +2445,26 @@ class FlowCellApp {
             }
 
             SplitPath scriptPath, , , &extension
+            SplitPath scriptPath, , &scriptDir
             extension := "." StrLower(extension)
             exitCode := 0
-            if extension = ".ps1" {
+            inputCache := FlowCellStartupShortcutPolicy.InputCache(scriptPath, flowCellProgramsRoot, flowCellLocalRoot)
+            if inputCache != "" && extension = ".ahk" {
+                exitCode := FlowCellAutoHotkeyState.RunScriptAndWait(scriptPath, inputCache, ObjBindMethod(FlowCellStartupShortcutPolicy, "StartProcessWithInputs"))
+            } else if inputCache != "" && (extension = ".ps1" || extension = ".cmd" || extension = ".bat" || extension = ".vbs" || extension = ".js" || extension = ".exe" || extension = ".lnk") {
+                if extension = ".ps1"
+                    command := 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Sta -File "' scriptPath '"'
+                else if extension = ".cmd" || extension = ".bat"
+                    command := A_ComSpec ' /c ""' scriptPath '""'
+                else if extension = ".vbs" || extension = ".js"
+                    command := 'wscript.exe "' scriptPath '"'
+                else if extension = ".lnk"
+                    command := 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' A_ScriptDir '\helpers\Start-FlowCellShortcut.ps1" -ShortcutPath "' scriptPath '"'
+                else
+                    command := '"' scriptPath '"'
+                FlowCellStartupShortcutPolicy.StartProcessWithInputs(command, inputCache, &childHandle, &childPid, scriptDir)
+                exitCode := FlowCellStartupShortcutPolicy.WaitForProcess(childHandle, childPid)
+            } else if extension = ".ps1" {
                 powershellArgs := '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Sta '
                 exitCode := RunWait('powershell.exe ' powershellArgs '-File "' scriptPath '"', , "Hide")
             } else if extension = ".cmd" || extension = ".bat" {
@@ -2467,6 +2516,10 @@ class FlowCellApp {
 
     ResetMacroStop() {
         this.macroStopRequested := false
+    }
+
+    MacroRunningCondition(*) {
+        return this.macroExecutionStack.Length > 0
     }
 
     HandleEmergencyMacroStop(*) {
@@ -3730,6 +3783,7 @@ class ScriptShortcutManager {
         this.nextId := 1
         this.loadErrorCount := 0
         this.registered := Map()
+        this.frontendOpenPredicate := ObjBindMethod(this, "FrontendOpenCondition")
         this.candidateShortcuts := this.BuildCandidateShortcuts()
     }
 
@@ -3908,17 +3962,25 @@ class ScriptShortcutManager {
     }
 
     TryRegisterBinding(binding) {
+        global flowCellProgramsRoot
         binding.shortcut := CanonicalizeShortcut(binding.shortcut)
         callback := ObjBindMethod(this, "OnHotkeyPressed", binding.id)
+        startup := FlowCellStartupShortcutPolicy.IsStartupSource(binding.scriptPath, flowCellProgramsRoot)
+        condition := startup ? "" : this.frontendOpenPredicate
         try {
+            if IsObject(condition)
+                HotIf condition
             Hotkey binding.shortcut, callback, "On"
+            HotIf
             this.registered[binding.id] := {
                 shortcut: binding.shortcut,
-                callback: callback
+                callback: callback,
+                condition: condition
             }
             this.logger.Info("Registered shortcut binding. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
             return "Active"
         } catch as err {
+            try HotIf
             this.logger.Warn(
                 "Failed to register shortcut binding. Shortcut="
                 . binding.shortcut
@@ -3933,11 +3995,22 @@ class ScriptShortcutManager {
 
     UnregisterHotkeys() {
         for _, entry in this.registered {
-            try Hotkey entry.shortcut, entry.callback, "Off"
+            try {
+                if IsObject(entry.condition)
+                    HotIf entry.condition
+                Hotkey entry.shortcut, entry.callback, "Off"
+                HotIf
+            }
             catch {
+                try HotIf
             }
         }
         this.registered := Map()
+    }
+
+    FrontendOpenCondition(*) {
+        global flowCellResourceRoot
+        return FlowCellStartupShortcutPolicy.FrontendOpen(flowCellResourceRoot)
     }
 
     OnHotkeyPressed(bindingId, *) {
@@ -4181,6 +4254,7 @@ class ActionHotkeyManager {
     }
 
     TryRegisterHotkey(actionId, shortcut) {
+        global flowCellRecordedActionsDir, flowCellProgramsRoot
         callback := ObjBindMethod(this, "OnHotkeyPressed", actionId)
         action := this.app.GetActionById(actionId)
         if !IsObject(action)
@@ -4190,28 +4264,25 @@ class ActionHotkeyManager {
         hotIfWinTitle := IsObject(action) && action.HasOwnProp("HotIfWinTitle")
             ? Trim(action.HotIfWinTitle)
             : ""
+        ; Recorded Startup macros run headlessly. Other actions need the
+        ; installed frontend, while retaining their own foreground scope.
+        startup := action.HasOwnProp("MacroPath")
+            && FlowCellStartupShortcutPolicy.IsStartupMacro(action.MacroPath, flowCellRecordedActionsDir, flowCellProgramsRoot, actionId)
+        condition := ObjBindMethod(this, "ActionAllowed", startup, hotIfCallback, hotIfWinTitle)
         try {
-            if IsObject(hotIfCallback)
-                HotIf hotIfCallback
-            else if hotIfWinTitle != ""
-                HotIfWinActive hotIfWinTitle
+            HotIf condition
             Hotkey registrationShortcut, callback, "On"
-            if IsObject(hotIfCallback) || hotIfWinTitle != ""
-                HotIf
+            HotIf
             this.registered[actionId] := {
                 shortcut: registrationShortcut,
                 callback: callback,
                 hotIfWinTitle: hotIfWinTitle,
-                hotIfCallback: hotIfCallback
+                hotIfCallback: condition
             }
             this.logger.Info("Registered action hotkey. Action=" actionId " | Shortcut=" shortcut " | RegisteredShortcut=" registrationShortcut " | Scope=" hotIfWinTitle)
             return "Active"
         } catch as err {
-            if IsObject(hotIfCallback) || hotIfWinTitle != "" {
-                try HotIf
-                catch {
-                }
-            }
+            try HotIf
             this.logger.Warn(
                 "Failed to register action hotkey. Action="
                 . actionId
@@ -4222,6 +4293,15 @@ class ActionHotkeyManager {
             )
             return "Registration error: " err.Message
         }
+    }
+
+    ActionAllowed(startup, originalCallback, windowTitle, *) {
+        global flowCellResourceRoot
+        if !startup && !FlowCellStartupShortcutPolicy.FrontendOpen(flowCellResourceRoot)
+            return false
+        if IsObject(originalCallback)
+            return originalCallback.Call()
+        return windowTitle = "" || !!WinActive(windowTitle)
     }
 
     UnregisterHotkeys() {

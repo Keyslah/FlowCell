@@ -515,7 +515,7 @@ export async function saveButtonSettingsFile(
   if (!isTauriWindowHost()) {
     throw new Error("Button settings files can only be saved from the FlowCell desktop host.");
   }
-  return invoke<string>("save_button_settings_file", { path, file, createNew });
+  return invoke<string>("save_button_settings_file", { path, file: packButtonDocumentTransport(file), createNew });
 }
 
 export async function loadButtonSettingsFile(path: string): Promise<ButtonSettingsFile> {
@@ -524,7 +524,7 @@ export async function loadButtonSettingsFile(path: string): Promise<ButtonSettin
     throw new Error("Button settings files can only be loaded from the FlowCell desktop host.");
   }
   const file = normalizeButtonSettingsFile(
-    await invoke<unknown>("load_button_settings_file", { path })
+    unpackButtonDocumentTransport(await invoke<unknown>("load_button_settings_file", { path }))
   );
   const validation = validateButtonSettingsFile(file);
   if (!validation.valid) throw new Error(validation.issues.join("\n"));
@@ -545,7 +545,7 @@ export async function initializeButtonSettingsDefault(
   return invoke<string>("initialize_button_settings_default", {
     placementKind,
     surfaceId,
-    file,
+    file: packButtonDocumentTransport(file),
     expectedRevision
   });
 }
@@ -561,7 +561,7 @@ export async function loadButtonSettingsDefault(
     placementKind,
     surfaceId
   });
-  const file = normalizeButtonSettingsFile(loaded);
+  const file = normalizeButtonSettingsFile(unpackButtonDocumentTransport(loaded));
   if (file === null || file === undefined) return null;
   const validation = validateButtonSettingsFile(file);
   if (!validation.valid) throw new Error(validation.issues.join("\n"));
@@ -582,7 +582,7 @@ export async function updateButtonSettingsDefault(
   return invoke<string>("update_button_settings_default", {
     placementKind,
     surfaceId,
-    file,
+    file: packButtonDocumentTransport(file),
     expectedRevision
   });
 }

@@ -1,5 +1,18 @@
 ; A screenshot destination belongs to the owned Button, never its panel.
 class FlowCellTempShotsSettings {
+    static IsStartupOwner(launcherPath) {
+        SplitPath launcherPath, , &sourceDirectory
+        SplitPath sourceDirectory, &sourceName, &packageDirectory
+        if StrLower(sourceName) != "source"
+            return false
+        try {
+            install := FileRead(packageDirectory "\flowcell.install.json", "UTF-8")
+            return StrLower(JsonStringValue(install, "programName")) = "windows"
+                && StrLower(JsonStringValue(install, "panelName")) = "startup"
+        }
+        return false
+    }
+
     static OwnerId(launcherPath) {
         SplitPath launcherPath, , &sourceDirectory
         SplitPath sourceDirectory, &sourceName, &packageDirectory

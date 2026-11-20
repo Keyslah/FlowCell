@@ -2083,6 +2083,263 @@ pub(crate) async fn save_bind_shortcut(
         .map_err(|error| format!("Binds shortcut save worker failed: {error}"))?
 }
 
+// First-run inputs must be ready before the resident backend can run a saved
+// shortcut without the frontend. Resolve the same owned source used by Binds;
+// never trust an arbitrary executable path as an input-setup handler.
+fn first_run_binding_source(
+    program_name: &str,
+    target_kind: &str,
+    target: &str,
+    owner_button_id: Option<&str>,
+) -> Result<Option<program_sources::execute::ActiveSourceResolution>, String> {
+    if !supports_background_script_setup(program_name, target_kind) { return Ok(None); }
+    let mut matching = None;
+    for panel_name in list_panel_folders(program_name.to_string())?
+        .into_iter()
+        .filter(|panel| panel.eq_ignore_ascii_case("Startup"))
+    {
+        for resolution in
+            program_sources::execute::list_active_source_records(program_name, &panel_name)?
+        {
+            let matches_target = startup_source_matches_target(
+                target_kind,
+                target,
+                owner_button_id,
+                &resolution.record.owner_button_id,
+                &resolution.record.source_path,
+            );
+            if !matches_target {
+                continue;
+            }
+            if matching.is_some() {
+                return Err("The shortcut matches more than one installed Button source.".into());
+            }
+            matching = Some(resolution);
+        }
+    }
+    Ok(matching.filter(|resolution| {
+        is_startup_first_run_source(
+            &resolution.record.program_name,
+            &resolution.record.panel_name,
+            resolution.record.input_setup.as_ref(),
+        )
+    }))
+}
+
+fn supports_background_script_setup(program: &str, target_kind: &str) -> bool {
+    program.trim().eq_ignore_ascii_case("Windows") && !is_tool_set_binding_kind(target_kind)
+}
+
+fn startup_source_matches_target(
+    target_kind: &str,
+    target: &str,
+    owner_button_id: Option<&str>,
+    source_owner: &str,
+    source_path: &str,
+) -> bool {
+    if is_tool_set_binding_kind(target_kind) {
+        owner_button_id.is_some_and(|owner| source_owner == owner)
+    } else {
+        binding_script_path(source_path).eq_ignore_ascii_case(&binding_script_path(target))
+    }
+}
+
+fn is_startup_first_run_source(program: &str, panel: &str, setup: Option<&Value>) -> bool {
+    program.trim().eq_ignore_ascii_case("Windows")
+        && panel.eq_ignore_ascii_case("Startup")
+        && setup
+            .and_then(|value| value.get("firstRun"))
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
+fn ensure_first_run_shortcut_inputs<F>(
+    shortcut: &str,
+    first_run: bool,
+    prepare: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<bool, String>,
+{
+    if shortcut.trim().is_empty() || !first_run {
+        return Ok(());
+    }
+    if !prepare()? {
+        return Err("Input setup was cancelled; the shortcut was not saved.".into());
+    }
+    Ok(())
+}
+
+// Avoid opening first-run setup for a shortcut already known to be invalid.
+// The locked save lane still repeats all checks after the dialog returns.
+fn preflight_startup_shortcut(
+    request: &SaveBindShortcutRequest,
+    target_kind: &str,
+    target: &str,
+    owner: Option<&str>,
+) -> Result<(), String> {
+    let (bindings, _, _) = read_bindings_file_state()?;
+    let program_tab_id = if request.program_tab_id > 0 {
+        request.program_tab_id
+    } else {
+        resolve_program_tab_id(request.program_name.trim())
+    };
+    let requested_id = request.binding_id.unwrap_or(0);
+    let index = if requested_id > 0 {
+        let index = bindings
+            .script_bindings
+            .iter()
+            .position(|binding| binding.id.or(binding.binding_id).unwrap_or(0) == requested_id)
+            .ok_or("The selected binding changed; reload Binds before saving.")?;
+        if !binding_matches_save_target(
+            &bindings.script_bindings[index],
+            target_kind,
+            target,
+            owner,
+            program_tab_id,
+        ) {
+            return Err(
+                "The selected binding no longer matches this Button; reload Binds before saving."
+                    .into(),
+            );
+        }
+        Some(index)
+    } else {
+        bindings.script_bindings.iter().position(|binding| {
+            binding_matches_save_target(binding, target_kind, target, owner, program_tab_id)
+        })
+    };
+    let shortcut = request.shortcut.trim();
+    let key = super::button_hotkeys::keyboard_shortcut_conflict_key(shortcut);
+    let conflicts = |existing: &str| {
+        existing.trim().eq_ignore_ascii_case(shortcut)
+            || key
+                .zip(super::button_hotkeys::keyboard_shortcut_conflict_key(
+                    existing,
+                ))
+                .is_some_and(|(a, b)| a == b)
+    };
+    if bindings
+        .script_bindings
+        .iter()
+        .enumerate()
+        .any(|(i, binding)| Some(i) != index && conflicts(&binding.shortcut))
+        || bindings
+            .action_hotkeys
+            .values()
+            .any(|shortcut| conflicts(shortcut))
+    {
+        return Err("That shortcut is already in use.".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod first_run_shortcut_tests {
+    use super::{
+        ensure_first_run_shortcut_inputs, is_startup_first_run_source,
+        startup_source_matches_target, supports_background_script_setup,
+    };
+    use serde_json::json;
+    use std::cell::Cell;
+
+    #[test]
+    fn binding_requires_successful_first_run_setup() {
+        let calls = Cell::new(0);
+        let result = ensure_first_run_shortcut_inputs("^!+F12", true, || {
+            calls.set(calls.get() + 1);
+            Ok(false)
+        });
+        assert_eq!(calls.get(), 1);
+        assert!(result.unwrap_err().contains("shortcut was not saved"));
+        assert!(ensure_first_run_shortcut_inputs("^!+F12", true, || Ok(true)).is_ok());
+        assert_eq!(
+            ensure_first_run_shortcut_inputs("^!+F12", true, || Err("setup failed".into()))
+                .unwrap_err(),
+            "setup failed"
+        );
+    }
+
+    #[test]
+    fn clearing_or_edit_only_inputs_never_runs_setup() {
+        let calls = Cell::new(0);
+        for (shortcut, first_run) in [("", true), ("^F12", false)] {
+            ensure_first_run_shortcut_inputs(shortcut, first_run, || {
+                calls.set(calls.get() + 1);
+                Ok(true)
+            })
+            .unwrap();
+        }
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn first_run_setup_is_limited_to_windows_startup() {
+        let first_run = json!({"firstRun":true});
+        let edit_only = json!({"firstRun":false});
+        assert!(supports_background_script_setup("windows", "script"));
+        assert!(!supports_background_script_setup("Blender", "script"));
+        assert!(!supports_background_script_setup("Windows", "tool-set-owner"));
+        assert!(!supports_background_script_setup("Windows", "tool-set-child"));
+        assert!(is_startup_first_run_source(
+            "windows",
+            "startup",
+            Some(&first_run)
+        ));
+        assert!(!is_startup_first_run_source(
+            "Windows",
+            "Utility",
+            Some(&first_run)
+        ));
+        assert!(!is_startup_first_run_source(
+            "Blender",
+            "Startup",
+            Some(&first_run)
+        ));
+        assert!(!is_startup_first_run_source("Other Windows", "Startup", Some(&first_run)));
+        assert!(!is_startup_first_run_source(
+            "Windows",
+            "Startup",
+            Some(&edit_only)
+        ));
+        assert!(!is_startup_first_run_source("Windows", "Startup", None));
+    }
+
+    #[test]
+    fn startup_setup_matches_the_installed_launcher_not_a_different_script() {
+        let installed =
+            r"\\?\C:\FlowCell\Programs\Windows\Local Scripts\owner\source\Screenshots.vbs";
+        assert!(startup_source_matches_target(
+            "script",
+            r"c:\flowcell\programs\windows\local scripts\owner\source\screenshots.vbs",
+            None,
+            "owner",
+            installed
+        ));
+        assert!(!startup_source_matches_target(
+            "script",
+            r"C:\FlowCell\Programs\Windows\Local Scripts\other\source\Screenshots.vbs",
+            None,
+            "owner",
+            installed
+        ));
+        assert!(startup_source_matches_target(
+            "tool-set-owner",
+            "owner",
+            Some("owner"),
+            "owner",
+            installed
+        ));
+        assert!(!startup_source_matches_target(
+            "tool-set-owner",
+            "owner",
+            Some("other"),
+            "owner",
+            installed
+        ));
+    }
+}
+
 fn save_bind_shortcut_sync(
     app: AppHandle,
     request: SaveBindShortcutRequest,
@@ -2116,6 +2373,28 @@ fn save_bind_shortcut_sync(
     if is_tool_set_binding_kind(target_kind) && !request.shortcut.trim().is_empty() {
         super::button_hotkeys::validate_tool_set_shortcut(request.shortcut.trim())
             .map_err(|error| format!("That Tool Set shortcut is not supported: {error}"))?;
+    }
+
+    // Setup can commit Button state and must run before any of the state,
+    // source, or bindings locks below. A cancelled setup leaves the previous
+    // binding untouched. The existing locked lane revalidates the target.
+    if !request.shortcut.trim().is_empty() {
+        if let Some(source) = first_run_binding_source(
+            program_name,
+            target_kind,
+            &target,
+            owner_button_id.as_deref(),
+        )? {
+            preflight_startup_shortcut(
+                &request,
+                target_kind,
+                &target,
+                owner_button_id.as_deref(),
+            )?;
+            ensure_first_run_shortcut_inputs(&request.shortcut, true, || {
+                super::execution::prepare_button_inputs(&app, &source, false)
+            })?;
+        }
     }
 
     // Recover any interrupted canonical/source transaction before entering the
