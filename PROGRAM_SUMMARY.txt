@@ -1,3 +1,6 @@
+2026-11-20 Illustrator Layers panel:
+- The Illustrator default panel is now Layers, containing the Layer Tree and all 20 layer actions. The unused duplicate Layers panel is removed; catalog paths and stable contribution IDs remain unchanged. Layer Tree refresh events target the renamed panel.
+
 2026-11-20 FlowCell v0.1.13 release:
 - Button settings preserve v1 exports and read legacy files while pooling repeated embedded skins in IPC and managed defaults. Valid settings can exceed the former 16 MiB threshold; file reads and pooled expansion are bounded to 1 GiB, and atomic writes and structural validation remain in place.
 - Only verified Windows Startup panel script shortcuts and Windows Startup-owned macros remain active when the FlowCell main window is closed; other bindings retain their existing scopes while it is open and pass through to Windows while closed. The Pause emergency stop only intercepts a key during a running recorded macro.

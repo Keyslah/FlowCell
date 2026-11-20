@@ -6,20 +6,14 @@
   "bindActionsFile": "HelperScripts/flowcell.bind-actions.ini",
   "defaultPanels": [
     "Layers",
-    "Layers Builder",
     "Files",
     "Toolsets",
     "Utility"
   ],
   "panels": [
     {
-      "id": "layers",
-      "label": "Layers",
-      "defaultSelected": true
-    },
-    {
       "id": "layers-builder",
-      "label": "Layers Builder",
+      "label": "Layers",
       "defaultSelected": true
     },
     {
@@ -202,7 +196,7 @@
     {
       "id": "illustrator.layers-builder.3d",
       "version": "3.1.2",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/3d",
       "importKind": "script",
       "displayLabel": "3D",
@@ -219,7 +213,7 @@
     {
       "id": "illustrator.layers-builder.add-to-live",
       "version": "3.1.2",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/add-to-live",
       "importKind": "script",
       "displayLabel": "Add to Live",
@@ -236,7 +230,7 @@
     {
       "id": "illustrator.layers-builder.archive",
       "version": "3.1.3",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/archive",
       "importKind": "script",
       "displayLabel": "Archive",
@@ -253,7 +247,7 @@
     {
       "id": "illustrator.layers-builder.b-lock",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/b-lock",
       "importKind": "script",
       "displayLabel": "B Lock",
@@ -270,7 +264,7 @@
     {
       "id": "illustrator.layers-builder.b-vis",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/b-vis",
       "importKind": "script",
       "displayLabel": "B Vis",
@@ -287,7 +281,7 @@
     {
       "id": "illustrator.layers-builder.back",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/back",
       "importKind": "script",
       "displayLabel": "Back",
@@ -304,7 +298,7 @@
     {
       "id": "illustrator.layers-builder.copy-live",
       "version": "3.1.2",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/copy-live",
       "importKind": "script",
       "displayLabel": "Copy Live",
@@ -321,7 +315,7 @@
     {
       "id": "illustrator.layers-builder.delete-sublayer",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/delete-sublayer",
       "importKind": "script",
       "displayLabel": "Delete Sublayer",
@@ -338,7 +332,7 @@
     {
       "id": "illustrator.layers-builder.empty-sublayers",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/empty-sublayers",
       "importKind": "script",
       "displayLabel": "Empty Sublayers",
@@ -355,7 +349,7 @@
     {
       "id": "illustrator.layers-builder.empty-trash",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/empty-trash",
       "importKind": "script",
       "displayLabel": "Empty Trash",
@@ -372,7 +366,7 @@
     {
       "id": "illustrator.layers-builder.flatten-top-sub",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/flatten-top-sub",
       "importKind": "script",
       "displayLabel": "Flatten Top Sub",
@@ -389,7 +383,7 @@
     {
       "id": "illustrator.layers-builder.make-layers",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/make-layers",
       "importKind": "script",
       "displayLabel": "Make Layers",
@@ -406,7 +400,7 @@
     {
       "id": "illustrator.layers-builder.new-sub",
       "version": "3.1.2",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/new-sub",
       "importKind": "script",
       "displayLabel": "New Sub",
@@ -423,7 +417,7 @@
     {
       "id": "illustrator.layers-builder.rename",
       "version": "3.1.2",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/rename",
       "importKind": "script",
       "displayLabel": "Rename",
@@ -440,7 +434,7 @@
     {
       "id": "illustrator.layers-builder.restore",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/restore",
       "importKind": "script",
       "displayLabel": "Restore",
@@ -457,7 +451,7 @@
     {
       "id": "illustrator.layers-builder.set-lock",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/set-lock",
       "importKind": "script",
       "displayLabel": "Set Lock",
@@ -474,7 +468,7 @@
     {
       "id": "illustrator.layers-builder.set-vis",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/set-vis",
       "importKind": "script",
       "displayLabel": "Set Vis",
@@ -491,7 +485,7 @@
     {
       "id": "illustrator.layers-builder.snapshot",
       "version": "3.1.4",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/snapshot",
       "importKind": "script",
       "displayLabel": "Snapshot",
@@ -508,7 +502,7 @@
     {
       "id": "illustrator.layers-builder.sort",
       "version": "3.1.2",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/sort",
       "importKind": "script",
       "displayLabel": "Sort",
@@ -525,7 +519,7 @@
     {
       "id": "illustrator.layers-builder.trash",
       "version": "3.1.1",
-      "panelName": "Layers Builder",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/trash",
       "importKind": "script",
       "displayLabel": "Trash",
@@ -541,8 +535,8 @@
     },
     {
       "id": "illustrator.layer-tree",
-      "version": "3.0.16",
-      "panelName": "Layers Builder",
+      "version": "3.0.17",
+      "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/LayersBuilder",
       "importKind": "script",
       "displayLabel": "Layer Tree",

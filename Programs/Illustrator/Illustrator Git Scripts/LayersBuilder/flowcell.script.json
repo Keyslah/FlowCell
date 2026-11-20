@@ -1110,7 +1110,7 @@
     "config": {
       "programName": "Illustrator",
       "refreshPanelNames": [
-        "Layers Builder"
+        "Layers"
       ],
       "resourceLabel": "Layer",
       "emptyMessage": "No layers found. Open an Illustrator document and Refresh.",

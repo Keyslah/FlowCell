@@ -331,6 +331,14 @@ test("Archive with no artwork selection creates no layers and reports the requir
   assert.match(f.alerts[0], /select artwork/);
 });
 
+test("Illustrator has one Layers panel with all layer actions", () => {
+  assert.equal(programManifest.defaultPanels.filter((name) => name === "Layers").length, 1);
+  assert.equal(programManifest.defaultPanels.includes("Layers Builder"), false);
+  assert.deepEqual(programManifest.panels.filter(({ label }) => label === "Layers").map(({ id }) => id), ["layers-builder"]);
+  assert.equal(programManifest.panels.some(({ id }) => id === "layers"), false);
+  assert.ok([...contributions, layerTreeContribution].every(({ panelName }) => panelName === "Layers"));
+});
+
 test("all 20 Layers Builder actions are ordinary manifest packages", () => {
   assert.equal(contributions.length, 20);
   assert.equal(globalActions.size, 11);
@@ -827,7 +835,7 @@ test("New Sub requires exactly one target and creates a direct child", () => {
 
 test("Layer Tree is default-selected but never resurrected after deletion", () => {
   assert.ok(layerTreeContribution);
-  assert.equal(layerTreeContribution.version, "3.0.16");
+  assert.equal(layerTreeContribution.version, "3.0.17");
   assert.equal(layerTreeContribution.sourcePath, "Illustrator Git Scripts/LayersBuilder");
   assert.equal(layerTreeContribution.importKind, "script");
   assert.equal(layerTreeContribution.installOnAdd, true);

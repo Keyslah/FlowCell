@@ -409,11 +409,11 @@ test("Layer Tree is an ordinary self-contained page-enabled script package", asy
   ]);
   assert.deepEqual(page.refreshEvents, ["flowcell://program-data-invalidated"]);
   assert.equal(page.config?.refreshEvent, page.refreshEvents[0]);
-  assert.deepEqual(page.config?.refreshPanelNames, ["Layers Builder"]);
+  assert.deepEqual(page.config?.refreshPanelNames, ["Layers"]);
   assert.ok(page.config?.strings && typeof page.config.strings === "object");
 });
 
-test("Layer Tree refresh invalidation accepts Layers Builder only", async () => {
+test("Layer Tree refresh invalidation accepts Layers only", async () => {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   const pageScript = await readText("page/page.js");
   const helperSource = pageScript.slice(
@@ -432,12 +432,12 @@ test("Layer Tree refresh invalidation accepts Layers Builder only", async () => 
 
   assert.equal(refreshSourceMatches({
     programName: "Illustrator",
-    panelName: "Layers Builder",
+    panelName: "Layers",
     fileName: "new-sub.flowcell-source.json"
   }), true);
   assert.equal(refreshSourceMatches({
     programName: "illustrator",
-    panelName: "layers builder"
+    panelName: "layers"
   }), true);
   assert.equal(refreshSourceMatches({
     programName: "Illustrator",
@@ -452,7 +452,7 @@ test("Layer Tree refresh invalidation accepts Layers Builder only", async () => 
   assert.equal(refreshSourceMatches({ programName: "Illustrator" }), false);
   assert.equal(refreshSourceMatches({
     programName: "Blender",
-    panelName: "Layers Builder"
+    panelName: "Layers"
   }), false);
   assert.ok(
     refreshHandler.indexOf("if (!refreshSourceMatches(payload)) return;") <
