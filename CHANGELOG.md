@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.13
+
+- Open the Main Page Add picker directly in the selected Program's Git Scripts folder.
+- Remove the Open Chrome Workspace and Save Chrome Workspace Buttons from Windows catalogs and release packages.
+- Improve Screenshots setup, Main Button spacing, and Program executable discovery.
+- Update popped Button colors and the Blender Theme page, including scatter and full-width color swatches.
+
 ## Unreleased
 
 - Fixed portable Blender bridge discovery so valid installed addons work without a machine-local `automation.bridgeFolder`, with explicit diagnostics and a bridge health command.

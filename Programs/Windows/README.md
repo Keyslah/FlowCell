@@ -33,9 +33,9 @@ role or tool-set slot change requires delete/re-add.
 Add Program reads the manifest-authoritative Windows Panel/contribution
 inventory. `Register program only` creates no source Button, while the default
 or custom plan installs the selected user-facing tools. The shipped default set
-contains 8 Files tools and 8 Utility tools, including Setup Organization, Window
+contains 8 Files tools and 5 Utility tools, including Setup Organization, Window
 Grid, clipboard text, backups and Git actions, screen captures, monitor controls,
-Chrome workspaces and the FlowCell window toggle. Startup starts empty and accepts
+and the FlowCell window toggle. Startup starts empty and accepts
 the user's own assignments. Codex Micro remains a separately assignable catalog;
 generated organizer profile Buttons are created through Setup Organization, which
 ships the authored Program Tree and Project profiles and all 6 file/program groups.

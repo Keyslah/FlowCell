@@ -57,7 +57,12 @@ export function programPopoutGradientColor(args: {
   if (args.colors.length === 1) return args.colors[0];
   const range = args.maximumY - args.minimumY;
   const linear = range > 0 ? unit((args.y - args.minimumY) / range) : 0;
-  const position = programPopoutGradientCurveValue(args.curve, linear);
+  const random = (gradientPositionForPlacement({
+    placementId: args.placementId, y: 0.5, minimumY: 0, maximumY: 1,
+    gradient: { spread: 100, scatter: 100, seed: args.seed }
+  }) - 0.25) * 2;
+  const scatter = unit(args.scatter / 100);
+  const position = programPopoutGradientCurveValue(args.curve, linear * (1 - scatter) + random * scatter);
   const scaled = position * (args.colors.length - 1);
   const anchor = Math.round(scaled);
   if (Math.abs(scaled - anchor) < 1e-10) return args.colors[anchor];
@@ -67,10 +72,5 @@ export function programPopoutGradientColor(args: {
   // Spread controls the transition width inside each interval, rather than
   // cropping the selected palette to its middle and losing its endpoints.
   const blend = spread > 0 ? 0.5 + (fraction - 0.5) / spread : fraction < 0.5 ? 0 : 1;
-  const noise = gradientPositionForPlacement({
-    placementId: args.placementId, y: 0.5, minimumY: 0, maximumY: 1,
-    gradient: { spread: 100, scatter: args.scatter, seed: args.seed }
-  }) - 0.5;
-  const jitter = noise * 4 * fraction * (1 - fraction);
-  return interpolateThemeColor(args.colors[index], args.colors[index + 1], blend + jitter);
+  return interpolateThemeColor(args.colors[index], args.colors[index + 1], blend);
 }

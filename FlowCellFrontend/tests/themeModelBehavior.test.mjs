@@ -1587,7 +1587,7 @@ test("popped Button palette Apply is exact-scope and Refill keeps scatter placem
   assert.deepEqual(colorsByPlacement(second), colorsByPlacement(first));
   assert.equal(Object.values(colorsByPlacement(first)).every(Boolean), true);
   const reshuffled = refill(document, targets, { ...gradient, seed: 18 });
-  assert.deepEqual(colorsByPlacement(reshuffled), colorsByPlacement(first), "exact stop anchors survive scatter");
+  assert.notDeepEqual(colorsByPlacement(reshuffled), colorsByPlacement(first), "scatter also varies colors at gradient stops");
   const interior = structuredClone(document);
   interior.placements["pop-b"].y += 7;
   assert.notDeepEqual(colorsByPlacement(refill(interior, targets, { ...gradient, seed: 18 })),

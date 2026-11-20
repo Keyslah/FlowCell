@@ -158,7 +158,7 @@ function installationElements(node) {
   return React.isValidElement(node) ? [node, ...installationElements(node.props.children)] : [];
 }
 
-test("Installation renders one executable field and Browse updates its path", async () => {
+test("Installation offers detected executable paths alongside manual entry and Browse", async () => {
   const paths = ["C:\\Program Files\\Blender Foundation\\Blender 5.0\\blender.exe", "C:\\Program Files\\Blender Foundation\\Blender 5.1\\blender.exe"];
   const h = installationRenderHarness({
     executablePath: paths[0],
@@ -166,23 +166,56 @@ test("Installation renders one executable field and Browse updates its path", as
     selectedProgram: { programName: "Blender", executableCandidates: paths.map(path => ({ path })), panels: [], sources: [] }
   });
   const input = tree => installationElements(tree).find(node => node.props.id === "program-executable");
+  const detected = tree => installationElements(tree).find(node => node.props["aria-label"] === "Detected application paths");
   const browse = tree => installationElements(tree).filter(node => node.type === "button" && node.props.children === "Browse");
   let tree = h.render();
   const markup = renderToStaticMarkup(tree);
   assert.equal(input(tree).props.value, paths[0]);
-  assert.equal(markup.split(paths[0]).length - 1, 1);
-  assert.ok(!markup.includes(paths[1]));
-  assert.doesNotMatch(markup, /Detected application paths|Selected executable path|Select the installed application|Find installed/);
+  assert.ok(markup.includes(paths[0]));
+  assert.ok(markup.includes(paths[1]));
+  assert.equal(detected(tree).props.value, paths[0]);
+  detected(tree).props.onChange({ target: { value: paths[1] } });
+  tree = h.render();
+  assert.equal(input(tree).props.value, paths[1]);
+  assert.equal(detected(tree).props.value, paths[1]);
   assert.equal(browse(tree).length, 1);
+  h.state.showOpenFileDialog = async () => [paths[0]];
+  tree = h.render();
   browse(tree)[0].props.onClick();
   await Promise.resolve();
   tree = h.render();
-  assert.equal(input(tree).props.value, paths[1]);
-  assert.equal(renderToStaticMarkup(tree).split(paths[1]).length - 1, 1);
-  assert.equal(h.state.selectionChanges, 1);
+  assert.equal(input(tree).props.value, paths[0]);
+  assert.equal(h.state.selectionChanges, 2);
+  assert.ok(installationElements(tree).some(node => node.type === "button" && node.props.children === "Find installed"));
   h.state.busy = true;
   assert.ok(input(h.render()).props.disabled);
+  assert.ok(detected(h.render()).props.disabled);
   assert.ok(browse(h.render())[0].props.disabled);
+});
+
+test("Find installed refreshes candidates without overwriting a manually entered path", async () => {
+  const source = read(frontendRoot, "src", "pages", "program-setup", "AddProgramWindowPage.tsx");
+  const parsed = ts.createSourceFile("AddProgramWindowPage.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const component = parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "AddProgramWindowPage");
+  const declaration = component.body.statements.filter(ts.isVariableStatement).flatMap(node => [...node.declarationList.declarations]).find(node => node.name.getText(parsed) === "refreshDetection");
+  const compiled = ts.transpileModule(`return (${declaration.initializer.getText(parsed)});`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  for (const currentPath of ["D:\\Custom\\blender.exe", ""]) {
+    const program = { programName: "Blender", suggestedExecutable: "C:\\Blender\\blender.exe", executableCandidates: [{ path: "C:\\Blender\\blender.exe" }] };
+    const inventory = { packages: [program], rejectedPackages: [] };
+    const state = { inventory: null, path: currentPath, busy: false, status: "" };
+    const context = {
+      busy: false, packageActionPending: { current: false }, inventoryRequestRef: { current: 0 },
+      selectedProgramName: "Blender", executablePath: currentPath,
+      setBusy: value => { state.busy = value; }, setStatus: value => { state.status = value; },
+      listAvailableProgramPackages: async () => inventory, setInventory: value => { state.inventory = value; },
+      setExecutablePath: value => { state.path = value; }, errorMessage: String
+    };
+    await new Function(...Object.keys(context), compiled)(...Object.values(context))();
+    assert.equal(state.inventory, inventory);
+    assert.equal(state.path, currentPath || program.suggestedExecutable);
+    assert.equal(state.busy, false);
+    assert.equal(context.inventoryRequestRef.current, 1);
+  }
 });
 
 test("Installation displays the complete manually entered path in both application setup modes", () => {

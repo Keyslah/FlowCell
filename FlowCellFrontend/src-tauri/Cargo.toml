@@ -1,6 +1,6 @@
 [package]
 name = "flowcell_frontend"
-version = "0.1.12"
+version = "0.1.13"
 description = "FlowCell frontend"
 authors = ["OpenAI"]
 edition = "2021"

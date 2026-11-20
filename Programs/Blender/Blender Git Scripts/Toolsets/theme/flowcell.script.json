@@ -110,7 +110,8 @@
           "kind": "core",
           "capability": "button-theme.palette",
           "options": {
-            "operation": "scan"
+            "operation": "scan",
+            "layoutGeometry": true
           }
         },
         "requestSchema": {
@@ -151,6 +152,15 @@
                   },
                   "groupLabel": {
                     "type": "string"
+                  },
+                  "layoutGroup": {
+                    "type": "string"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
                   },
                   "enabled": {
                     "type": "boolean"
@@ -194,7 +204,8 @@
           "kind": "core",
           "capability": "button-theme.palette",
           "options": {
-            "operation": "participation"
+            "operation": "participation",
+            "layoutGeometry": true
           }
         },
         "requestSchema": {
@@ -254,6 +265,15 @@
                   "groupLabel": {
                     "type": "string"
                   },
+                  "layoutGroup": {
+                    "type": "string"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
                   "enabled": {
                     "type": "boolean"
                   }
@@ -296,7 +316,8 @@
           "kind": "core",
           "capability": "button-theme.palette",
           "options": {
-            "operation": "edit"
+            "operation": "edit",
+            "layoutGeometry": true
           }
         },
         "requestSchema": {
@@ -370,6 +391,15 @@
                   "groupLabel": {
                     "type": "string"
                   },
+                  "layoutGroup": {
+                    "type": "string"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
                   "enabled": {
                     "type": "boolean"
                   }
@@ -412,7 +442,8 @@
           "kind": "core",
           "capability": "button-theme.palette",
           "options": {
-            "operation": "apply"
+            "operation": "apply",
+            "layoutGeometry": true
           }
         },
         "requestSchema": {
@@ -880,6 +911,15 @@
                   "groupLabel": {
                     "type": "string"
                   },
+                  "layoutGroup": {
+                    "type": "string"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
                   "enabled": {
                     "type": "boolean"
                   }
@@ -922,7 +962,8 @@
           "kind": "core",
           "capability": "button-theme.palette",
           "options": {
-            "operation": "refill"
+            "operation": "refill",
+            "layoutGeometry": true
           }
         },
         "requestSchema": {
@@ -1034,6 +1075,15 @@
                   "groupLabel": {
                     "type": "string"
                   },
+                  "layoutGroup": {
+                    "type": "string"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
                   "enabled": {
                     "type": "boolean"
                   }
@@ -1076,7 +1126,8 @@
           "kind": "core",
           "capability": "button-theme.palette",
           "options": {
-            "operation": "toggle-text"
+            "operation": "toggle-text",
+            "layoutGeometry": true
           }
         },
         "requestSchema": {
@@ -1117,6 +1168,15 @@
                   },
                   "groupLabel": {
                     "type": "string"
+                  },
+                  "layoutGroup": {
+                    "type": "string"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
                   },
                   "enabled": {
                     "type": "boolean"
@@ -7152,7 +7212,7 @@
         "theme.apply-bucket": "Apply only this theme bucket.",
         "button-theme.scan": "Collect individual colors from scoped action Buttons in open Blender Pop-out and Fan windows. Each Button has its own editable color; editor previews remain excluded.",
         "button-theme.apply": "Apply the listed colors to checked Buttons. Individual color edits apply directly, including to unchecked Buttons. Rescan is required if the open windows changed.",
-        "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Layout spans all visible Buttons on each monitor along the Angle; otherwise each window has its own gradient. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
+        "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Layout spans all visible Buttons on each monitor along the Angle; otherwise each window has its own gradient. Spread controls blend width. Scatter moves Buttons through the entire gradient; 0% follows position and 100% samples across the full range.",
         "button-theme.refill": "Apply the ordered multi-color Surface gradient, with its angle and curve, to scoped Buttons in the currently open Blender Pop-outs and Fans.",
         "button-theme.refill-colors": "Sample the selected number of Gradient Colors from the current Theme image, show them as ordered gradient stops, and apply the gradient to scoped Buttons in open Blender Pop-outs and Fans.",
         "button-theme.scatter": "Redistribute the currently present aggregate colors across the same live scanned Buttons using remembered hidden placement IDs.",

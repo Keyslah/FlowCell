@@ -38,10 +38,6 @@ foreach ($route in $routes) {
         $manifest.inputSetup.firstRun -eq $false) "Explicit edit-only setup route: $($route.Id)"
     $null = Read-ScriptAst (Join-Path $package $route.Source)
 }
-foreach ($folder in @('Utility/Save Chrome Workspace', 'Utility/Open Chrome Workspace')) {
-    $manifest = Get-Content -LiteralPath (Join-Path $catalog "$folder/flowcell.script.json") -Raw | ConvertFrom-Json
-    Assert ($null -eq $manifest.PSObject.Properties['inputSetup']) "Every-run dialogs are excluded: $folder"
-}
 Assert (-not (Test-Path -LiteralPath (Join-Path $catalog 'Files/Update GitHub/flowcell.script.json'))) 'Commit messages are not first-run Button setup.'
 
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('flowcell-input-setup-tests-' + [guid]::NewGuid().ToString('N'))

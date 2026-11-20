@@ -498,6 +498,12 @@ function Assert-ProgramPackageEntries(
       Stop-Package "$SourceDescription contains the removed Sync Recent Creative Shortcuts script: $entryName"
     }
 
+    if ($ProgramName -ieq 'Windows' -and @($segments | Where-Object {
+      $_ -in @('Open Chrome Workspace', 'Save Chrome Workspace', 'open_chrome_workspace.ps1', 'save_chrome_workspace.ps1', 'ChromeWorkspaceHelpers.ps1')
+    }).Count -gt 0) {
+      Stop-Package "$SourceDescription contains a removed Chrome Workspace script: $entryName"
+    }
+
     foreach ($segment in $segments) {
       if (
         $segment.Equals('Panels', [System.StringComparison]::OrdinalIgnoreCase) -or

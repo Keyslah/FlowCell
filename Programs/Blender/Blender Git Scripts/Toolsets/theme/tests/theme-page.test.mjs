@@ -855,6 +855,10 @@ test("popped Button controls share one row and refill or scatter stable hidden p
       paletteHexes: sampledColors
     }),
     "button-theme.apply": applyResponse,
+    "button-theme.edit": ({ edits }) => {
+      placements = placements.map((entry) => ({ ...entry, ...edits.find(({ placementId }) => placementId === entry.placementId) }));
+      return refreshResponse();
+    },
     "button-theme.refill": (payload) => {
       placements = placements.map((placement, index) => ({
         placementId: placement.placementId,
@@ -1033,10 +1037,10 @@ test("popped Button controls share one row and refill or scatter stable hidden p
 
   const sampleCountBeforeScatter = root.requests.filter(({ actionId }) => actionId === "theme.image.sample").length;
   await clickAction("Scatter");
-  const scatterRequest = root.requests.filter(({ actionId }) => actionId === "button-theme.apply").at(-1);
+  const scatterRequest = root.requests.filter(({ actionId }) => actionId === "button-theme.edit").at(-1);
   assert.equal(scatterRequest.payload.expectedRevision, 45);
   assert.deepEqual(
-    new Set(scatterRequest.payload.assignments.map(({ color }) => color)),
+    new Set(scatterRequest.payload.edits.map(({ color }) => color)),
     refillColors,
     "Scatter must remix the aggregate colors currently present without resampling the image"
   );
@@ -1061,7 +1065,8 @@ test("popped Button controls share one row and refill or scatter stable hidden p
     sampledColors.slice(0, 3)
   );
   assert.equal(Object.hasOwn(persistedState.buttonTheme, "refillRange"), false);
-  assert.equal(persistedState.buttonTheme.seed, 9);
+  assert.equal(persistedState.buttonTheme.seed, 8, "shuffle does not change the gradient seed");
+  assert.equal(persistedState.buttonTheme.shuffleSeed, 1);
   assert.equal(persistedState.buttonTheme.screenTopToBottom, false);
   assert.equal(Object.hasOwn(persistedState.buttonTheme, "nextTextColor"), false);
   assert.equal(Object.hasOwn(persistedState.buttonTheme, "textColor"), true);
@@ -1236,21 +1241,21 @@ test("popped Button scatter remembers colors by hidden placement identity", asyn
         revision: 70,
         seed: 12,
         refillRange: 5,
-        placements: orderedIds.map((placementId, index) => ({
+        placements: orderedIds.map((placementId) => ({
           placementId,
-          bucketId: buckets[index % buckets.length].id
+          bucketId: buckets[placementIds.indexOf(placementId) % buckets.length].id
         })),
         buckets
       }
     }, {
-      "button-theme.apply": (payload) => {
+      "button-theme.edit": (payload) => {
         capturedRequest = JSON.parse(JSON.stringify(payload));
         return {
           revision: 71,
-          placements: payload.assignments.map(({ placementId, color }) => ({ placementId, color, materialColors: [] })),
-          buttonCount: payload.assignments.length,
-          colorCount: new Set(payload.assignments.map(({ color }) => color)).size,
-          changedCount: payload.assignments.length,
+          placements: payload.edits.map(({ placementId, color }) => ({ placementId, color, materialColors: [] })),
+          buttonCount: payload.edits.length,
+          colorCount: new Set(payload.edits.map(({ color }) => color)).size,
+          changedCount: payload.edits.length,
           message: "Scattered popped Button colors."
         };
       }
@@ -1261,7 +1266,7 @@ test("popped Button scatter remembers colors by hidden placement identity", asyn
     await settlePageAction();
     assert.equal(capturedRequest.expectedRevision, 70);
     return Object.fromEntries(
-      capturedRequest.assignments
+      capturedRequest.edits
         .map(({ placementId, color }) => [placementId, color])
         .sort(([left], [right]) => left.localeCompare(right))
     );
@@ -1271,6 +1276,22 @@ test("popped Button scatter remembers colors by hidden placement identity", asyn
   const reversed = await scatterForOrder([...placementIds].reverse());
   assert.deepEqual(reversed, forward, "placement order must not change a Button identity's scattered color");
   assert.deepEqual(new Set(Object.values(forward)), new Set(buckets.map(({ color }) => color)));
+});
+
+test("button swatches follow scanned window rows and columns", async () => {
+  const root = await renderThemePage({}, {
+    "button-theme.scan": { revision: 5, placements: [
+      { placementId: "a", label: "A", groupLabel: "Tools", layoutGroup: "one", x: 0, y: 0, color: "#112233" },
+      { placementId: "b", label: "B", groupLabel: "Tools", layoutGroup: "one", x: 60, y: 0, color: "#445566" },
+      { placementId: "c", label: "C", groupLabel: "Tools", layoutGroup: "one", x: 0, y: 30, color: "#778899" },
+      { placementId: "d", label: "D", groupLabel: "Other", layoutGroup: "two", x: 0, y: 0, color: "#AABBCC" }
+    ] }
+  });
+  const rows = root.querySelectorAll("div").filter((node) => classes(node).includes("button-theme-bucket"));
+  const positions = Object.fromEntries(rows.map((node) => [node.dataset.placementId, [node.style.gridColumn, node.style.gridRow]]));
+  assert.deepEqual(positions, { a: ["1", "1"], b: ["2", "1"], c: ["1", "2"], d: ["1", "1"] });
+  assert.equal(root.querySelectorAll("div").filter((node) => classes(node).includes("button-theme-layout")).length, 2);
+  for (const row of rows) assert.deepEqual(row.children.map((child) => child.tagName), ["div", "input"]);
 });
 
 test("all existing Theme fields, buckets, and mappings are package-owned", () => {
@@ -1468,7 +1489,7 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
     "button-theme.scan": "Collect individual colors from scoped action Buttons in open Blender Pop-out and Fan windows. Each Button has its own editable color; editor previews remain excluded.",
     "button-theme.participation": "Unchecked Buttons ignore gradients and bulk theme changes. Their individual colors remain editable and are saved with themes.",
     "button-theme.apply": "Apply the listed colors to checked Buttons. Individual color edits apply directly, including to unchecked Buttons. Rescan is required if the open windows changed.",
-    "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Layout spans all visible Buttons on each monitor along the Angle; otherwise each window has its own gradient. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
+    "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Layout spans all visible Buttons on each monitor along the Angle; otherwise each window has its own gradient. Spread controls blend width. Scatter moves Buttons through the entire gradient; 0% follows position and 100% samples across the full range.",
     "button-theme.apply-text": "Apply the Button Text gradient to every Blender popped Button label, independently of the fill. One Text Color keeps the labels solid; more colors run from Start to End along the text Angle and curve.",
     "button-theme.refill": "Apply the ordered multi-color Surface gradient, with its angle and curve, to scoped Buttons in the currently open Blender Pop-outs and Fans.",
     "button-theme.refill-colors": "Sample the selected number of Gradient Colors from the current Theme image, show them as ordered gradient stops, and apply the gradient to scoped Buttons in open Blender Pop-outs and Fans.",

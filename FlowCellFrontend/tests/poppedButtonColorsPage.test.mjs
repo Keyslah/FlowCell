@@ -28,7 +28,7 @@ test("the Core Popped Button host accepts exactly its fixed palette, image choos
   for (const operation of ["scan", "apply", "refill", "toggle-text", "settings", "edit", "participation"]) {
     const plan = exported.poppedButtonCorePlan(`button-theme.${operation}`, { capability: "host.execute", options: { operation: "escape" } });
     assert.equal(plan.capability, "button-theme.palette");
-    assert.deepEqual(plan.options, { operation });
+    assert.deepEqual(plan.options, { operation, layoutGeometry: true });
   }
   assert.equal(exported.poppedButtonCorePlan("theme.image.select", {}).capability, "file.select");
   assert.equal(exported.poppedButtonCorePlan("theme.image.sample", { imagePath: "C:\\image.png" }).capability, "image.sample-palette");

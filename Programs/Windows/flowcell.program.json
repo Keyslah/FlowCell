@@ -132,32 +132,6 @@
       "installOnAdd": true
     },
     {
-      "id": "windows.open-chrome-workspace",
-      "version": "1.0.0",
-      "panelName": "Utility",
-      "sourcePath": "Windows Git Scripts/Utility/Open Chrome Workspace",
-      "importKind": "script",
-      "displayLabel": "Open Chrome Workspace",
-      "sourceKind": "script",
-      "required": false,
-      "dependencies": [],
-      "installEffects": [],
-      "installOnAdd": true
-    },
-    {
-      "id": "windows.save-chrome-workspace",
-      "version": "1.0.0",
-      "panelName": "Utility",
-      "sourcePath": "Windows Git Scripts/Utility/Save Chrome Workspace",
-      "importKind": "script",
-      "displayLabel": "Save Chrome Workspace",
-      "sourceKind": "script",
-      "required": false,
-      "dependencies": [],
-      "installEffects": [],
-      "installOnAdd": true
-    },
-    {
       "id": "windows.temp-shots",
       "version": "1.1.1",
       "panelName": "Utility",

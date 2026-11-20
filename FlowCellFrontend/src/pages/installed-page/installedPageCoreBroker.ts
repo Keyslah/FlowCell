@@ -361,16 +361,18 @@ function popoutPaletteResponse(
   revision: number,
   message: string,
   changedCount = 0,
-  warnings: readonly string[] = []
+  warnings: readonly string[] = [],
+  includeLayout = false
 ): Record<string, JsonValue> {
   return {
-    placements: scan.placements.map(({ placementId, color, materialColors = [], label, textColor, groupLabel, enabled }) => ({
+    placements: scan.placements.map(({ placementId, color, materialColors = [], label, textColor, groupLabel, enabled, layoutGroup, x, y }) => ({
       placementId,
       ...(color ? { color } : {}),
       materialColors,
       label,
       textColor,
       groupLabel,
+      ...(includeLayout && layoutGroup !== undefined && x !== undefined && y !== undefined ? { layoutGroup, x, y } : {}),
       enabled: enabled !== false
     })),
     revision,
@@ -843,9 +845,15 @@ function scanLiveProgramPopoutPalette(
   scope: LiveProgramPopoutPaletteScope,
   programName: string
 ): ProgramPopoutPaletteScan {
-  const placements = scope.groups.flatMap((group) =>
-    scanProgramPopoutPaletteTargets(group.document, programName, group.targets, scope.screenPositions ?? undefined).placements
-  );
+  const placements = scope.groups.flatMap((group) => {
+    const layoutById = new Map(group.targets.map((target) => {
+      const [windowLabel] = JSON.parse(target.paletteId) as [string, string];
+      const placement = group.document.placements[target.placementId];
+      return [target.paletteId, { layoutGroup: JSON.stringify([windowLabel, placement.surfaceId]), x: placement.x, y: placement.y }];
+    }));
+    return scanProgramPopoutPaletteTargets(group.document, programName, group.targets, scope.screenPositions ?? undefined).placements
+      .map((entry) => ({ ...entry, ...layoutById.get(entry.placementId) }));
+  });
   placements.sort((left, right) => {
     const leftPosition = scope.desktopPositions.get(left.placementId);
     const rightPosition = scope.desktopPositions.get(right.placementId);
@@ -1356,6 +1364,9 @@ async function runButtonThemePalette(
   payload: Readonly<Record<string, JsonValue>>
 ): Promise<Record<string, JsonValue>> {
   const operation = stringValue(options, "operation");
+  const paletteResponse = (scan: ProgramPopoutPaletteScan, revision: number, message: string,
+    changedCount = 0, warnings: readonly string[] = []) =>
+    popoutPaletteResponse(scan, revision, message, changedCount, warnings, options.layoutGeometry === true);
   const gradientRequest = operation === "refill" ? popoutPaletteGradient(payload) : null;
   const current = await loadButtonStateDocument();
   if (operation === "settings") return runProgramPopoutSettings(identity, current, payload);
@@ -1376,7 +1387,7 @@ async function runButtonThemePalette(
       identity,
       liveProgramPopoutPaletteFingerprint(live, identity.programName, scan)
     );
-    return popoutPaletteResponse(
+    return paletteResponse(
       scan,
       revision,
       scan.buttonCount === 0
@@ -1399,7 +1410,7 @@ async function runButtonThemePalette(
       identity,
       liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName, scan)
     );
-    return popoutPaletteResponse(
+    return paletteResponse(
       scan,
       revision,
       popoutTextResultMessage(scan, result.changedCount, textColor),
@@ -1445,7 +1456,7 @@ async function runButtonThemePalette(
     const committed = await commitLiveProgramPopoutPalette(current, result);
     const scan = scanLiveProgramPopoutPalette(committed.scope, identity.programName);
     const revision = rememberPopoutPaletteScan(identity, liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName, scan));
-    return popoutPaletteResponse(scan, revision, payload.enabled ? "Selected Buttons follow the theme again." : "Selected Buttons keep their current appearance.", changedCount, committed.warnings);
+    return paletteResponse(scan, revision, payload.enabled ? "Selected Buttons follow the theme again." : "Selected Buttons keep their current appearance.", changedCount, committed.warnings);
   }
   if (operation === "edit") {
     assertRememberedPopoutPaletteScan(identity, numberValue(payload, "expectedRevision", Number.NaN),
@@ -1455,7 +1466,7 @@ async function runButtonThemePalette(
     const committed = await commitLiveProgramPopoutPalette(current, result);
     const scan = scanLiveProgramPopoutPalette(committed.scope, identity.programName);
     const revision = rememberPopoutPaletteScan(identity, liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName, scan));
-    return popoutPaletteResponse(scan, revision, `Updated ${result.changedCount} popped Button appearance${result.changedCount === 1 ? "" : "s"}.`,
+    return paletteResponse(scan, revision, `Updated ${result.changedCount} popped Button appearance${result.changedCount === 1 ? "" : "s"}.`,
       result.changedCount, committed.warnings);
   }
   if (operation === "apply") {
@@ -1488,7 +1499,7 @@ async function runButtonThemePalette(
       identity,
       liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName, scan)
     );
-    return popoutPaletteResponse(
+    return paletteResponse(
       scan,
       revision,
       popoutPaletteResultMessage(scan, result.changedCount),
@@ -1516,7 +1527,7 @@ async function runButtonThemePalette(
       identity,
       liveProgramPopoutPaletteFingerprint(committed.scope, identity.programName, scan)
     );
-    return popoutPaletteResponse(
+    return paletteResponse(
       scan,
       revision,
       popoutPaletteResultMessage(scan, result.changedCount),

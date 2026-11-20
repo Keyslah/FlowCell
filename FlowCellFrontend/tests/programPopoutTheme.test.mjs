@@ -388,10 +388,10 @@ test("screen gradients use the occupied physical range and palette scans report 
   assert.equal(resolveProgramPopoutThemeOverride(document, "popped", geometry).colors.surface, "#FFFFFF");
 });
 
-test("top, bottom and every added stop stay exact at all Spread and Scatter settings", () => {
+test("top, bottom and added stops stay exact at all Spread settings when Scatter is 0%", () => {
   for (const colors of [["#F5E499", "#283836"], ["#FF0000", "#00FF00", "#0000FF"],
     ["#FF0000", "#00FF00", "#0000FF", "#FFFFFF"]]) {
-    for (const spread of [0, 1, 50, 67, 100]) for (const scatter of [0, 4, 100]) {
+    for (const spread of [0, 1, 50, 67, 100]) for (const scatter of [0]) {
       const document = createButtonStateDocument();
       document.programPopoutThemes = { blender: settings({ colors, spread, scatter }) };
       colors.forEach((_, index) => addPlacement(document, `stop-${index}`, "visible", "regular-popout", "Blender", index * 20));
@@ -403,6 +403,18 @@ test("top, bottom and every added stop stay exact at all Spread and Scatter sett
       assert.deepEqual(assignments.map(({ color }) => color.toUpperCase()), colors);
     }
   }
+});
+
+test("100% Fill Scatter moves endpoint Buttons and remains stable per placement", () => {
+  const colors = ["#000000", "#FFFFFF"];
+  const items = [{ paletteId: "top", y: 0 }, { paletteId: "bottom", y: 1 }];
+  const base = { colors, spread: 100, scatter: 0, seed: 33 };
+  const ordered = gradientProgramPopoutPaletteAssignments(items, base);
+  const scattered = gradientProgramPopoutPaletteAssignments(items, { ...base, scatter: 100 });
+  assert.deepEqual(ordered.map(({ color }) => color), ["#000000", "#ffffff"]);
+  assert.notEqual(scattered[0].color, ordered[0].color);
+  assert.notEqual(scattered[1].color, ordered[1].color);
+  assert.deepEqual(gradientProgramPopoutPaletteAssignments([...items].reverse(), { ...base, scatter: 100 }).reverse(), scattered);
 });
 
 test("three-color gradients blend through both intervals and Spread controls transition width", () => {

@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { ButtonStateDocument } from "../types";
 import { cloneButtonDocument } from "./buttonDefaults";
+import { withCanonicalButtonInputs } from "../windows/buttonConfiguredInputs";
 
 export interface ButtonDocumentTransactionOptions {
   label: string;
@@ -41,6 +42,7 @@ export interface ButtonEditorStore {
   ) => void;
   cancel: () => void;
   resetFromRepository: (document: ButtonStateDocument) => void;
+  syncConfiguredInputs: (document: ButtonStateDocument) => void;
 }
 
 const HISTORY_LIMIT = 150;
@@ -184,6 +186,15 @@ export function useButtonEditorStore(initialDocument: ButtonStateDocument): Butt
     });
   }, []);
 
+  const syncConfiguredInputs = useCallback((document: ButtonStateDocument) => {
+    setState((current) => ({
+      committed: withCanonicalButtonInputs(current.committed, document),
+      draft: withCanonicalButtonInputs(current.draft, document),
+      past: current.past.map((entry) => ({ ...entry, document: withCanonicalButtonInputs(entry.document, document) })),
+      future: current.future.map((entry) => ({ ...entry, document: withCanonicalButtonInputs(entry.document, document) }))
+    }));
+  }, []);
+
   return useMemo(() => ({
     committed: state.committed,
     draft: state.draft,
@@ -196,6 +207,7 @@ export function useButtonEditorStore(initialDocument: ButtonStateDocument): Butt
     acceptSaved,
     acceptScopedSaved,
     cancel,
-    resetFromRepository
-  }), [state, transact, undo, redo, acceptSaved, acceptScopedSaved, cancel, resetFromRepository]);
+    resetFromRepository,
+    syncConfiguredInputs
+  }), [state, transact, undo, redo, acceptSaved, acceptScopedSaved, cancel, resetFromRepository, syncConfiguredInputs]);
 }

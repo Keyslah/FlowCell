@@ -80,6 +80,7 @@ import {
   publishButtonDraftCancel,
   publishButtonDraftToWindow,
   registerButtonDraftResponder,
+  subscribeButtonCommits,
   subscribeButtonRestingWindowBounds
 } from "../state/ButtonDraftBus";
 import { validateButtonStateDocument } from "../state/buttonStateValidation";
@@ -1053,6 +1054,14 @@ function ButtonEditorContent({
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    void subscribeButtonCommits((document) => store.syncConfiguredInputs(document)).then((next) => {
+      if (disposed) next(); else unlisten = next;
+    });
+    return () => { disposed = true; unlisten?.(); };
+  }, [store.syncConfiguredInputs]);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
     void registerButtonDraftResponder(
       sessionIdRef.current,
       () => draftDocumentRef.current
@@ -1253,7 +1262,7 @@ function ButtonEditorContent({
     if (busyRef.current || mainPageControlScope) return;
     setBusy(true);
     try {
-      const surfaceId = settingsPlacementKind === "pop-out" ? await prepareMembershipSurface() : "";
+      const surfaceId = await prepareMembershipSurface();
       if (surfaceId === null) return;
       setAddButtonIds(new Set());
       setAddSurfaceId(surfaceId);
@@ -1347,9 +1356,11 @@ function ButtonEditorContent({
     let installed: InstallButtonSourceResult | null = null;
     let canonicalSaved = false;
     try {
+      const initialDirectory = await invoke<string>("get_program_git_scripts_directory", { programName: importProgramName });
       const paths = await showOpenFileDialog({
         title: "Pick any script or file within a package to add the button.",
         filter: "All files (*.*)|*.*",
+        initialDirectory,
         multiselect: false
       });
       const sourcePath = paths[0];
@@ -3689,7 +3700,7 @@ function ButtonEditorContent({
                   title={settingsPlacementKind === "pop-out" ? "Remove the selected Buttons from this Pop-out only." : "Delete the selected Buttons and their owned Local Scripts packages."}
                   onClick={() => void removeSelectedButtons()}>Remove</button>
                 <button type="button" disabled={mainPageControlScope || busy || !programName || !panelName}
-                  onClick={() => void openAddButtons()}>Add</button>
+                  onClick={() => void (settingsPlacementKind === "pop-out" ? openAddButtons() : importSource())}>Add</button>
                 <button
                   type="button"
                   title="Copy the focused Button's width, height, and sizing behavior."
@@ -3841,8 +3852,7 @@ function ButtonEditorContent({
       {addSurfaceId !== null ? (
         <div className="button-editor-add-backdrop">
           <section className="button-editor-add-dialog" role="dialog" aria-modal="true" aria-labelledby="add-buttons-title">
-            <h2 id="add-buttons-title">Add Buttons{addSurfaceId ? " to Pop-out" : " to Main Page"}</h2>
-            {addSurfaceId ? <>
+            <h2 id="add-buttons-title">Add Buttons to Pop-out</h2>
               <p>Select buttons from Main Page. Hidden buttons from this Tool Set are also available.</p>
               <div className="button-editor-add-list">
                 {popoutAddCandidates(store.draft, addSurfaceId, programName, panelName).map(button => (
@@ -3853,7 +3863,6 @@ function ButtonEditorContent({
                 {popoutAddCandidates(store.draft, addSurfaceId, programName, panelName).length === 0 ? <p>All available buttons are already in this Pop-out.</p> : null}
               </div>
               <button type="button" disabled={busy || !addButtonIds.size} onClick={() => void addExistingButtons()}>Add selected</button>
-            </> : <p>Pick any script or file within a package to add the button.</p>}
             <button type="button" disabled={busy} onClick={() => { const target = addSurfaceId || undefined; setAddSurfaceId(null); void importSource(target); }}>New button…</button>
             <button type="button" disabled={busy} onClick={() => setAddSurfaceId(null)}>Cancel</button>
           </section>

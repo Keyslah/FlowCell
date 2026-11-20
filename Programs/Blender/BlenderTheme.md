@@ -225,10 +225,13 @@ Theme controls:
   scan arrives. `Rescan` remains available. Legacy themes retain the current
   shared appearance, and themes saved before gradient curves/angles load as
   linear, 0-degree gradients with a solid text color.
-- Popped gradients use the exact chosen Start/End colors and pass through every
-  ordered intermediate stop. Spread adjusts each blend's width; Scatter varies
-  interior blends without changing stop anchors. Increasing Gradient Colors
-  retains the existing chosen colors and inserts new blends between them.
+- With Fill Scatter at 0%, popped gradients follow the chosen Start/End colors
+  and intermediate stops. Spread adjusts each blend's width. Fill Scatter moves
+  each Button through the gradient; at 100% it samples the full range, including
+  Buttons at the endpoints. Increasing Gradient Colors retains existing colors.
+- Scatter redistributes the exact visible colors among included Buttons without
+  changing Fill settings or Whole Layout. The color tiles show each live window's
+  Button rows and columns, with the swatch below the checkbox and label.
 - `Whole Layout` spans the visible popped Button centers on each monitor for
   Fill, Text, Highlight and Glow along each channel's Angle, including diagonals.
   It changes the coverage, not the direction. Its checkbox sits beside

@@ -34,7 +34,7 @@ export function poppedButtonCorePlan(actionId: string, payload: unknown): Instal
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Button action data must be an object.");
   if (Object.hasOwn(paletteOperations, actionId)) {
     return { kind: "core-action", capability: "button-theme.palette",
-      options: { operation: paletteOperations[actionId] }, payload: payload as JsonObject };
+      options: { operation: paletteOperations[actionId], layoutGeometry: true }, payload: payload as JsonObject };
   }
   if (actionId === "theme.image.select") return {
     kind: "core-action", capability: "file.select", options: {

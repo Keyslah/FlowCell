@@ -82,6 +82,48 @@ function fallbackHostHarness() {
   return control => exports.MainControlHost({ control }).props.children.props;
 }
 
+test("Main grid reserves measured Button cores while retaining each saved rendering size", () => {
+  const source = readFileSync(new URL("../src/pages/main/MainButtonHost.tsx", import.meta.url), "utf8");
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX }
+  }).outputText;
+  const exports = {};
+  let state = null;
+  vm.runInNewContext(compiled, {
+    exports,
+    require(name) {
+      if (name === "react") return { useState: () => [state, update => { state = update(state); }], useCallback: fn => fn };
+      if (name === "react/jsx-runtime") return { jsx: (type, props) => ({ type, props }) };
+      if (name === "../../button/ButtonHost") return { ButtonHost: "ButtonHost" };
+      if (name === "../../button/skins/chippedConcreteButtonSkin") return { getChippedConcreteButtonSkin: () => ({}) };
+      if (name === "./mainLayout") return { rails };
+      throw new Error(`Unexpected dependency ${name}`);
+    }
+  });
+  const button = { id: "shot", label: "tt", scriptFileName: "Screenshots.vbs" };
+  const placement = { width: 180, height: 44, matchHitboxToSkin: true };
+  const props = { button, absolute: false, canonicalPresentation: {
+    button: { label: "tt", tooltip: "", metadata: {} }, placement, skin: {}
+  } };
+  const first = exports.MainButtonHost(props);
+  assert.equal(first.props.style.width, 180);
+  first.props.children.props.onMeasurement({ width: 70, height: 40, visualOverflow: {} });
+  const measured = exports.MainButtonHost(props);
+  assert.equal(measured.props.style.width, 70);
+  assert.equal(measured.props.style.height, 40);
+  assert.equal(measured.props.children.props.placement.width, 180);
+  assert.equal(measured.props.children.props.placement.height, 44);
+  assert.equal(measured.props.children.props.familySkinCentering, "vertical");
+  measured.props.children.props.onMeasurement({ width: 90, height: 40, visualOverflow: {} });
+  assert.equal(exports.MainButtonHost(props).props.style.width, 90);
+  const fixed = exports.MainButtonHost({ ...props, canonicalPresentation: {
+    ...props.canonicalPresentation, placement: { ...placement, matchHitboxToSkin: false }
+  } });
+  assert.equal(fixed.props.style.width, 90);
+  assert.equal(fixed.props.children.props.placement.width, 180);
+  assert.equal(typeof fixed.props.children.props.onMeasurement, "function");
+});
+
 test("fallback Main controls use the same single-line and header sizing policies as saved defaults", () => {
   const render = fallbackHostHarness();
   const controls = [...staticButtons, ...buildButtonsSurfaceButtons([]), ...buildProgramRailButtons(["Windows"], "Windows")];

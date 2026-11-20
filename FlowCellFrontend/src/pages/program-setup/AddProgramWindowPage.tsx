@@ -199,6 +199,26 @@ export default function AddProgramWindowPage() {
     }
   };
 
+  const refreshDetection = async () => {
+    if (busy || packageActionPending.current) return;
+    packageActionPending.current = true;
+    setBusy(true);
+    setStatus("Looking for installed applications…");
+    try {
+      inventoryRequestRef.current += 1;
+      const next = await listAvailableProgramPackages();
+      setInventory(next);
+      const program = next.packages.find((entry) => entry.programName === selectedProgramName);
+      if (program && !executablePath.trim()) setExecutablePath(program.suggestedExecutable);
+      setStatus("Detection refreshed. Choose an installed application, or Browse for it.");
+    } catch (error) {
+      setStatus(`Application detection failed: ${errorMessage(error)}`);
+    } finally {
+      packageActionPending.current = false;
+      setBusy(false);
+    }
+  };
+
   const presentSetupResult = async (result: ProgramSetupResult) => {
     setSetupStatuses((current) => [...current.filter((entry) => entry.programName !== result.programName), result]);
     setStatus(result.message);
@@ -488,12 +508,17 @@ export default function AddProgramWindowPage() {
             </label> : null}
             <div>
               <label htmlFor="program-executable">{selectedProgram.programName} .exe path <span className="program-setup__required">(required)</span></label>
+              {selectedProgram.executableCandidates.length > 0 ? <select aria-label="Detected application paths" value={selectedProgram.executableCandidates.some((candidate) => candidate.path === executablePath) ? executablePath : ""} onChange={(event) => { setExecutablePath(event.target.value); markSelectionChanged(); }} disabled={busy}>
+                <option value="">Choose an installed application</option>
+                {selectedProgram.executableCandidates.map((candidate) => <option key={candidate.path} value={candidate.path}>{candidate.path}</option>)}
+              </select> : null}
               <div className="program-setup__inline">
                 <input id="program-executable" required placeholder={`Choose ${selectedProgram.programName}'s .exe file`} value={executablePath} onChange={(event) => { setExecutablePath(event.target.value); markSelectionChanged(); }} disabled={busy} />
                 <button type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: `Choose ${selectedProgram.programName} host executable`, filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
                   if (!paths[0]) return;
                   setExecutablePath(paths[0]); markSelectionChanged();
                 })}>Browse</button>
+                <button type="button" disabled={busy} onClick={() => void refreshDetection()}>Find installed</button>
               </div>
             </div>
           </section>

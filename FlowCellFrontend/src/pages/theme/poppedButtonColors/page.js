@@ -64,6 +64,7 @@
       spread: bounded(finiteNumber(buttonThemeConfig.spread, 100), 0, 100),
       scatter: bounded(finiteNumber(buttonThemeConfig.scatter, 20), 0, 100),
       seed: Number.isSafeInteger(buttonThemeConfig.seed) ? buttonThemeConfig.seed : 1,
+      shuffleSeed: 0,
       gradientColorCount: boundedInteger(buttonThemeConfig.gradientColorCount, 5, 2, 16),
       gradientColors: [],
       screenTopToBottom: buttonThemeConfig.screenTopToBottom === true,
@@ -442,6 +443,9 @@
         enabled: placement.enabled !== false,
         label: typeof placement.label === "string" && placement.label.trim() ? placement.label.trim() : "Button",
         groupLabel: typeof placement.groupLabel === "string" ? placement.groupLabel : programName,
+        layoutGroup: typeof placement.layoutGroup === "string" ? placement.layoutGroup : "",
+        x: Number.isFinite(placement.x) ? placement.x : null,
+        y: Number.isFinite(placement.y) ? placement.y : null,
         textColor: normalizeEffectColor(placement.textColor) || model.buttonTheme.textColor
       });
     });
@@ -785,13 +789,14 @@
     render();
   }
 
-  function scatteredButtonThemeAssignments(colors, seed) {
-    const palette = exactButtonThemePalette(colors);
-    if (!palette.length) throw new Error(copy.buttonThemeNeedsColors || "No popped Button colors are available. Press Rescan and try again.");
-    return model.buttonTheme.placements
-      .map(({ placementId }) => ({ placementId, rank: stableNoise(`${seed}\u0000${placementId}`) }))
-      .sort((left, right) => left.rank - right.rank || left.placementId.localeCompare(right.placementId))
-      .map(({ placementId }, index) => ({ placementId, color: palette[index % palette.length] }));
+  function scatteredButtonThemeAssignments(seed) {
+    const eligible = model.buttonTheme.placements.filter(({ enabled, color }) => enabled && color);
+    if (eligible.length < 2 || new Set(eligible.map(({ color }) => color)).size < 2) return [];
+    const ranked = [...eligible].sort((a, b) =>
+      stableNoise(`${seed}\u0000${a.placementId}`) - stableNoise(`${seed}\u0000${b.placementId}`) ||
+      a.placementId.localeCompare(b.placementId));
+    const colors = ranked.map(({ color }) => color);
+    return ranked.map(({ placementId }, index) => ({ placementId, color: colors[(index + 1) % colors.length] }));
   }
 
   function hydrateButtonThemeState(value) {
@@ -804,6 +809,7 @@
     model.buttonTheme.spread = bounded(finiteNumber(state.spread, model.buttonTheme.spread), 0, 100);
     model.buttonTheme.scatter = bounded(finiteNumber(state.scatter, model.buttonTheme.scatter), 0, 100);
     model.buttonTheme.seed = Number.isSafeInteger(state.seed) ? state.seed : model.buttonTheme.seed;
+    model.buttonTheme.shuffleSeed = Number.isSafeInteger(state.shuffleSeed) ? state.shuffleSeed : 0;
     model.buttonTheme.gradientColorCount = boundedInteger(
       state.gradientColorCount ?? state.refillRange,
       model.buttonTheme.gradientColorCount,
@@ -871,6 +877,9 @@
         color: normalizeHex(placement.color) || bucketById.get(bucketId).color,
         label: typeof placement.label === "string" && placement.label.trim() ? placement.label.trim() : "Button",
         groupLabel: typeof placement.groupLabel === "string" ? placement.groupLabel : programName,
+        layoutGroup: typeof placement.layoutGroup === "string" ? placement.layoutGroup : "",
+        x: Number.isFinite(placement.x) ? placement.x : null,
+        y: Number.isFinite(placement.y) ? placement.y : null,
         textColor: normalizeEffectColor(placement.textColor) || model.buttonTheme.textColor
       });
     });
@@ -888,7 +897,7 @@
     if (!buttonThemeBucketsNode) return;
     const buckets = new Map(model.buttonTheme.buckets.map((bucket) => [bucket.id, bucket]));
     const placements = new Map(model.buttonTheme.placements.map((placement) => [placement.placementId, placement]));
-    for (const row of buttonThemeBucketsNode.children) {
+    for (const row of buttonThemeBucketsNode.querySelectorAll("div")) {
       const placement = placements.get(row.dataset.placementId);
       const bucket = placement && buckets.get(placement.bucketId);
       if (!bucket) continue;
@@ -997,42 +1006,25 @@
   }
 
   async function scatterButtonTheme() {
+    await drainButtonThemeUpdates();
     if (busy) return;
     if (!Number.isSafeInteger(model.buttonTheme.revision)) {
       setStatus(copy.buttonThemeNeedsScan || "Press Rescan before applying popped Button colors.", "error");
       return;
     }
-    let assignments;
-    const previousSeed = model.buttonTheme.seed;
-    model.buttonTheme.seed = Number.isSafeInteger(previousSeed + 1) ? previousSeed + 1 : 1;
-    try {
-      assignments = scatteredButtonThemeAssignments(currentButtonThemePalette(), model.buttonTheme.seed);
-    } catch (error) {
-      model.buttonTheme.seed = previousSeed;
-      setStatus(error instanceof Error ? error.message : String(error), "error");
+    const previousSeed = model.buttonTheme.shuffleSeed;
+    const nextSeed = Number.isSafeInteger(previousSeed + 1) ? previousSeed + 1 : 1;
+    const edits = scatteredButtonThemeAssignments(nextSeed);
+    if (!edits.length) {
+      setStatus("Scatter needs at least two included Buttons with different surface colors.", "error");
       return;
     }
-    setBusy(true);
-    try {
-      const seed = model.buttonTheme.seed;
-      const settings = await readPoppedButtonSettings(true);
-      const colors = currentButtonThemePalette();
-      const response = await requestAction(buttonThemeActions.apply, {
-        expectedRevision: model.buttonTheme.revision,
-        assignments,
-        ...(settings ? { settings: {
-          ...settings,
-          colors: colors.length > 16 ? resampledButtonThemeGradientColors(colors, 16) : colors,
-          seed,
-          spread: 100,
-          scatter: 100,
-          screenTopToBottom: false
-        } } : {})
-      }, copy.scatteringButtonTheme, true);
-      if (response) adoptButtonThemeResponse(response);
-      else model.buttonTheme.seed = previousSeed;
-    } finally {
-      setBusy(false);
+    const response = await requestAction(buttonThemeActions.edit, {
+      expectedRevision: model.buttonTheme.revision, edits
+    }, copy.scatteringButtonTheme);
+    if (response) {
+      model.buttonTheme.shuffleSeed = nextSeed;
+      adoptButtonThemeResponse(response);
     }
   }
 
@@ -1138,7 +1130,7 @@
       model.buttonTheme[key] = bounded(Number(slider.value), 0, maximum);
       valueNode.textContent = String(Math.round(model.buttonTheme[key]));
       schedulePersistence();
-      if (key === "spread") redrawGradientChannel("fill");
+      if (key === "spread" || key === "scatter") redrawGradientChannel("fill");
     });
     control.append(labelRow, slider);
     return control;
@@ -1838,7 +1830,7 @@
 
   function renderGradientSample() {
     const sample = element("div", "button-theme-sample");
-    sample.title = "Sample layout: how the Fill and Text gradients, curves and angles fall across a grid of Buttons in one window. Scatter is not shown.";
+    sample.title = "Sample layout: how Fill and Text gradients, curves, angles and Fill Scatter fall across Buttons in one window.";
     const chips = [];
     for (let row = 0; row < 3; row += 1) {
       for (let column = 0; column < 4; column += 1) {
@@ -1863,7 +1855,9 @@
         const maximum = Math.max(...projections);
         chips.forEach(({ chip }, index) => {
           const position = maximum > minimum ? (projections[index] - minimum) / (maximum - minimum) : 0;
-          const color = channelColorAt(channel, position);
+          const scatter = channel === "fill" ? model.buttonTheme.scatter / 100 : 0;
+          const random = stableNoise(`${model.buttonTheme.seed}\u0000sample-${index}`);
+          const color = channelColorAt(channel, position * (1 - scatter) + random * scatter);
           if (channel === "fill") chip.style.backgroundColor = color;
           else chip.style.color = color;
         });
@@ -2003,7 +1997,38 @@
     if (model.buttonTheme.buckets.length) {
       const buckets = element("div", "button-theme-buckets");
       buttonThemeBucketsNode = buckets;
-      model.buttonTheme.buckets.forEach((bucket) => buckets.append(renderButtonThemeBucket(bucket)));
+      const bucketById = new Map(model.buttonTheme.buckets.map((bucket) => [bucket.id, bucket]));
+      const groups = new Map();
+      for (const placement of model.buttonTheme.placements) {
+        const key = placement.layoutGroup || "unplaced";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(placement);
+      }
+      for (const placements of groups.values()) {
+        const group = element("div", "button-theme-layout");
+        const grid = element("div", "button-theme-layout__grid");
+        group.append(element("div", "button-theme-layout__name", placements[0].groupLabel), grid);
+        const positioned = placements.every(({ x, y }) => Number.isFinite(x) && Number.isFinite(y));
+        if (positioned) {
+          const columns = [...new Set(placements.map(({ x }) => x))].sort((a, b) => a - b);
+          const rows = [...new Set(placements.map(({ y }) => y))].sort((a, b) => a - b);
+          grid.style.gridTemplateColumns = `repeat(${columns.length}, minmax(68px, max-content))`;
+          for (const placement of placements) {
+            const bucket = bucketById.get(placement.bucketId);
+            if (!bucket) continue;
+            const node = renderButtonThemeBucket(bucket);
+            node.style.gridColumn = String(columns.indexOf(placement.x) + 1);
+            node.style.gridRow = String(rows.indexOf(placement.y) + 1);
+            grid.append(node);
+          }
+        } else {
+          for (const placement of placements) {
+            const bucket = bucketById.get(placement.bucketId);
+            if (bucket) grid.append(renderButtonThemeBucket(bucket));
+          }
+        }
+        buckets.append(group);
+      }
       section.append(buckets);
     }
     section.append(renderButtonThemeEffects());

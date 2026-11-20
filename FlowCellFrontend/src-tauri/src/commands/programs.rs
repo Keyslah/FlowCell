@@ -1992,6 +1992,14 @@ pub(crate) fn list_program_folders() -> Result<Vec<String>, String> {
     ))
 }
 
+#[tauri::command]
+pub(crate) fn get_program_git_scripts_directory(program_name: String) -> Result<String, String> {
+    let program_root = resolve_program_directory(&program_name)?;
+    let manifest = program_sources::manifest::load_program_manifest(&program_name)?;
+    let directory = manifest_folder_path(&program_root, &manifest.git_scripts_folder, "gitScriptsFolder")?;
+    Ok(directory.to_string_lossy().into_owned())
+}
+
 fn inventory_panels(
     manifest: &program_sources::manifest::ProgramManifest,
 ) -> Vec<ProgramSetupPanel> {

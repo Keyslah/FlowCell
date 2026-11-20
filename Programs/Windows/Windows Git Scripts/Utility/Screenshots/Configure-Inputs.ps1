@@ -27,7 +27,6 @@ if (-not $context.editInputs -and -not $InitialFolder -and
     }
 }
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName Microsoft.VisualBasic
 
 $dialog = [Windows.Forms.FolderBrowserDialog]::new()
 try {
@@ -41,9 +40,43 @@ try {
         exit 0
     }
     $folder = [IO.Path]::GetFullPath($dialog.SelectedPath)
-    $name = [Microsoft.VisualBasic.Interaction]::InputBox(
-        "Name this screenshot button.`r`nEvery capture from this button will go to:`r`n$folder",
-        'Name Screenshots Button', $InitialName).Trim()
+    $nameDialog = [Windows.Forms.Form]::new()
+    try {
+        $nameDialog.Text = 'Name Screenshots Button'
+        $nameDialog.StartPosition = [Windows.Forms.FormStartPosition]::CenterScreen
+        $nameDialog.ClientSize = [Drawing.Size]::new(600, 170)
+        $nameDialog.FormBorderStyle = [Windows.Forms.FormBorderStyle]::FixedDialog
+        $nameDialog.MaximizeBox = $false
+        $nameDialog.MinimizeBox = $false
+        $nameDialog.ShowInTaskbar = $true
+        $nameDialog.TopMost = $true
+        $nameDialog.Font = [Drawing.Font]::new('Segoe UI', 10)
+
+        $prompt = [Windows.Forms.Label]::new()
+        $prompt.Location = [Drawing.Point]::new(12, 12)
+        $prompt.Size = [Drawing.Size]::new(576, 68)
+        $prompt.Text = "Name this screenshot button.`r`nEvery capture from this button will go to:`r`n$folder"
+        $nameInput = [Windows.Forms.TextBox]::new()
+        $nameInput.Location = [Drawing.Point]::new(12, 84)
+        $nameInput.Size = [Drawing.Size]::new(576, 28)
+        $nameInput.Text = $InitialName
+        $ok = [Windows.Forms.Button]::new()
+        $ok.Text = 'OK'
+        $ok.Location = [Drawing.Point]::new(376, 125)
+        $ok.Size = [Drawing.Size]::new(100, 32)
+        $ok.DialogResult = [Windows.Forms.DialogResult]::OK
+        $cancel = [Windows.Forms.Button]::new()
+        $cancel.Text = 'Cancel'
+        $cancel.Location = [Drawing.Point]::new(488, 125)
+        $cancel.Size = [Drawing.Size]::new(100, 32)
+        $cancel.DialogResult = [Windows.Forms.DialogResult]::Cancel
+        $nameDialog.Controls.AddRange(@($prompt, $nameInput, $ok, $cancel))
+        $nameDialog.AcceptButton = $ok
+        $nameDialog.CancelButton = $cancel
+        $nameDialog.Add_Shown({ $nameDialog.Activate(); [void]$nameInput.Focus(); $nameInput.SelectAll() })
+        $name = if ($nameDialog.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) { $nameInput.Text.Trim() } else { '' }
+    }
+    finally { $nameDialog.Dispose() }
     if (-not $name) {
         Write-Output '{"cancelled":true}'
         exit 0

@@ -9,21 +9,24 @@ import type {
 } from "../../button/types";
 import { rails, type ButtonRecord as MainLayoutButtonRecord } from "./mainLayout";
 
-function useMainRailPosition(button: MainLayoutButtonRecord, absolute: boolean, fallbackWidth: number) {
-  const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
+function useMainRailPosition(button: MainLayoutButtonRecord, absolute: boolean, fallbackWidth: number, measureGrid = false) {
+  const [measuredSize, setMeasuredSize] = useState<{ width: number; height: number } | null>(null);
   const rail = absolute && (button.railId === "program-rail" || button.railId === "panel-rail")
     ? rails.find((candidate) => candidate.id === button.railId)
     : undefined;
   const onMeasurement = useCallback((measurement: ButtonCoreMeasurement) => {
-    if (!Number.isFinite(measurement.width) || measurement.width <= 0) return;
-    setMeasuredWidth((previous) => previous !== null && Math.abs(previous - measurement.width) < 0.01
-      ? previous : measurement.width);
+    if (!Number.isFinite(measurement.width) || measurement.width <= 0 ||
+        !Number.isFinite(measurement.height) || measurement.height <= 0) return;
+    setMeasuredSize((previous) => previous !== null && Math.abs(previous.width - measurement.width) < 0.01 &&
+      Math.abs(previous.height - measurement.height) < 0.01
+      ? previous : { width: measurement.width, height: measurement.height });
   }, []);
   return {
     left: absolute
-      ? rail ? rail.x + (rail.width - (measuredWidth ?? fallbackWidth)) / 2 : button.x
+      ? rail ? rail.x + (rail.width - (measuredSize?.width ?? fallbackWidth)) / 2 : button.x
       : undefined,
-    onMeasurement: rail ? onMeasurement : undefined
+    gridSize: measureGrid ? measuredSize : null,
+    onMeasurement: rail || measureGrid ? onMeasurement : undefined
   };
 }
 
@@ -94,7 +97,8 @@ export function MainButtonHost({
   const renderedPlacement = placement.presentationOverride && !placement.presentationOverride.tooltip?.trim()
     ? { ...sizedPlacement, presentationOverride: { ...placement.presentationOverride, tooltip } }
     : sizedPlacement;
-  const railPosition = useMainRailPosition(button, absolute, renderedPlacement.width);
+  const gridUsesCore = !absolute;
+  const railPosition = useMainRailPosition(button, absolute, renderedPlacement.width, gridUsesCore);
 
   return (
     <span
@@ -104,8 +108,8 @@ export function MainButtonHost({
         left: railPosition.left,
         top: absolute ? button.y : undefined,
         display: "inline-block",
-        width: renderedPlacement.width,
-        height: renderedPlacement.height,
+        width: railPosition.gridSize?.width ?? renderedPlacement.width,
+        height: railPosition.gridSize?.height ?? renderedPlacement.height,
         overflow: "visible",
         pointerEvents: "none",
         // Match .rail-surface's z-index so DOM order keeps buttons above the rails.

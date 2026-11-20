@@ -216,6 +216,7 @@ fn main() {
             materialize_flowcell_theme_archive,
             program_sources::installed_page::resolve_theme_contribution,
             list_program_folders,
+            get_program_git_scripts_directory,
             list_panel_folders,
             list_available_program_packages,
             preflight_add_program_plan,

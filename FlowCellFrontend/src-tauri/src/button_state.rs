@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::Emitter;
 
 use crate::program_sources::transaction::{self, AtomicWriteMode};
 
@@ -1943,10 +1944,14 @@ pub(crate) fn configure_button_inputs(
         apply_button_input_configuration(&mut document,&owner,values,label,tooltip,expected_button)?;
         document["revision"] = Value::from(revision.checked_add(1).ok_or("Button revision overflow.")?);
         match commit_button_state_sync(app.clone(), CommitButtonStateRequest {
-            document, expected_revision:revision, uninstall_owner_button_ids:Vec::new(),
+            document: document.clone(), expected_revision:revision, uninstall_owner_button_ids:Vec::new(),
             migration_token:None, program_rename_token:None,
         }) {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                let payload = serde_json::json!({"document": crate::button_document_transport::pack_button_document(document)});
+                let _ = app.emit("flowcell:button-commit", payload);
+                return Ok(());
+            },
             Err(error) => {
                 if attempt == 0 {
                     let latest = load_button_state_sync()?;

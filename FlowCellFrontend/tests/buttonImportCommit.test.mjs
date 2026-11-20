@@ -15,17 +15,18 @@ function harness(options = {}) {
   let saved = createButtonStateDocument();
   let draft = structuredClone(saved);
   let attempts = 0;
-  const uninstalls = [], messages = [], events = [];
+  const uninstalls = [], messages = [], events = [], pickerCalls = [], directoryRequests = [];
   const staged = new Map();
   const installed = { ownerButtonId: "new", sourceIdentity: {}, label: "Screenshots", children: [] };
   const sandbox = {
     structuredClone, Error, Map, Set, Promise, String,
     useCallback: callback => callback,
-    lockedImportDestination: null, programName: "Windows", panelName: "Utility", settingsFilePaths: {},
+    lockedImportDestination: options.lockedImportDestination ?? null, programName: "Windows", panelName: "Utility", settingsFilePaths: {},
     busyRef: { current: false }, setBusy: value => { sandbox.busyRef.current = value; },
     setMessage: message => messages.push(message),
     isFlowCellMainPageProgram: () => false,
-    showOpenFileDialog: async () => options.cancelPicker ? [] : ["D:/source/Screenshots.ps1"],
+    invoke: async (command, args) => { directoryRequests.push({ command, ...args }); return `D:/Programs/${args.programName}/Declared Git Scripts`; },
+    showOpenFileDialog: async args => { pickerCalls.push(args); return options.cancelPicker ? [] : ["D:/source/Screenshots.ps1"]; },
     createStableButtonId: () => "new",
     installButtonSource: async () => installed,
     uninstallButtonSource: async request => uninstalls.push(request.ownerButtonId),
@@ -64,8 +65,17 @@ function harness(options = {}) {
   vm.runInContext(ts.transpileModule(commit + handler + "\nglobalThis.run = importSource;", {
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
   }).outputText, sandbox);
-  return { run: sandbox.run, staged, uninstalls, messages, events, get saved() { return saved; }, get attempts() { return attempts; } };
+  return { run: sandbox.run, staged, uninstalls, messages, events, pickerCalls, directoryRequests, get saved() { return saved; }, get attempts() { return attempts; } };
 }
+
+test("Main Page Add opens the picker directly and uses the destination program catalog", async () => {
+  assert.match(source, /settingsPlacementKind === "pop-out" \? openAddButtons\(\) : importSource\(\)/);
+  const h = harness({ cancelPicker: true, lockedImportDestination: { programName: "Fusion 360", panelName: "Tools" } });
+  await h.run();
+  assert.equal(h.directoryRequests[0].command, "get_program_git_scripts_directory");
+  assert.equal(h.directoryRequests[0].programName, "Fusion 360");
+  assert.equal(h.pickerCalls[0].initialDirectory, "D:/Programs/Fusion 360/Declared Git Scripts");
+});
 
 test("import saves Main Page before returning and clears staged cleanup", async () => {
   const h = harness(); await h.run();

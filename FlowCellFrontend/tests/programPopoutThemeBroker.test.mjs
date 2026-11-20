@@ -173,6 +173,26 @@ test("generic popped colors scope scans and edits to the selected program", asyn
   assert.equal(empty.message, "No open Illustrator popped Buttons were found.");
 });
 
+test("scatter-style individual edits survive rendering and retain Whole Layout settings", async () => {
+  const h = harness();
+  addLivePopout(h);
+  addLiveMember(h, "bottom", 80);
+  const recipe = structuredClone(h.document.programPopoutThemes.blender);
+  const oldScan = await h.run("button-theme.palette", { operation: "scan" });
+  assert.equal(Object.hasOwn(oldScan.placements[0], "layoutGroup"), false, "older page schemas receive no new fields");
+  const scan = await h.run("button-theme.palette", { operation: "scan", layoutGeometry: true });
+  assert.deepEqual(Array.from(scan.placements, ({ x, y }) => [x, y]), [[0, 40], [0, 80]]);
+  assert.equal(scan.placements[0].layoutGroup, scan.placements[1].layoutGroup);
+  const edits = scan.placements.map((entry, index) => ({ placementId: entry.placementId, color: scan.placements[1 - index].color }));
+  assert.notEqual(edits[0].color, scan.placements[0].color);
+  const result = await h.run("button-theme.palette", { operation: "edit", layoutGeometry: true }, { expectedRevision: scan.revision, edits });
+  assert.deepEqual(Array.from(result.placements, ({ color }) => color), Array.from(edits, ({ color }) => color));
+  assert.deepEqual(h.document.programPopoutThemes.blender, recipe);
+  assert.equal(h.document.programPopoutThemes.blender.screenTopToBottom, true);
+  assert.equal(theme.resolveProgramPopoutThemeOverride(h.document, "owner").colors.surface, edits[0].color);
+  assert.equal(theme.resolveProgramPopoutThemeOverride(h.document, "bottom").colors.surface, edits[1].color);
+});
+
 test("individual fill and selected text edits override the shared gradient without changing other Buttons or the recipe", async () => {
   const h = harness();
   addLivePopout(h);

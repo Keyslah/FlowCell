@@ -52,6 +52,9 @@ export interface ProgramPopoutPaletteScannedPlacement extends ProgramPopoutPalet
   textColor: string;
   groupLabel: string;
   enabled: boolean;
+  layoutGroup?: string;
+  x?: number;
+  y?: number;
 }
 
 export interface ProgramPopoutThemeParticipationEdit {
