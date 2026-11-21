@@ -43,7 +43,7 @@ function managedFileName(sourceId) {
   const stem = `blender-${sourceId}`.replace(/[^a-z0-9]+/gi, "-").toLowerCase().slice(0, 80).replace(/-+$/, "");
   return `bundled-${stem}-${hash.toString(16).padStart(16, "0")}.flowcell-source.json`;
 }
-const expectedSourceOrder = ["snapshot", "back", "rename-selected", "restore", "cycle-collection", "cycle-versions-back",
+const expectedSourceOrder = ["snapshot", "back", "rename-selected", "restore", "cycle-versions-back",
   "cycle-versions-forward", "empty-trash", "baseline-visibility", "restore-visibility", "add-to-live", "trash", "archive",
   "make-collections", "empty-collections", "sort-live", "new-collection", "sort"];
 function collectionsFixture() {
@@ -192,19 +192,19 @@ test("Load Default preserves unequal sizes and respects chosen spacing", () => {
   assert.deepEqual(validateButtonStateDocument(document).issues, []);
 });
 
-test("fresh managed Collections scripts receive the exact authored 18-control geometry and symbols", () => {
+test("fresh managed Collections scripts receive the exact authored 17-control geometry and symbols", () => {
   const { document, records } = collectionsFixture();
   const mainBefore = structuredClone(document.surfaces.panel.placementIds.map((id) => document.placements[id]));
   assert.equal(availablePanelPopoutPresetsForPanel(document, "Blender", "Collections").length, 2);
   const unit = ensureDefaultPanelPopout(document, records[0].id);
   const members = unit.memberPlacementIds.map((id) => document.placements[id]);
-  assert.equal(members.length, 18);
+  assert.equal(members.length, 17);
   assert.deepEqual(members.map((placement) => placement.buttonId), records.map((button) => button.id));
   assert.deepEqual(members.map(({ x, y, width, height }) => ({ x, y, width, height })),
-    records.map((_, index) => ({ x: (index % 4) * 92.25982793135026, y: Math.floor(index / 4) * 44,
+    records.map((_, index) => ({ x: ((index < 4 ? index : index + 1) % 4) * 92.25982793135026, y: Math.floor((index < 4 ? index : index + 1) / 4) * 44,
       width: 92.25982793135026, height: 44 })));
-  assert.equal(members[5].presentationOverride.label, ">");
-  assert.equal(members[6].presentationOverride.label, "<");
+  assert.equal(members[4].presentationOverride.label, ">");
+  assert.equal(members[5].presentationOverride.label, "<");
   assert.ok(members.every((placement) => placement.skinOverrideId === gray));
   assert.equal(document.surfaces[unit.surfaceId].width, 680);
   assert.equal(document.surfaces[unit.surfaceId].height, 268);
@@ -252,9 +252,9 @@ test("named Collections choices round-trip through the existing isolated setting
     { programName: "Blender", panelName: "Collections" }, "collections-green-highlight");
   const loadedUnit = transient.document.popoutUnits[transient.popoutUnitId];
   const loadedMembers = loadedUnit.memberPlacementIds.map((id) => transient.document.placements[id]);
-  assert.equal(loadedMembers.length, 18);
-  assert.equal(loadedMembers[5].presentationOverride.label, ">");
-  assert.equal(loadedMembers[6].presentationOverride.label, "<");
+  assert.equal(loadedMembers.length, 17);
+  assert.equal(loadedMembers[4].presentationOverride.label, ">");
+  assert.equal(loadedMembers[5].presentationOverride.label, "<");
   assert.ok(loadedMembers.every((placement) => transient.document.skins[placement.skinOverrideId].base.includes("#8FDB0A")));
   assert.deepEqual(document, canonicalBefore, "Opening a named design must not alter the saved popup");
   assert.deepEqual(validateButtonStateDocument(transient.document).issues, []);

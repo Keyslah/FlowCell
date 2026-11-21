@@ -143,6 +143,10 @@ function Write-PreflightIni {
     $parent = Split-Path -Parent $Path
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
     $content = (($blocks -join "`r`n`r`n") + "`r`n")
+    if ((Test-Path -LiteralPath $Path -PathType Leaf) -and
+        [string]::Equals([System.IO.File]::ReadAllText($Path), $content, [StringComparison]::Ordinal)) {
+        return
+    }
     $leaf = Split-Path -Leaf $Path
     $token = [guid]::NewGuid().ToString('N')
     $staged = Join-Path $parent ('.{0}.{1}.writing' -f $leaf, $token)

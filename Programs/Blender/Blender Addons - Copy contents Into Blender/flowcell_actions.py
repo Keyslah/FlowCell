@@ -56,7 +56,6 @@ New Collection: Prompt for a name and create a new child collection near the sel
 
 Empty Collections: Delete empty collections while keeping the system roots.
 
-Cycle Collection: Use the selected object's collection and show one direct object at a time while selecting it.
 
 Cycle Versions: With one selected original or snapshot, cycle the original anywhere in the scene and its snapshots one visible object at a time.
 
@@ -106,9 +105,7 @@ READ_ONLY_BRIDGE_COMMANDS = {
 VERSION_PREFIX_RE = re.compile(r"^\([sta]\d+\)", re.IGNORECASE)
 TARGET_NAME_PROP = "lls_target_name"
 ORIGIN_COLLECTIONS_PROP = "lls_origin_collections"
-CYCLE_INDEX_PROP = "lls_cycle_index"
 VISIBILITY_BASELINE_PROP = "flowcell_visibility_baseline_objects"
-CYCLE_COLLECTION_HOVER_VISIBILITY_PROP = "flowcell_cycle_collection_hover_visibility_v1"
 HIDDEN_NAME_PAD = "\u200b"
 INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*]+')
 FLOWCELL_LITHO_SIZE_SUFFIX_RE = re.compile(
@@ -1707,98 +1704,6 @@ def set_object_hidden_in_view_layer(
         obj.hide_viewport = hidden
 
 
-def get_object_hidden_in_view_layer(
-    obj: bpy.types.Object,
-    view_layer: bpy.types.ViewLayer,
-) -> bool:
-    try:
-        return bool(obj.hide_get(view_layer=view_layer))
-    except TypeError:
-        try:
-            return bool(obj.hide_get())
-        except Exception:
-            return bool(obj.hide_viewport)
-    except Exception:
-        return bool(obj.hide_viewport)
-
-
-def save_cycle_collection_hover_visibility(context: bpy.types.Context) -> int:
-    objects = []
-    for obj in context.scene.objects:
-        objects.append(
-            {
-                "name": obj.name,
-                "hide_viewport": bool(obj.hide_viewport),
-                "hidden": get_object_hidden_in_view_layer(obj, context.view_layer),
-            }
-        )
-
-    layer_collections = []
-
-    def collect_layer_collection_visibility(
-        layer_collection: bpy.types.LayerCollection,
-        parent_path: list[str],
-    ) -> None:
-        path = [*parent_path, layer_collection.collection.name]
-        layer_collections.append(
-            {
-                "path": path,
-                "exclude": bool(layer_collection.exclude),
-                "hide_viewport": bool(layer_collection.hide_viewport),
-                "collection_hide_viewport": bool(layer_collection.collection.hide_viewport),
-            }
-        )
-        for child in layer_collection.children:
-            collect_layer_collection_visibility(child, path)
-
-    collect_layer_collection_visibility(context.view_layer.layer_collection, [])
-    context.scene[CYCLE_COLLECTION_HOVER_VISIBILITY_PROP] = json.dumps(
-        {
-            "objects": objects,
-            "layer_collections": layer_collections,
-        }
-    )
-    return len(objects)
-
-
-def load_cycle_collection_hover_visibility(
-    context: bpy.types.Context,
-) -> dict[str, list[dict]] | None:
-    raw_value = context.scene.get(CYCLE_COLLECTION_HOVER_VISIBILITY_PROP)
-    if raw_value is None:
-        return None
-
-    try:
-        parsed = json.loads(str(raw_value))
-    except Exception:
-        return None
-
-    if not isinstance(parsed, dict):
-        return None
-
-    objects = parsed.get("objects")
-    if not isinstance(objects, list):
-        return None
-
-    layer_collections = parsed.get("layer_collections", [])
-    if not isinstance(layer_collections, list):
-        layer_collections = []
-
-    return {
-        "objects": [record for record in objects if isinstance(record, dict)],
-        "layer_collections": [
-            record for record in layer_collections if isinstance(record, dict)
-        ],
-    }
-
-
-def clear_cycle_collection_hover_visibility(context: bpy.types.Context) -> None:
-    try:
-        del context.scene[CYCLE_COLLECTION_HOVER_VISIBILITY_PROP]
-    except Exception:
-        pass
-
-
 def reveal_collection_in_view_layer(
     context: bpy.types.Context,
     target_collection: bpy.types.Collection | None,
@@ -2037,47 +1942,6 @@ def get_target_name_for_object(
     # Blender duplicates inherit custom properties, and renaming does not update
     # them. A working object's current name identifies its own version family.
     return strip_version_prefix(obj.name) or obj.name
-
-
-def collection_depth(
-    collection: bpy.types.Collection,
-    scene_root: bpy.types.Collection,
-    parent_map: dict[int, bpy.types.Collection],
-) -> int:
-    depth = 0
-    current = collection
-
-    while current is not None and current != scene_root:
-        current = parent_map.get(current.as_pointer())
-        if current is None:
-            break
-        depth += 1
-
-    return depth
-
-
-def get_cycle_collection(
-    context: bpy.types.Context,
-    parent_map: dict[int, bpy.types.Collection],
-) -> bpy.types.Collection | None:
-    scene_root = context.scene.collection
-    target_object = context.active_object or (context.selected_objects[0] if context.selected_objects else None)
-    if target_object is None:
-        return None
-
-    candidate_collections = [
-        collection
-        for collection in target_object.users_collection
-        if collection != scene_root
-    ]
-    if not candidate_collections:
-        return None
-
-    candidate_collections.sort(
-        key=lambda collection: collection_depth(collection, scene_root, parent_map),
-        reverse=True,
-    )
-    return candidate_collections[0]
 
 
 def find_live_object(
@@ -2651,101 +2515,6 @@ def perform_baseline_visibility(context: bpy.types.Context) -> str:
     return f"Recorded {len(visible_names)} visible object(s)."
 
 
-def perform_cycle_collection_hover_save_visibility(context: bpy.types.Context) -> str:
-    object_count = save_cycle_collection_hover_visibility(context)
-    return f"Captured cycle collection hover visibility for {object_count} object(s)."
-
-
-def perform_cycle_collection_hover_clear_visibility(context: bpy.types.Context) -> str:
-    had_snapshot = context.scene.get(CYCLE_COLLECTION_HOVER_VISIBILITY_PROP) is not None
-    clear_cycle_collection_hover_visibility(context)
-    if had_snapshot:
-        return "Cleared the cycle collection hover visibility snapshot."
-    return "No cycle collection hover visibility snapshot was recorded."
-
-
-def perform_cycle_collection_hover_restore_visibility(context: bpy.types.Context) -> str:
-    snapshot = load_cycle_collection_hover_visibility(context)
-    if snapshot is None:
-        return "No cycle collection hover visibility snapshot is recorded."
-
-    scene_objects = list(context.scene.objects)
-    objects_by_name = {obj.name: obj for obj in scene_objects}
-    restored_objects = 0
-    missing_objects = 0
-
-    for record in snapshot["objects"]:
-        name = record.get("name")
-        if not isinstance(name, str) or not name:
-            continue
-
-        obj = objects_by_name.get(name)
-        if obj is None:
-            missing_objects += 1
-            continue
-
-        obj.hide_viewport = bool(record.get("hide_viewport", False))
-        set_object_hidden_in_view_layer(obj, context.view_layer, bool(record.get("hidden", False)))
-        restored_objects += 1
-
-    layer_collections_by_path = {}
-
-    def index_layer_collections(
-        layer_collection: bpy.types.LayerCollection,
-        parent_path: tuple[str, ...],
-    ) -> None:
-        path = (*parent_path, layer_collection.collection.name)
-        layer_collections_by_path[path] = layer_collection
-        for child in layer_collection.children:
-            index_layer_collections(child, path)
-
-    index_layer_collections(context.view_layer.layer_collection, ())
-    restored_layer_collections = 0
-    missing_layer_collections = 0
-
-    for record in snapshot["layer_collections"]:
-        path = record.get("path")
-        if not isinstance(path, list) or not all(isinstance(name, str) for name in path):
-            continue
-
-        layer_collection = layer_collections_by_path.get(tuple(path))
-        if layer_collection is None:
-            missing_layer_collections += 1
-            continue
-
-        try:
-            layer_collection.collection.hide_viewport = bool(
-                record.get("collection_hide_viewport", False)
-            )
-        except Exception:
-            pass
-        try:
-            layer_collection.exclude = bool(record.get("exclude", False))
-        except Exception:
-            pass
-        try:
-            layer_collection.hide_viewport = bool(record.get("hide_viewport", False))
-        except Exception:
-            pass
-        restored_layer_collections += 1
-
-    try:
-        context.view_layer.update()
-    except Exception:
-        pass
-
-    message = (
-        "Restored cycle collection visibility for "
-        f"{restored_objects} object(s) and {restored_layer_collections} collection path(s)."
-    )
-    if missing_objects > 0 or missing_layer_collections > 0:
-        message += (
-            f" Missing {missing_objects} saved object(s) and "
-            f"{missing_layer_collections} saved collection path(s)."
-        )
-    return message
-
-
 def perform_restore_visibility(context: bpy.types.Context) -> str:
     baseline_names = load_visibility_baseline(context)
     if baseline_names is None:
@@ -2892,44 +2661,6 @@ def perform_empty_collections(context: bpy.types.Context) -> str:
     after = len(bpy.data.collections)
     removed = max(before - after, 0)
     return f"Removed {removed} empty collection(s)."
-
-
-def perform_cycle_collection(context: bpy.types.Context) -> str:
-    scene_root = context.scene.collection
-    parent_map = build_collection_parent_map(scene_root)
-    target_collection = get_cycle_collection(context, parent_map)
-
-    if target_collection is None:
-        return "Select an object in a collection to cycle."
-
-    collection_objects = list(target_collection.objects)
-    if not collection_objects:
-        return f"Collection '{target_collection.name}' has no direct objects."
-
-    current_index = int(target_collection.get(CYCLE_INDEX_PROP, -1))
-    next_index = (current_index + 1) % len(collection_objects)
-    next_object = collection_objects[next_index]
-
-    reveal_collection_in_view_layer(context, target_collection)
-    reveal_object_collection_paths(context, next_object)
-
-    for obj in collection_objects:
-        obj.hide_viewport = False
-        obj.hide_set(obj != next_object, view_layer=context.view_layer)
-
-    next_object.hide_viewport = False
-    next_object.hide_set(False, view_layer=context.view_layer)
-    try:
-        context.view_layer.update()
-    except Exception:
-        pass
-
-    bpy.ops.object.select_all(action="DESELECT")
-    next_object.select_set(True)
-    context.view_layer.objects.active = next_object
-    target_collection[CYCLE_INDEX_PROP] = next_index
-
-    return f"Cycled '{target_collection.name}' to '{next_object.name}'."
 
 
 def perform_cycle_live_versions(
@@ -3386,9 +3117,6 @@ def _execute_bridge_operator_direct(action: str, data: dict) -> dict[str, object
         "sort_live": perform_sort_live,
         "baseline_visibility": perform_baseline_visibility,
         "restore_visibility": perform_restore_visibility,
-        "cycle_collection_hover_save_visibility": perform_cycle_collection_hover_save_visibility,
-        "cycle_collection_hover_clear_visibility": perform_cycle_collection_hover_clear_visibility,
-        "cycle_collection_hover_restore_visibility": perform_cycle_collection_hover_restore_visibility,
         "cursor_center_hole": perform_cursor_center_hole,
     }
     if normalized in message_actions:
@@ -3427,8 +3155,6 @@ def _execute_bridge_operator_direct(action: str, data: dict) -> dict[str, object
         )
     elif normalized == "empty_collections":
         result = bpy.ops.object.flowcell_live_snapshot_empty_collections("EXEC_DEFAULT")
-    elif normalized == "cycle_collection":
-        result = bpy.ops.object.flowcell_live_snapshot_cycle_collection("EXEC_DEFAULT")
     elif normalized == "cycle_live_versions":
         result = bpy.ops.object.flowcell_live_snapshot_cycle_live_versions(
             "EXEC_DEFAULT",
@@ -4048,19 +3774,6 @@ class OBJECT_OT_flowcell_live_snapshot_empty_collections(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class OBJECT_OT_flowcell_live_snapshot_cycle_collection(bpy.types.Operator):
-    bl_idname = "object.flowcell_live_snapshot_cycle_collection"
-    bl_label = "Cycle Collection"
-    bl_description = "Show one direct object at a time in the selected object's collection"
-    bl_options = {"REGISTER"}
-
-    def execute(self, context: bpy.types.Context):
-        message = perform_cycle_collection(context)
-        set_bridge_result(message)
-        self.report({"INFO"}, message)
-        return {"FINISHED"}
-
-
 class OBJECT_OT_flowcell_live_snapshot_cycle_live_versions(bpy.types.Operator):
     bl_idname = "object.flowcell_live_snapshot_cycle_live_versions"
     bl_label = "Cycle Live Versions"
@@ -4114,7 +3827,6 @@ CLASSES = (
     OBJECT_OT_flowcell_live_snapshot_empty_trash,
     OBJECT_OT_flowcell_live_snapshot_new_collection,
     OBJECT_OT_flowcell_live_snapshot_empty_collections,
-    OBJECT_OT_flowcell_live_snapshot_cycle_collection,
     OBJECT_OT_flowcell_live_snapshot_cycle_live_versions,
 )
 

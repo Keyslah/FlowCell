@@ -63,19 +63,19 @@ A single script may be installed as a bare allowed `.py` file. For a durable
 catalog package, place `flowcell.script.json` beside the source:
 
 ```text
-Cycle Collection/
+Example Button/
 |-- flowcell.script.json
-`-- cycle collection.py
+`-- example button.py
 ```
 
 ```json
 {
   "schemaVersion": 1,
-  "id": "blender.cycle-collection",
-  "label": "Cycle Collection",
-  "tooltip": "Cycle direct objects in the selected object's collection.",
+  "id": "blender.example-button",
+  "label": "Example Button",
+  "tooltip": "Run an example Blender action.",
   "program": "Blender",
-  "source": "cycle collection.py",
+  "source": "example button.py",
   "bridgeData": {
     "command": "cycle"
   },

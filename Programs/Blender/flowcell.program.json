@@ -175,19 +175,6 @@
       "installOnAdd": true
     },
     {
-      "id": "blender.cycle-collection",
-      "version": "1.0.0",
-      "panelName": "Collections",
-      "sourcePath": "Blender Git Scripts/Collections/Cycle Collection",
-      "importKind": "script",
-      "displayLabel": "Cycle Collection",
-      "sourceKind": "script",
-      "required": false,
-      "dependencies": [],
-      "installEffects": [],
-      "installOnAdd": true
-    },
-    {
       "id": "blender.add-to-live",
       "version": "1.0.0",
       "panelName": "Collections",

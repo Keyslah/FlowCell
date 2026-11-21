@@ -46,16 +46,6 @@ const COLLECTIONS_BUTTONS = [
     "bundledFileName": "bundled-blender-blender-restore-a4756e503bf2d00b.flowcell-source.json"
   },
   {
-    "fileName": "cycle collection",
-    "legacyFileName": "button-migrated-ffab1a6d8ba276ba.flowcell-source.json",
-    "label": "Cycle Collection",
-    "x": 0,
-    "y": 44,
-    "width": 92.25982793135026,
-    "height": 44,
-    "bundledFileName": "bundled-blender-blender-cycle-collection-392908b010e66caa.flowcell-source.json"
-  },
-  {
     "fileName": "cycle versions back.py",
     "legacyFileName": "button-migrated-bba360f269618b3f.flowcell-source.json",
     "label": ">",

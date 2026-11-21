@@ -45,6 +45,14 @@ try {
 
     Ensure-ManifestProgramStructure
 
+    $previous = [datetime]::UtcNow.AddDays(-1)
+    [System.IO.File]::SetLastWriteTimeUtc($BindingsPath, $previous)
+    $previous = [System.IO.File]::GetLastWriteTimeUtc($BindingsPath)
+    Ensure-ManifestProgramStructure
+    if ([System.IO.File]::GetLastWriteTimeUtc($BindingsPath) -ne $previous) {
+        throw 'Repeating startup preflight replaced unchanged bindings.'
+    }
+
     $bindingsCutBackup = Join-Path $LocalRoot '.bindings.ini.test.backup'
     $bindingsCutStage = Join-Path $LocalRoot '.bindings.ini.test.writing'
     [System.IO.File]::Move($BindingsPath, $bindingsCutBackup)

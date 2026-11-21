@@ -184,8 +184,15 @@ fn read_journal(local: &Path) -> Result<ThemeMigration, String> {
 fn write_journal(local: &Path, journal: &ThemeMigration) -> Result<(), String> {
     let path = journal_path(local);
     fs::create_dir_all(path.parent().unwrap()).map_err(|error| error.to_string())?;
-    write_json_file(&path, &serde_json::to_vec_pretty(journal).map_err(|error| error.to_string())?,
-        if path.exists() { AtomicWriteMode::Replace } else { AtomicWriteMode::Create })
+    let contents = serde_json::to_vec_pretty(journal).map_err(|error| error.to_string())?;
+    // Replacing this file recycles its previous version synchronously during window startup.
+    let mode = match fs::read(&path) {
+        Ok(existing) if existing == contents => return Ok(()),
+        Ok(_) => AtomicWriteMode::Replace,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => AtomicWriteMode::Create,
+        Err(error) => return Err(format!("Cannot read theme migration journal {}: {error}", path.display())),
+    };
+    write_json_file(&path, &contents, mode)
 }
 
 #[tauri::command]
@@ -518,6 +525,20 @@ mod tests {
     fn put(path: &Path, value: &Value) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn repeated_startup_keeps_the_existing_migration_journal() {
+        let root = fixture("unchanged-journal");
+        migrate_at(&root, &[]).unwrap();
+        let path = journal_path(&root);
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_modified(UNIX_EPOCH + Duration::from_secs(1_700_000_000)).unwrap();
+        let previous = file.metadata().unwrap().modified().unwrap();
+        drop(file);
+        migrate_at(&root, &[]).unwrap();
+        assert_eq!(fs::metadata(path).unwrap().modified().unwrap(), previous);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

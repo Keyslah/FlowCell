@@ -27,8 +27,7 @@ class BridgeUndoContractTests(unittest.TestCase):
             namespace["LAST_BRIDGE_MESSAGE"] = message
             namespace["LAST_BRIDGE_DISPLAY"] = display
         namespace["set_bridge_result"] = set_result
-        commands = ("sort_live", "baseline_visibility", "restore_visibility", "cycle_collection_hover_save_visibility",
-                    "cycle_collection_hover_clear_visibility", "cycle_collection_hover_restore_visibility", "cursor_center_hole")
+        commands = ("sort_live", "baseline_visibility", "restore_visibility", "cursor_center_hole")
         for command in commands:
             namespace["perform_" + command] = lambda context, command=command: command + " done"
         namespace["perform_render_active_object_png_to_images_result"] = lambda context: {"message": "rendered", "output": "image.png"}

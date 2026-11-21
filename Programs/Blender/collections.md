@@ -1,8 +1,7 @@
 # Blender Collections
 
-The Collections panel installs its 18 user-facing controls through the program
-manifest. Cycle Collection keeps its hover, press and release event mapping;
-its visibility helpers are not installed as separate Buttons.
+The Collections panel installs its 17 user-facing controls through the program
+manifest.
 
 | Button | Description |
 | --- | --- |
@@ -13,7 +12,6 @@ its visibility helpers are not installed as separate Buttons.
 | `Back` | Moves the current original to `Trash`, restores the newest snapshot to its recorded source collections, and consumes that snapshot. |
 | `Cycle Versions` | Cycles the original anywhere in the scene and its snapshots, selecting and revealing one version at a time. Supports either direction, starting from the original or a snapshot. |
 | `Empty Collections` | Removes empty non-system child collections while keeping the FlowCell roots: `Live`, `Snapshots`, `Trash`, and `Archive`. |
-| `Cycle Collection` | Hovering captures a Cycle-only baseline without changing visibility or touching the manual baseline. Pressing shows and selects the next direct object in the selected object's deepest collection; releasing restores the captured object, collection, and view-layer visibility, and leaving clears the private hover snapshot. |
 | `Baseline Visibility` | Records every object currently visible in the active view layer as the scene's FlowCell visibility baseline. |
 | `Restore Visibility` | Hides all objects in the active view layer, then reveals only the saved baseline objects that still exist. |
 

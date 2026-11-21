@@ -180,45 +180,6 @@
           "skin": "skin-0"
         },
         {
-          "placementId": "placement-4",
-          "buttonId": "button-4",
-          "surfaceId": "surface-0",
-          "surfaceName": "18 Buttons",
-          "surfaceKind": "regular-popout",
-          "sourceIdentity": null,
-          "panelOwnerIdentity": null,
-          "label": "Cycle Collection",
-          "width": 92.25982793135026,
-          "height": 44,
-          "textFitMode": "shrink",
-          "textAlignment": "skin",
-          "textOffsetX": 0,
-          "textOffsetY": 0,
-          "textGlow": null,
-          "textGlowCurve": null,
-          "minimumFontSize": 8,
-          "textSizeOverride": null,
-          "allowLabelResize": false,
-          "matchHitboxToSkin": false,
-          "allowStretching": false,
-          "highlightOnHover": false,
-          "gradientEnabled": true,
-          "scatterEnabled": true,
-          "themeOverride": {
-            "activeColor": null,
-            "activeEnabled": null,
-            "activeGlowAmount": 42,
-            "activeHighlightAmount": 151,
-            "colors": {},
-            "hoverColor": null,
-            "hoverEnabled": true,
-            "hoverGlowAmount": 16,
-            "hoverHighlightAmount": 66
-          },
-          "assignSkin": true,
-          "skin": "skin-0"
-        },
-        {
           "placementId": "placement-5",
           "buttonId": "button-5",
           "surfaceId": "surface-0",
@@ -2918,45 +2879,6 @@
           },
           "assignSkin": true,
           "skin": "skin-17"
-        },
-        {
-          "placementId": "placement-73",
-          "buttonId": "button-4",
-          "surfaceId": "surface-5",
-          "surfaceName": "Blender / Collections",
-          "surfaceKind": "panel",
-          "sourceIdentity": null,
-          "panelOwnerIdentity": null,
-          "label": "Cycle Collection",
-          "width": 140,
-          "height": 37.294964,
-          "textFitMode": "shrink",
-          "textAlignment": "skin",
-          "textOffsetX": 0,
-          "textOffsetY": 0,
-          "textGlow": null,
-          "textGlowCurve": null,
-          "minimumFontSize": 8,
-          "textSizeOverride": null,
-          "allowLabelResize": false,
-          "matchHitboxToSkin": true,
-          "allowStretching": false,
-          "highlightOnHover": false,
-          "gradientEnabled": true,
-          "scatterEnabled": true,
-          "themeOverride": {
-            "activeColor": null,
-            "activeEnabled": true,
-            "activeGlowAmount": 75,
-            "activeHighlightAmount": 75,
-            "colors": {},
-            "hoverColor": null,
-            "hoverEnabled": false,
-            "hoverGlowAmount": 75,
-            "hoverHighlightAmount": 75
-          },
-          "assignSkin": true,
-          "skin": "skin-18"
         },
         {
           "placementId": "placement-74",
@@ -7950,11 +7872,6 @@
         "dependencyId": "source-17c8e423",
         "slot": null
       },
-      "button-4": {
-        "kind": "source",
-        "dependencyId": "source-e75ca564",
-        "slot": null
-      },
       "button-5": {
         "kind": "source",
         "dependencyId": "source-ef272179",
@@ -8665,17 +8582,6 @@
         "programName": "Blender",
         "programId": "blender",
         "panelName": "Collections",
-        "sourceId": "blender.cycle-collection",
-        "sourceVersion": "1.0.0",
-        "sourceName": "Cycle Collection",
-        "importKind": "script",
-        "slots": [],
-        "id": "source-e75ca564"
-      },
-      {
-        "programName": "Blender",
-        "programId": "blender",
-        "panelName": "Collections",
         "sourceId": "blender.cycle-versions-back",
         "sourceVersion": "1.0.0",
         "sourceName": ">",
@@ -9371,35 +9277,6 @@
           "x": 276.77948379405075,
           "y": 0,
           "zIndex": 3
-        }
-      },
-      "placement-4": {
-        "button": {
-          "label": "Cycle Collection",
-          "tooltip": "Hover to capture current visibility. Hold to show and select the next direct object; release to restore visibility.",
-          "defaultTextFitMode": "shrink",
-          "activationAnimation": null,
-          "activationBehavior": null
-        },
-        "placement": {
-          "activationCycle": null,
-          "allowLabelResize": false,
-          "allowStretching": false,
-          "height": 44,
-          "highlightOnHover": false,
-          "matchHitboxToSkin": false,
-          "minimumFontSize": 8,
-          "resizeAnchor": "top-left",
-          "textAlignment": "skin",
-          "textFitMode": "shrink",
-          "textOffsetX": 0,
-          "textOffsetY": 0,
-          "textSizeOverride": null,
-          "visualStateMap": null,
-          "width": 92.25982793135026,
-          "x": 0,
-          "y": 44,
-          "zIndex": 4
         }
       },
       "placement-5": {
@@ -11427,35 +11304,6 @@
           "x": 2,
           "y": 197.352518,
           "zIndex": 16
-        }
-      },
-      "placement-73": {
-        "button": {
-          "label": "Cycle Collection",
-          "tooltip": "Hover to capture current visibility. Hold to show and select the next direct object; release to restore visibility.",
-          "defaultTextFitMode": "shrink",
-          "activationAnimation": null,
-          "activationBehavior": null
-        },
-        "placement": {
-          "activationCycle": null,
-          "allowLabelResize": false,
-          "allowStretching": false,
-          "height": 37.294964,
-          "highlightOnHover": false,
-          "matchHitboxToSkin": true,
-          "minimumFontSize": 8,
-          "resizeAnchor": "top-left",
-          "textAlignment": "skin",
-          "textFitMode": "shrink",
-          "textOffsetX": 0,
-          "textOffsetY": 0,
-          "textSizeOverride": null,
-          "visualStateMap": null,
-          "width": 140,
-          "x": 170,
-          "y": 197.352518,
-          "zIndex": 17
         }
       },
       "placement-74": {
@@ -15436,7 +15284,6 @@
           "placement-1",
           "placement-2",
           "placement-3",
-          "placement-4",
           "placement-5",
           "placement-6",
           "placement-7",
@@ -15659,8 +15506,7 @@
           "placement-69",
           "placement-70",
           "placement-71",
-          "placement-72",
-          "placement-73"
+          "placement-72"
         ],
         "complete": true,
         "ownerButtonId": null
