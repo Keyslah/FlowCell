@@ -25,10 +25,11 @@ export interface ThemePageAssetDefinition {
 
 export interface ThemePageAssetValue {
   /**
-   * "concrete" and "chipped-concrete" select bundled textures; only "custom" carries a path.
-   * Chipped Concrete also turns the Main rails into textured slabs.
+   * "concrete", "chipped-concrete" and "concrete-moss" select bundled textures; only "custom" carries a path.
+   * Chipped Concrete and Concrete Moss also turn the Main rails into textured slabs, and Concrete Moss draws
+   * the Main page's Chipped Concrete keys as their Concrete Moss twins.
    */
-  mode: "default" | "none" | "custom" | "concrete" | "chipped-concrete";
+  mode: "default" | "none" | "custom" | "concrete" | "chipped-concrete" | "concrete-moss";
   path: string | null;
 }
 
@@ -452,6 +453,16 @@ export const MAIN_THEME_PRESETS: readonly MainThemePreset[] = [
     backgroundImageMode: "chipped-concrete",
     railBackground: "transparent",
     railBorder: "transparent"
+  },
+  {
+    // The same base, rails and keys rendered in Key Studio's Concrete Moss (BlenderKit, Poly Haven), worn
+    // in long gradual stretches instead of chips; key text is lit from inside the cut.
+    id: "concrete-moss",
+    label: "Concrete Moss",
+    backgroundColor: "#2E2A09",
+    backgroundImageMode: "concrete-moss",
+    railBackground: "transparent",
+    railBorder: "transparent"
   }
 ];
 
@@ -490,7 +501,8 @@ export function isThemePageAppearance(value: unknown): value is ThemePageAppeara
       asset.mode !== "none" &&
       asset.mode !== "custom" &&
       asset.mode !== "concrete" &&
-      asset.mode !== "chipped-concrete"
+      asset.mode !== "chipped-concrete" &&
+      asset.mode !== "concrete-moss"
     ) return false;
     if (asset.mode === "custom") return typeof asset.path === "string" && Boolean(asset.path.trim());
     return asset.path === null;

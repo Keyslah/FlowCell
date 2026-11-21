@@ -76,6 +76,7 @@ function fallbackHostHarness() {
         return { getChippedConcreteButtonSkin: (label, preferredWidth) => ({ id: `bundled:${label}`, preferredWidth }) };
       }
       if (name === "./mainLayout") return { rails };
+      if (name === "../../button/skins/useMainKeyMaterial") return { useMainKeyMaterial: () => undefined };
       throw new Error(`Unexpected dependency ${name}`);
     }
   });
@@ -97,6 +98,7 @@ test("Main grid reserves measured Button cores while retaining each saved render
       if (name === "../../button/ButtonHost") return { ButtonHost: "ButtonHost" };
       if (name === "../../button/skins/chippedConcreteButtonSkin") return { getChippedConcreteButtonSkin: () => ({}) };
       if (name === "./mainLayout") return { rails };
+      if (name === "../../button/skins/useMainKeyMaterial") return { useMainKeyMaterial: () => undefined };
       throw new Error(`Unexpected dependency ${name}`);
     }
   });

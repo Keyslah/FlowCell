@@ -8,6 +8,12 @@ import chippedConcreteRailButtons from "../assets/backgrounds/chipped-concrete-r
 import chippedConcreteRailInfo from "../assets/backgrounds/chipped-concrete-rail-info.webp";
 import chippedConcreteRailPanel from "../assets/backgrounds/chipped-concrete-rail-panel.webp";
 import chippedConcreteRailProgram from "../assets/backgrounds/chipped-concrete-rail-program.webp";
+import concreteMossBase from "../assets/backgrounds/concrete-moss-base.webp";
+import concreteMossRailButtons from "../assets/backgrounds/concrete-moss-rail-buttons.webp";
+import concreteMossRailInfo from "../assets/backgrounds/concrete-moss-rail-info.webp";
+import concreteMossRailPanel from "../assets/backgrounds/concrete-moss-rail-panel.webp";
+import concreteMossRailProgram from "../assets/backgrounds/concrete-moss-rail-program.webp";
+import { CONCRETE_MOSS_KEY_MATERIAL, MAIN_KEY_MATERIAL_ATTRIBUTE } from "../button/skins/concreteMossKeyTwin.js";
 import { MAIN_PAGE_BASE_OFFSET, RAIL_SLAB_BLEED_PX, rails } from "../pages/main/mainLayout.js";
 import {
   defaultMainThemeAppearance,
@@ -229,6 +235,8 @@ interface ThemePageCssUpdate {
   assets: ReadonlyArray<readonly [string, string | null]>;
   /** Main page updates only: whether the main window keeps its system frame shadow. */
   mainWindowShadow?: boolean;
+  /** Main page updates only: the material Main draws its Chipped Concrete keys in (null = as saved). */
+  mainKeyMaterial?: string | null;
 }
 
 // Chipped Concrete is three stacked levels of the same rendered concrete. The window's frame is the
@@ -243,27 +251,38 @@ interface ThemePageCssUpdate {
 // keeps the picture's size and where the slab's top face landed in it (left, top, right, bottom in
 // picture px); that face is laid exactly over the rail, so the front edge, chunks and shadow reach
 // out into the rail's slab layer. The rails' own blur is turned off so it cannot smear the slabs.
-const CHIPPED_CONCRETE_RAIL_SLABS: Readonly<Record<string, {
+type RailSlabSet = Readonly<Record<string, {
   url: string;
   size: readonly [number, number];
   face: readonly [number, number, number, number];
-}>> = {
+}>>;
+
+const CHIPPED_CONCRETE_RAIL_SLABS: RailSlabSet = {
   "program-rail": { url: chippedConcreteRailProgram, size: [445, 1316], face: [31.095, 32.002, 357.935, 1209.251] },
   "panel-rail": { url: chippedConcreteRailPanel, size: [445, 1316], face: [31.095, 32.002, 357.935, 1209.251] },
   "buttons-rail": { url: chippedConcreteRailButtons, size: [1382, 1316], face: [30.994, 32.013, 1294.733, 1205.483] },
   "info-rail": { url: chippedConcreteRailInfo, size: [517, 1316], face: [31.074, 32.001, 429.647, 1208.476] }
 };
 
-function chippedConcreteRailSlabEntries(): Array<readonly [string, string]> {
+// Concrete Moss is the same three levels and the same slab sizes rendered in Key Studio's Concrete Moss, with the
+// chunk pieces and round bites replaced by long, gradual worn stretches along every edge.
+const CONCRETE_MOSS_RAIL_SLABS: RailSlabSet = {
+  "program-rail": { url: concreteMossRailProgram, size: [445, 1316], face: [31.095, 32.002, 357.935, 1209.251] },
+  "panel-rail": { url: concreteMossRailPanel, size: [445, 1316], face: [31.095, 32.002, 357.935, 1209.251] },
+  "buttons-rail": { url: concreteMossRailButtons, size: [1382, 1316], face: [30.994, 32.013, 1294.733, 1205.483] },
+  "info-rail": { url: concreteMossRailInfo, size: [517, 1316], face: [31.074, 32.001, 429.647, 1208.476] }
+};
+
+function railSlabEntries(base: string, slabs: RailSlabSet): Array<readonly [string, string]> {
   const entries: Array<readonly [string, string]> = [
     ["--flowcell-main-rail-backdrop-filter", "none"],
     ["--flowcell-main-background-fill", "transparent"],
-    ["--flowcell-main-base-mask", `url("${chippedConcreteBase}")`],
+    ["--flowcell-main-base-mask", `url("${base}")`],
     ["--flowcell-main-page-left", `${MAIN_PAGE_BASE_OFFSET.left}px`],
     ["--flowcell-main-page-top", `${MAIN_PAGE_BASE_OFFSET.top}px`]
   ];
   for (const rail of rails) {
-    const slab = CHIPPED_CONCRETE_RAIL_SLABS[rail.id];
+    const slab = slabs[rail.id];
     if (!slab) continue;
     const [left, top, right, bottom] = slab.face;
     const scaleX = rail.width / (right - left);
@@ -279,22 +298,29 @@ function chippedConcreteRailSlabEntries(): Array<readonly [string, string]> {
   return entries;
 }
 
-const CHIPPED_CONCRETE_RAIL_SLAB = chippedConcreteRailSlabEntries();
+const MAIN_SLAB_LOOKS = {
+  "chipped-concrete": railSlabEntries(chippedConcreteBase, CHIPPED_CONCRETE_RAIL_SLABS),
+  "concrete-moss": railSlabEntries(concreteMossBase, CONCRETE_MOSS_RAIL_SLABS)
+} as const;
 
-function isChippedConcreteMain(appearance: ThemePageAppearance): boolean {
-  if (appearance.pageId !== "main") return false;
+/** The rendered-slab look the Main page shows, if any. */
+function mainSlabLook(appearance: ThemePageAppearance): keyof typeof MAIN_SLAB_LOOKS | null {
+  if (appearance.pageId !== "main") return null;
   const background = getFlowCellThemePageDefinition("main").assets.find((asset) => asset.id === "background-image");
+  if (!background) return null;
   // "Default" counts: Chipped Concrete is the Main page's default look.
-  return !!background &&
-    effectiveThemePageAssetMode(background, appearance.assets["background-image"]) === "chipped-concrete";
+  const mode = effectiveThemePageAssetMode(background, appearance.assets["background-image"]);
+  return mode === "chipped-concrete" || mode === "concrete-moss" ? mode : null;
 }
 
 function mainRailSlabCssEntries(
   appearance: ThemePageAppearance
 ): ReadonlyArray<readonly [string, string | null]> {
   if (appearance.pageId !== "main") return [];
-  const slab = isChippedConcreteMain(appearance);
-  return CHIPPED_CONCRETE_RAIL_SLAB.map(([property, value]) => [property, slab ? value : null] as const);
+  const look = mainSlabLook(appearance);
+  const values = look ? new Map(MAIN_SLAB_LOOKS[look]) : null;
+  // Both looks set the same properties, so listing Chipped Concrete's clears every one when neither applies.
+  return MAIN_SLAB_LOOKS["chipped-concrete"].map(([property]) => [property, values?.get(property) ?? null] as const);
 }
 
 function buildThemePageCssUpdate(appearance: ThemePageAppearance): ThemePageCssUpdate {
@@ -311,14 +337,19 @@ function buildThemePageCssUpdate(appearance: ThemePageAppearance): ThemePageCssU
             ? `url("${concreteBackground}")`
             : mode === "chipped-concrete"
               ? `url("${chippedConcreteBase}")`
-              : mode === "custom" && asset.path
-                ? cssUrl(asset.path)
-                : null;
+              : mode === "concrete-moss"
+                ? `url("${concreteMossBase}")`
+                : mode === "custom" && asset.path
+                  ? cssUrl(asset.path)
+                  : null;
         return [assetDefinition.cssProperty, cssValue] as const;
       }),
       ...mainRailSlabCssEntries(appearance)
     ],
-    mainWindowShadow: appearance.pageId === "main" ? !isChippedConcreteMain(appearance) : undefined
+    mainWindowShadow: appearance.pageId === "main" ? mainSlabLook(appearance) === null : undefined,
+    mainKeyMaterial: appearance.pageId === "main"
+      ? mainSlabLook(appearance) === "concrete-moss" ? CONCRETE_MOSS_KEY_MATERIAL : null
+      : undefined
   };
 }
 
@@ -348,6 +379,8 @@ function applyThemePageCssUpdate(update: ThemePageCssUpdate, root: HTMLElement):
     if (value === null) root.style.removeProperty(property);
     else root.style.setProperty(property, value);
   }
+  if (update.mainKeyMaterial === null) root.removeAttribute(MAIN_KEY_MATERIAL_ATTRIBUTE);
+  else if (update.mainKeyMaterial !== undefined) root.setAttribute(MAIN_KEY_MATERIAL_ATTRIBUTE, update.mainKeyMaterial);
   syncMainWindowShadow(update.mainWindowShadow);
 }
 

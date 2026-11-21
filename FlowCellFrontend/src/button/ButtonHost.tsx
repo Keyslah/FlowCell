@@ -78,6 +78,11 @@ export interface ButtonHostProps {
   onHoverCancel?: (button: ButtonRecord, event: PointerEvent) => void;
   onExecutionResult?: (result: ButtonExecutionResult) => void;
   familySkinCentering?: "both" | "vertical";
+  /**
+   * Draw-time skin swap (the Main page's Concrete Moss theme). It runs after the family choice and
+   * never changes which skin is assigned, how the Button is sized and centered, or what is saved.
+   */
+  renderSkin?: (skin: ButtonSkin) => ButtonSkin;
   onMeasurement?: (measurement: ButtonCoreMeasurement) => void;
   onVisualMeasurement?: (measurement: ButtonVisualMeasurement) => void;
   visualMeasurementSamplingKey?: string | number;
@@ -167,6 +172,7 @@ export function ButtonHost({
   onHoverCancel,
   onExecutionResult,
   familySkinCentering = "both",
+  renderSkin,
   onMeasurement,
   onVisualMeasurement,
   visualMeasurementSamplingKey,
@@ -188,6 +194,7 @@ export function ButtonHost({
   const [labelElement, setLabelElement] = useState<HTMLElement | SVGElement | null>(null);
   const [shadowRoot, setShadowRoot] = useState<ShadowRoot | null>(null);
   const [hovered, setHovered] = useState(false);
+  const drawnSkin = useMemo(() => renderSkin ? renderSkin(skin) : skin, [renderSkin, skin]);
   const [pressed, setPressed] = useState(false);
   const [held, setHeld] = useState(false);
   const [play, setPlay] = useState(false);
@@ -1267,7 +1274,7 @@ export function ButtonHost({
       }}
     >
       <ButtonSkinRenderer
-        skin={skin}
+        skin={drawnSkin}
         themeOverride={themeOverride}
         label={renderedLabel}
         width={placement.width}

@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { ButtonHost } from "../../button/ButtonHost";
 import { getChippedConcreteButtonSkin } from "../../button/skins/chippedConcreteButtonSkin";
+import { useMainKeyMaterial } from "../../button/skins/useMainKeyMaterial";
 import type {
   ButtonPlacement,
   ButtonCoreMeasurement,
@@ -99,6 +100,7 @@ export function MainButtonHost({
     : sizedPlacement;
   const gridUsesCore = !absolute;
   const railPosition = useMainRailPosition(button, absolute, renderedPlacement.width, gridUsesCore);
+  const renderSkin = useMainKeyMaterial();
 
   return (
     <span
@@ -120,6 +122,7 @@ export function MainButtonHost({
         button={effectiveCanonical}
         placement={renderedPlacement}
         skin={skin}
+        renderSkin={renderSkin}
         familySkinCentering={railPosition.onMeasurement ? "vertical" : undefined}
         onMeasurement={railPosition.onMeasurement}
         selected={Boolean(button.isSelected)}
@@ -162,6 +165,7 @@ export function MainControlHost({
   const skin = getChippedConcreteButtonSkin(control.label, isHeader ? control.width : undefined);
   const height = targetHeightOverride ?? control.height;
   const railPosition = useMainRailPosition(control, absolute, control.width);
+  const renderSkin = useMainKeyMaterial();
   const canonicalControl: CanonicalButtonRecord = {
     id: control.id,
     role: "panel-owner",
@@ -227,6 +231,7 @@ export function MainControlHost({
         button={canonicalControl}
         placement={placement}
         skin={skin}
+        renderSkin={renderSkin}
         familySkinCentering={railPosition.onMeasurement ? "vertical" : undefined}
         onMeasurement={railPosition.onMeasurement}
         selected={Boolean(control.isSelected)}

@@ -1816,7 +1816,7 @@ test("FlowCell page registry round-trips Main background and individual rail tok
 });
 
 test("the new Concrete Main theme draws every rail box and leaves Buttons and Default unchanged", () => {
-  assert.deepEqual(MAIN_THEME_PRESETS.map((preset) => preset.label), ["Concrete", "Chipped Concrete"]);
+  assert.deepEqual(MAIN_THEME_PRESETS.map((preset) => preset.label), ["Concrete", "Chipped Concrete", "Concrete Moss"]);
   assert.equal(mainThemePresetAppearance("missing"), null);
   for (const preset of MAIN_THEME_PRESETS) {
     const page = mainThemePresetAppearance(preset.id);
@@ -1826,7 +1826,7 @@ test("the new Concrete Main theme draws every rail box and leaves Buttons and De
     for (const rail of rails) {
       for (const part of ["background", "border"]) {
         const token = page.tokens[`rail-${rail.id}-${part}`];
-        if (preset.backgroundImageMode === "chipped-concrete") {
+        if (preset.backgroundImageMode === "chipped-concrete" || preset.backgroundImageMode === "concrete-moss") {
           // Rendered slab pictures draw these rails; a fill or edge would only tint them.
           assert.equal(token, "transparent", `${preset.label} ${rail.name} rail ${part} must stay clear`);
           continue;
@@ -1872,6 +1872,13 @@ test("the new Concrete Main theme draws every rail box and leaves Buttons and De
   const chippedWithPath = structuredClone(chipped);
   chippedWithPath.assets["background-image"].path = "C:\\Themes\\chipped.jpg";
   assert.equal(isThemePageAppearance(chippedWithPath), false);
+  // Concrete Moss is its own look; it never becomes the default and, like every preset, moves no Button.
+  const moss = mainThemePresetAppearance("concrete-moss");
+  assert.deepEqual(moss.assets["background-image"], { mode: "concrete-moss", path: null });
+  assert.notDeepEqual(stock, moss);
+  const mossWithPath = structuredClone(moss);
+  mossWithPath.assets["background-image"].path = "C:\\Themes\\moss.jpg";
+  assert.equal(isThemePageAppearance(mossWithPath), false);
 });
 
 test("legacy Main Theme geometry collisions reject without reflow or partial appearance", () => {
@@ -2239,4 +2246,46 @@ test("invalid legacy Button Section sizes reject without touching layout", () =>
   const before = structuredClone(document);
   assert.throws(() => applyThemeFile(document, oversize), /outside its exact surface bounds|overlap/);
   assert.deepEqual(document, before);
+});
+
+test("Concrete Moss twins: Main draws each Chipped Concrete key as the same key in moss and nothing else", async () => {
+  const { chippedConcreteKeyName, concreteMossKeyTwin } = await import("./.compiled-button-system/button/skins/concreteMossKeyTwin.js");
+  const { getChippedConcreteButtonSkin } = await import("./.compiled-button-system/button/skins/chippedConcreteButtonSkin.js");
+  const { compileButtonSkin } = await import("./.compiled-button-system/button/skins/skinCompiler.js");
+  const bundled = getChippedConcreteButtonSkin("Refresh", 100);
+  assert.equal(chippedConcreteKeyName(bundled), "k100");
+  const saved = { ...bundled, id: "skin-chipped-concrete-key-k100b", name: "Chipped Concrete Key 100 b", metadata: {} };
+  assert.equal(chippedConcreteKeyName(saved), "k100b");
+  assert.equal(chippedConcreteKeyName({ ...bundled, id: "skin-family-x", name: "chipped concrete16" }), "k100");
+  // The single sample keys, other skins and anything without the key format are left alone.
+  for (const other of [{ ...bundled, name: "Chipped Concrete" }, { ...bundled, name: "Concrete Moss" }, { ...bundled, base: "" }]) {
+    assert.equal(chippedConcreteKeyName(other), null);
+  }
+  const keys = {
+    k100: { sprite: "UklGRg==", picture: [-12.5, -13, 143, 83], frames: 12, profile: "6 9 0,0 100,5.5" },
+    k100b: { sprite: "UklGRgB=", picture: [-12.25, -12.75, 142.5, 82.5], frames: 12, profile: "6 9 0,0 100,5.49" }
+  };
+  const twin = concreteMossKeyTwin(saved, keys);
+  assert.notEqual(twin, saved);
+  assert.equal(concreteMossKeyTwin(saved, keys), twin, "the same key always draws the same twin object");
+  assert.equal(twin.id, "skin-chipped-concrete-key-k100b--concrete-moss");
+  assert.equal(twin.name, "Concrete Moss Key 100 b");
+  assert.match(twin.structure, /data:image\/webp;base64,UklGRgB=/);
+  assert.match(twin.structure, /left:-12\.25px;top:-12\.75px;width:142\.5px;height:82\.5px/);
+  assert.doesNotMatch(twin.structure, /rgba\(46,38,31,0\.86\)/);
+  assert.match(twin.structure, /<span data-anim="cl" style="[^"]*color:rgb\(255,246,228\);font-weight:300;text-shadow:[^"]*;mix-blend-mode:plus-lighter">\{\{label\}\}<\/span>/);
+  assert.match(twin.base, /--cc-travel-profile: 6 9 0,0 100,5\.49;/);
+  // Size, sizing policy, states and motion variables are the saved key's own.
+  for (const section of ["hover", "pressed", "held", "release", "disabled", "error", "play", "keyframes"]) {
+    assert.equal(twin[section], saved[section], section);
+  }
+  const withoutProfile = (base) => base.replace(/--cc-travel-profile:[^;]*;/, "");
+  assert.equal(withoutProfile(twin.base), withoutProfile(saved.base));
+  assert.equal(twin.structure.match(/<div data-core style="[^"]*"/)[0], saved.structure.match(/<div data-core style="[^"]*"/)[0]);
+  assert.equal(compileButtonSkin(twin).ok, true);
+  // A variant with no render of its own uses the base key of the same width.
+  const variant = concreteMossKeyTwin({ ...saved, id: "x", name: "Chipped Concrete Key 100 c" }, keys);
+  assert.match(variant.structure, /base64,UklGRg==/);
+  const plain = { ...bundled, name: "Green Basic" };
+  assert.equal(concreteMossKeyTwin(plain, keys), plain);
 });

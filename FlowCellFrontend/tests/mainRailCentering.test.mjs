@@ -31,6 +31,7 @@ function hostHarness(exportName) {
         return { getChippedConcreteButtonSkin: () => ({ id: "fallback-skin" }) };
       }
       if (name === "./mainLayout") return { rails };
+      if (name === "../../button/skins/useMainKeyMaterial") return { useMainKeyMaterial: () => undefined };
       throw new Error(`Unexpected dependency ${name}`);
     }
   };

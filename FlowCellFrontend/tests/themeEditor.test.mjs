@@ -738,10 +738,11 @@ test("Chipped Concrete stacks a page-sized base slab, rendered rail slabs and th
   assert.match(runtime, /import chippedConcreteBase from "\.\.\/assets\/backgrounds\/chipped-concrete-base\.webp";/);
   assert.match(runtime, /\bmode === "chipped-concrete"\s*\?\s*`url\("\$\{chippedConcreteBase\}"\)`/);
   assert.match(runtime, /\["--flowcell-main-background-fill", "transparent"\]/);
-  assert.match(runtime, /\["--flowcell-main-base-mask", `url\("\$\{chippedConcreteBase\}"\)`\]/);
+  assert.match(runtime, /\["--flowcell-main-base-mask", `url\("\$\{base\}"\)`\]/);
+  assert.match(runtime, /"chipped-concrete": railSlabEntries\(chippedConcreteBase, CHIPPED_CONCRETE_RAIL_SLABS\)/);
   assert.match(css, /background-color: var\(--flowcell-main-background-fill, var\(--flowcell-main-background-color, #887F73\)\);/);
   // Chipped Concrete is the default Main look: "Default" resolves to it, and the Main page gets it with nothing saved.
-  assert.match(runtime, /effectiveThemePageAssetMode\(background, appearance\.assets\["background-image"\]\) === "chipped-concrete"/);
+  assert.match(runtime, /const mode = effectiveThemePageAssetMode\(background, appearance\.assets\["background-image"\]\);\s*return mode === "chipped-concrete" \|\| mode === "concrete-moss" \? mode : null;/);
   assert.match(runtime, /stored\.pages\[pageId\] \?\? \(pageId === "main" \? defaultThemePageAppearance\("main"\) : null\)/);
   assert.match(read("src", "pages", "main", "MainPage.tsx"), /import mainBackground from "\.\.\/\.\.\/assets\/backgrounds\/chipped-concrete-base\.webp";/);
   // Rail and header Button shadows stop at the base's edge, and the main window drops its frame shadow.
@@ -749,7 +750,7 @@ test("Chipped Concrete stacks a page-sized base slab, rendered rail slabs and th
   assert.match(railSurface, /maskImage: "var\(--flowcell-main-base-mask, none\)"/);
   assert.match(railSurface, /maskSize: `\$\{pageFrame\.width\}px \$\{pageFrame\.height\}px`/);
   assert.match(railSurface, /maskPosition: `\$\{-\(MAIN_PAGE_BASE_OFFSET\.left \+ slabLeft\)\}px \$\{-\(MAIN_PAGE_BASE_OFFSET\.top \+ slabTop\)\}px`/);
-  assert.match(runtime, /mainWindowShadow: appearance\.pageId === "main" \? !isChippedConcreteMain\(appearance\) : undefined/);
+  assert.match(runtime, /mainWindowShadow: appearance\.pageId === "main" \? mainSlabLook\(appearance\) === null : undefined/);
   assert.match(runtime, /if \(current\.label !== "main"\) return;/);
   const base = readFileSync(path.join(root, "src", "assets", "backgrounds", "chipped-concrete-base.webp"));
   assert.equal(base.subarray(0, 4).toString("latin1"), "RIFF");
@@ -783,5 +784,36 @@ test("Chipped Concrete stacks a page-sized base slab, rendered rail slabs and th
     const slab = readFileSync(path.join(root, "src", "assets", "backgrounds", `chipped-concrete-rail-${railId}.webp`));
     assert.equal(slab.subarray(0, 4).toString("latin1"), "RIFF");
     assert.equal(slab.subarray(8, 12).toString("latin1"), "WEBP");
+  }
+});
+
+test("Concrete Moss is its own Main look: moss slabs, and Main alone draws its keys as moss twins", () => {
+  const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
+  const runtime = read("src", "theme", "themeRuntime.ts");
+  const host = read("src", "button", "ButtonHost.tsx");
+  const mainHost = read("src", "pages", "main", "MainButtonHost.tsx");
+  assert.match(editor, /<option value="concrete-moss">Concrete Moss<\/option>/);
+  assert.match(runtime, /import concreteMossBase from "\.\.\/assets\/backgrounds\/concrete-moss-base\.webp";/);
+  assert.match(runtime, /\bmode === "concrete-moss"\s*\?\s*`url\("\$\{concreteMossBase\}"\)`/);
+  assert.match(runtime, /"concrete-moss": railSlabEntries\(concreteMossBase, CONCRETE_MOSS_RAIL_SLABS\)/);
+  for (const railId of ["program", "panel", "buttons", "info"]) {
+    assert.match(runtime, new RegExp(`"${railId}-rail": \\{ url: concreteMossRail`));
+    const slab = readFileSync(path.join(root, "src", "assets", "backgrounds", `concrete-moss-rail-${railId}.webp`));
+    assert.equal(slab.subarray(0, 4).toString("latin1"), "RIFF");
+    assert.equal(slab.subarray(8, 12).toString("latin1"), "WEBP");
+  }
+  const base = readFileSync(path.join(root, "src", "assets", "backgrounds", "concrete-moss-base.webp"));
+  assert.equal(base.subarray(8, 12).toString("latin1"), "WEBP");
+  // Only the Main look sets the key material, and it is cleared for every other look.
+  assert.match(runtime, /mainKeyMaterial: appearance\.pageId === "main"\s*\? mainSlabLook\(appearance\) === "concrete-moss" \? CONCRETE_MOSS_KEY_MATERIAL : null\s*: undefined/);
+  assert.match(runtime, /if \(update\.mainKeyMaterial === null\) root\.removeAttribute\(MAIN_KEY_MATERIAL_ATTRIBUTE\);/);
+  // The swap is draw-only: sizing and family centering still come from the saved key.
+  assert.match(host, /const drawnSkin = useMemo\(\(\) => renderSkin \? renderSkin\(skin\) : skin, \[renderSkin, skin\]\);/);
+  assert.match(host, /<ButtonSkinRenderer\s+skin=\{drawnSkin\}/);
+  assert.match(host, /centerSkinInRect=\{skin !== assignedSkin \? familySkinCentering : undefined\}/);
+  // Main's own hosts are the only callers; Pop-outs, Fans and the Buttons Editor never pass a swap.
+  assert.equal((mainHost.match(/renderSkin=\{renderSkin\}/g) ?? []).length, 2);
+  for (const file of [["src", "button", "ButtonSurface.tsx"], ["src", "button", "editor", "ButtonWorkspace.tsx"]]) {
+    assert.doesNotMatch(read(...file), /renderSkin|useMainKeyMaterial/);
   }
 });
