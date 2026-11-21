@@ -3,11 +3,11 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing release tag containing Windows FlowCell installer.zip
+        description: Existing release tag containing Windows.FlowCell.installer.zip
         required: true
         type: string
       installer_sha256:
-        description: Expected SHA256 of Windows FlowCell installer.zip
+        description: Expected SHA256 of Windows.FlowCell.installer.zip
         required: true
         type: string
 permissions:
@@ -34,9 +34,9 @@ jobs:
           if ($env:FLOWCELL_INSTALLER_SHA256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Expected a 64-character installer ZIP SHA256.' }
           $download = Join-Path $env:RUNNER_TEMP 'flowcell-installer-smoke'
           New-Item -ItemType Directory -Path $download -Force | Out-Null
-          gh release download $env:FLOWCELL_RELEASE_TAG --repo $env:GH_REPO --pattern 'Windows FlowCell installer.zip' --dir $download
+          gh release download $env:FLOWCELL_RELEASE_TAG --repo $env:GH_REPO --pattern 'Windows.FlowCell.installer.zip' --dir $download
           if ($LASTEXITCODE -ne 0) { throw "Release asset download failed: $LASTEXITCODE" }
-          $zip = Join-Path $download 'Windows FlowCell installer.zip'
+          $zip = Join-Path $download 'Windows.FlowCell.installer.zip'
           $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
           if ($actual -ine $env:FLOWCELL_INSTALLER_SHA256) { throw "Installer ZIP SHA256 mismatch: expected $env:FLOWCELL_INSTALLER_SHA256; received $actual" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
