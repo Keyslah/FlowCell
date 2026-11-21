@@ -1,3 +1,7 @@
+2026-11-20 FlowCell v0.1.15 Windows installer release:
+- Published the Windows-only installer and SHA256SUMS.txt from tag v0.1.15 at commit e3570369e4a17680adc50ebbc6fe92317d68f617. The Windows.FlowCell.installer.zip SHA-256 is 39500c49cf6f389fb5f5b9da0cbfedb3100e694749c144a626e84d2a30a23d71. Existing Blender and Illustrator packages remain in v0.1.14.
+- Validation: 1,037 frontend tests, 13 native layout tests, 32 NSIS installer checks, 36 Windows catalog checks and 22 focused Node 22 tests passed. The exact uploaded ZIP passed the disposable Windows install, startup, upgrade and uninstall smoke workflow (run 44861264468). The separate all-program tag build stopped at its saved-profile preflight because the hosted runner has no profile root configured; no program ZIPs were requested or published for this release.
+
 2026-11-20 FlowCell v0.1.15 Windows installer release preparation:
 - Versioned the Windows application 0.1.14 -> 0.1.15 for a Windows-installer-only release containing the current core and installer reliability changes. Blender and Illustrator packages remain available from the v0.1.14 release.
 
