@@ -1,3 +1,6 @@
+2026-11-20 FlowCell v0.1.15 Windows installer release preparation:
+- Versioned the Windows application 0.1.14 -> 0.1.15 for a Windows-installer-only release containing the current core and installer reliability changes. Blender and Illustrator packages remain available from the v0.1.14 release.
+
 2026-11-20 FlowCell core and installer reliability:
 - The installer checks both the existing frontend and runtime before an upgrade, checks payload copy errors, and verifies the installed frontend and AutoHotkey bytes before updating registration and shortcuts. Its pinned Tauri NSIS template must be reviewed when the CLI is upgraded. A later copy failure can leave partially replaced files even though version registration is not advanced.
 - Program discovery preserves and reports recognized directory-only internal package placeholders instead of treating them as invalid user packages; unexpected contents and invalid user packages still fail validation.
