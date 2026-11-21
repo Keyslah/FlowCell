@@ -1,8 +1,10 @@
-2026-11-20 FlowCell v0.1.14 release preparation:
+2026-11-20 FlowCell v0.1.14 release:
 - Versioned the application 0.1.13 -> 0.1.14. The Windows installer release archive is named Windows FlowCell installer.zip; release verification and the prebuilt installer smoke workflow use the same filename.
 - Fixed the Windows setup regression test fixture to supply the active Main window state used by startup.
 - Release packaging can explicitly use the current catalog for selected Programs without copying an outdated saved appearance or layout. Blender still uses its verified saved profile; the Illustrator release uses the current single-Layers-panel catalog.
 - GitHub normalizes the uploaded Windows installer filename to Windows.FlowCell.installer.zip; the release label retains Windows FlowCell installer.zip, and the smoke workflow uses GitHub's actual filename.
+- Built and installed Core and published the installer, Blender and Illustrator ZIPs. All three downloaded ZIP hashes matched; the prebuilt installer smoke workflow passed install, launch, upgrade, uninstall and user-data checks. The installed frontend became responsive after startup and the backend reported 3 registered script bindings and 0 registration/load errors. Development frontend bootstrap timed out after 20000 ms; live UI and host-app behavior were not verified.
+- Before/after installation checks found 5837 of 5838 saved files unchanged; the remaining changed file was the Toggle Monitors runtime state. The installer does not replace an existing configured Illustrator program; the Illustrator ZIP contains the current catalog without a captured saved layout.
 
 2026-11-20 Illustrator Layers panel:
 - The Illustrator default panel is now Layers, containing the Layer Tree and all 20 layer actions. The unused duplicate Layers panel is removed; catalog paths and stable contribution IDs remain unchanged. Layer Tree refresh events target the renamed panel.
