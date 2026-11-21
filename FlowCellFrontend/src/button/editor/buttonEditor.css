@@ -1,8 +1,5 @@
-:root {
-  color-scheme: dark;
-}
-
 .button-editor-page {
+  color-scheme: dark;
   display: flex;
   flex-direction: column;
   height: 100vh;

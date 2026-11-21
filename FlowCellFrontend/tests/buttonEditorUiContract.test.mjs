@@ -13,6 +13,12 @@ function readEditorFile(fileName) {
   return readFileSync(join(editorRoot, fileName), "utf8");
 }
 
+test("the Button Editor keeps its dark color scheme inside its own page", () => {
+  const css = readEditorFile("buttonEditor.css");
+  assert.match(css, /\.button-editor-page\s*\{[^}]*color-scheme:\s*dark/);
+  assert.doesNotMatch(css, /:root\s*\{[^}]*color-scheme:/);
+});
+
 function readEditorSources() {
   return readdirSync(editorRoot, { withFileTypes: true })
     .filter((entry) => entry.isFile() && /\.(?:css|ts|tsx)$/.test(entry.name))
