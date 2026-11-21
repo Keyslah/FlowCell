@@ -7,6 +7,9 @@ For a Windows Core and Blender-only release, run
 `release-tools/build-installer.ps1 -ProgramNames Blender -OutputDirectory <fresh-folder>`.
 This produces only `Windows FlowCell installer.zip`, `FlowCell-Blender.zip` and
 `SHA256SUMS.txt`. Omit `-ProgramNames` to retain the complete program set.
+GitHub normalizes the installer's uploaded filename to
+`Windows.FlowCell.installer.zip`; the release asset label retains the readable
+name, and published checksums must use the normalized filename.
 No new portable ZIP is produced by this release route.
 Windows is also included in the Core installer, so initial Windows setup does
 not depend on downloading its separate catalog ZIP.
@@ -233,7 +236,7 @@ validated ZIP set (the selected program set when `-ProgramNames` was used) and
 `SHA256SUMS.txt` to a draft release, then dispatch
 **Validate prebuilt Windows installer** with that release tag and the installer's
 ZIP SHA256. This workflow checks out the tag, downloads only
-`Windows FlowCell installer.zip`, verifies its exact hash and archive boundary, and
+`Windows.FlowCell.installer.zip`, verifies its exact hash and archive boundary, and
 runs the same install, Start Menu launch, backend, upgrade and uninstall smoke
 test on a disposable Windows runner. It does not rebuild packages or require the
 saved theme folder on that runner. Review the run and its
