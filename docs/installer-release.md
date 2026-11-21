@@ -1,11 +1,11 @@
 # Installer releases and catalog updates
 
-The Windows installer release contains `flowcellwindowsinstaller.zip` and one
+The Windows installer release contains `Windows FlowCell installer.zip` and one
 `FlowCell-<Program>.zip` for every tracked `Programs/*/flowcell.program.json`.
 Current packages are Blender, Fresco, Fusion 360, Illustrator, Krita and Windows.
 For a Windows Core and Blender-only release, run
 `release-tools/build-installer.ps1 -ProgramNames Blender -OutputDirectory <fresh-folder>`.
-This produces only `flowcellwindowsinstaller.zip`, `FlowCell-Blender.zip` and
+This produces only `Windows FlowCell installer.zip`, `FlowCell-Blender.zip` and
 `SHA256SUMS.txt`. Omit `-ProgramNames` to retain the complete program set.
 No new portable ZIP is produced by this release route.
 Windows is also included in the Core installer, so initial Windows setup does
@@ -54,7 +54,7 @@ nor normal uninstall removes this user data.
 
 ### Current Program profiles and package verification
 
-Every Program ZIP is prepared from the current canonical saved setup. Release
+By default, each Program ZIP is prepared from the current canonical saved setup. Release
 resolves its donor from `-ProgramLocalRoot`, then `FLOWCELL_PROGRAM_LOCAL_ROOT`,
 then the installed `%LOCALAPPDATA%/Programs/FlowCell/flowcell.runtime.json`
 `localRoot`. Missing or invalid selected roots stop release; there is no fallback
@@ -62,6 +62,12 @@ to a development profile. A program without saved configuration in that root
 cannot be released as a matching profile. Hosted CI must provision that root and
 set `FLOWCELL_PROGRAM_LOCAL_ROOT` before the workflow starts; a path string alone
 does not transfer the profile to a hosted runner.
+
+When an explicitly selected Program must use its current catalog instead of an
+outdated saved setup, pass its name through `-CatalogOnlyProgramNames`. That
+package contains the current catalog without a captured appearance or layout;
+the other selected Programs still require saved-profile verification. This does
+not replace existing installed Program data.
 
 The shared `prepare-program-profile.mjs` reads the current saved revision,
 installed source records, scripts and companion files, and local skin families.
@@ -227,7 +233,7 @@ validated ZIP set (the selected program set when `-ProgramNames` was used) and
 `SHA256SUMS.txt` to a draft release, then dispatch
 **Validate prebuilt Windows installer** with that release tag and the installer's
 ZIP SHA256. This workflow checks out the tag, downloads only
-`flowcellwindowsinstaller.zip`, verifies its exact hash and archive boundary, and
+`Windows FlowCell installer.zip`, verifies its exact hash and archive boundary, and
 runs the same install, Start Menu launch, backend, upgrade and uninstall smoke
 test on a disposable Windows runner. It does not rebuild packages or require the
 saved theme folder on that runner. Review the run and its

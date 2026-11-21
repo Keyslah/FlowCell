@@ -12,7 +12,7 @@ function Stop-Package([string]$message){throw $message}
 . (Join-Path $PSScriptRoot 'program-package-safety.ps1')
 . (Join-Path $PSScriptRoot 'program-package-integrity.ps1')
 $programDirs=@(Get-ReleaseProgramDirectories -ProgramNames $ProgramNames)
-$expected=@('flowcellwindowsinstaller.zip')
+$expected=@('Windows FlowCell installer.zip')
 foreach($programDir in $programDirs){
     $manifest=Get-Content -LiteralPath (Join-Path $programDir.FullName 'flowcell.program.json') -Raw|ConvertFrom-Json
     $name=$programDir.Name
@@ -58,7 +58,7 @@ foreach($programDir in $programDirs){
 }
 $actual=@(Get-ChildItem -LiteralPath $Directory -File -Filter '*.zip'|ForEach-Object Name)
 if(@(Compare-Object ($expected|Sort-Object) ($actual|Sort-Object)).Count){throw 'Release ZIP set differs from tracked package inventory.'}
-$installer=[IO.Compression.ZipFile]::OpenRead((Join-Path $Directory 'flowcellwindowsinstaller.zip'))
+$installer=[IO.Compression.ZipFile]::OpenRead((Join-Path $Directory 'Windows FlowCell installer.zip'))
 try{if($installer.Entries.Count -ne 1 -or $installer.Entries[0].FullName -notmatch '-setup\.exe$' -or $installer.Entries[0].Length -lt 1000000){throw 'Installer ZIP must contain one nonempty actual setup executable.'}}finally{$installer.Dispose()}
 $hashes=@($expected|Sort-Object|ForEach-Object{(Get-FileHash -LiteralPath (Join-Path $Directory $_) -Algorithm SHA256).Hash.ToLowerInvariant()+'  '+$_})
 [IO.File]::WriteAllLines((Join-Path $Directory 'SHA256SUMS.txt'),$hashes,[Text.UTF8Encoding]::new($false))

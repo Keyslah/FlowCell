@@ -8,7 +8,8 @@ param(
   [string]$ProgramLocalRoot,
   [string]$ProgramOwnerMap,
   [switch]$ProgramsOnly,
-  [string[]]$ProgramNames
+  [string[]]$ProgramNames,
+  [string[]]$CatalogOnlyProgramNames
 )
 
 Set-StrictMode -Version Latest
@@ -257,11 +258,16 @@ function New-FlowCellProgramPackage([System.IO.DirectoryInfo]$ProgramDirectory) 
     $themes = Copy-BlenderThemePackages -SourceLibrary $resolvedBlenderThemeLibrary -Destination (Join-Path $destination 'themes/Blender')
     Write-Host "Blender themes: $($themes.PackageCount) packages, $($themes.AssetCount) assets from $resolvedBlenderThemeLibrary"
   }
-  $profileArguments = @((Join-Path $PSScriptRoot 'prepare-program-profile.mjs'), '--program-root', $ProgramDirectory.FullName,
-    '--local-root', $resolvedProgramLocalRoot, '--output-root', $destination)
-  if ($resolvedProgramOwnerMap) { $profileArguments += @('--owner-map', $resolvedProgramOwnerMap) }
-  & node @profileArguments
-  if ($LASTEXITCODE -ne 0) { Stop-Package "Current saved profile could not be packaged for '$($ProgramDirectory.Name)'." }
+  if ($CatalogOnlyProgramNames -contains $ProgramDirectory.Name) {
+    [IO.File]::WriteAllText((Join-Path $destination 'flowcell.program.json'), ($sourceManifest | ConvertTo-Json -Depth 100), [Text.UTF8Encoding]::new($false))
+    Write-Host "Packaging $($ProgramDirectory.Name) catalog without a saved appearance profile."
+  } else {
+    $profileArguments = @((Join-Path $PSScriptRoot 'prepare-program-profile.mjs'), '--program-root', $ProgramDirectory.FullName,
+      '--local-root', $resolvedProgramLocalRoot, '--output-root', $destination)
+    if ($resolvedProgramOwnerMap) { $profileArguments += @('--owner-map', $resolvedProgramOwnerMap) }
+    & node @profileArguments
+    if ($LASTEXITCODE -ne 0) { Stop-Package "Current saved profile could not be packaged for '$($ProgramDirectory.Name)'." }
+  }
   $catalogRelative = Convert-ToSafeRelativeFolder ([string]$contract.Manifest.gitScriptsFolder) 'gitScriptsFolder' $ProgramDirectory.Name
   $baselineRelative = "$($contract.Manifest.supportScriptsFolder)/catalog-baseline.json"
   [void](Assert-TrackedProgramReference $ProgramDirectory $trackedFiles $baselineRelative 'catalog baseline' -RequireFile)
@@ -318,6 +324,9 @@ if (-not (Test-Path -LiteralPath $ProgramsRoot -PathType Container)) {
 }
 
 $programDirs = @(Get-ReleaseProgramDirectories -ProgramNames $ProgramNames)
+foreach ($name in $CatalogOnlyProgramNames) {
+  if (@($programDirs | Where-Object { $_.Name -eq $name }).Count -ne 1) { Stop-Package "Catalog-only program '$name' is not in the selected release." }
+}
 $resolvedProgramLocalRoot = $null
 $resolvedProgramOwnerMap = $null
 if ($programDirs.Count -gt 0) {
@@ -347,6 +356,7 @@ if ($programDirs.Count -gt 0) {
   # Validate every selected current profile before creating Core or Program
   # artifacts. A late program failure must not leave a partial release set.
   foreach ($programDir in $programDirs) {
+    if ($CatalogOnlyProgramNames -contains $programDir.Name) { continue }
     $profileArguments = @($profileHelper, '--program-root', $programDir.FullName, '--local-root', $resolvedProgramLocalRoot)
     if ($resolvedProgramOwnerMap) { $profileArguments += @('--owner-map', $resolvedProgramOwnerMap) }
     & node @profileArguments

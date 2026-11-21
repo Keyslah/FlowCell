@@ -572,6 +572,7 @@ async function startupAfterBootstrapFailure({ canonicalAvailable }) {
   }
   const startupContext = {
     windowsSetupComplete: state.complete,
+    mainWindowActive: true,
     getCurrentWindow: () => ({ label: "main" }),
     readStartupSettings: () => ({ loadLastLayoutOnStartup: false, minimizeMainOnStartup: false }),
     listProgramFolders: async () => ["Blender", "Illustrator"],

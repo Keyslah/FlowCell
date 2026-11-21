@@ -30,7 +30,7 @@ function Assert-Rejected([scriptblock]$Action, [string]$Pattern) {
 function Add-InstallerFixture([string]$Output) {
   $installerPath = Join-Path $fixtureRoot 'Fixture-setup.exe'
   [IO.File]::WriteAllBytes($installerPath, [byte[]]::new(1000001))
-  Compress-Archive -LiteralPath $installerPath -DestinationPath (Join-Path $Output 'flowcellwindowsinstaller.zip')
+  Compress-Archive -LiteralPath $installerPath -DestinationPath (Join-Path $Output 'Windows FlowCell installer.zip')
 }
 
 try {
@@ -92,7 +92,7 @@ throw 'This fixture must never prepare or build an installer.'
   & (Join-Path $fixtureRelease 'verify-release.ps1') -Directory $selected -ProgramNames Blender | Out-Null
   $hashes = @(Get-Content -LiteralPath (Join-Path $selected 'SHA256SUMS.txt'))
   Assert ($hashes.Count -eq 2) 'selected release contains exactly two checksums'
-  foreach ($asset in @('FlowCell-Blender.zip', 'flowcellwindowsinstaller.zip')) {
+  foreach ($asset in @('FlowCell-Blender.zip', 'Windows FlowCell installer.zip')) {
     $expected = (Get-FileHash -LiteralPath (Join-Path $selected $asset) -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $asset
     Assert ($hashes -ccontains $expected) "selected release records the exact $asset SHA256"
   }
@@ -103,6 +103,22 @@ throw 'This fixture must never prepare or build an installer.'
   Add-InstallerFixture $all
   & (Join-Path $fixtureRelease 'verify-release.ps1') -Directory $all | Out-Null
   Assert (@(Get-Content -LiteralPath (Join-Path $all 'SHA256SUMS.txt')).Count -eq 3) 'omitting selection verifies the complete tracked inventory'
+  $windowsManifest = Join-Path $repo 'Programs/Windows/flowcell.program.json'
+  $manifest = Get-Content -LiteralPath $windowsManifest -Raw | ConvertFrom-Json
+  $manifest | Add-Member -NotePropertyName defaultTheme -NotePropertyValue 'SupportScripts/obsolete.json'
+  Put $windowsManifest ($manifest | ConvertTo-Json -Depth 10)
+  $catalogOnly = Join-Path $fixtureRoot 'catalog-only'
+  & (Join-Path $fixtureRelease 'package-portable.ps1') -ProgramsOnly -OutputDirectory $catalogOnly -ProgramNames Windows -CatalogOnlyProgramNames Windows -ProgramLocalRoot $localRoot | Out-Null
+  $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $catalogOnly 'FlowCell-Windows.zip'))
+  try {
+    $entry = $zip.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq 'Programs/Windows/flowcell.program.json' } | Select-Object -First 1
+    $reader = [IO.StreamReader]::new($entry.Open())
+    try { $packagedManifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+    Assert ($null -eq $packagedManifest.PSObject.Properties['defaultTheme']) 'catalog-only package omits the obsolete saved appearance'
+  } finally { $zip.Dispose() }
+  Add-InstallerFixture $catalogOnly
+  & (Join-Path $fixtureRelease 'verify-release.ps1') -Directory $catalogOnly -ProgramNames Windows | Out-Null
+  Assert-Rejected { & (Join-Path $fixtureRelease 'package-portable.ps1') -ProgramsOnly -OutputDirectory (Join-Path $fixtureRoot 'bad-selection') -ProgramNames Blender -CatalogOnlyProgramNames Windows } '*not in the selected release*'
   Assert-Rejected { & (Join-Path $fixtureRelease 'verify-release.ps1') -Directory $selected } '*Could not find*'
   Copy-Item -LiteralPath (Join-Path $all 'FlowCell-Windows.zip') -Destination (Join-Path $selected 'FlowCell-Windows.zip')
   Assert-Rejected { & (Join-Path $fixtureRelease 'verify-release.ps1') -Directory $selected -ProgramNames Blender } '*Release ZIP set differs*'

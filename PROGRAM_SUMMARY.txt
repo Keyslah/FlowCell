@@ -1,3 +1,8 @@
+2026-11-20 FlowCell v0.1.14 release preparation:
+- Versioned the application 0.1.13 -> 0.1.14. The Windows installer release archive is named Windows FlowCell installer.zip; release verification and the prebuilt installer smoke workflow use the same filename.
+- Fixed the Windows setup regression test fixture to supply the active Main window state used by startup.
+- Release packaging can explicitly use the current catalog for selected Programs without copying an outdated saved appearance or layout. Blender still uses its verified saved profile; the Illustrator release uses the current single-Layers-panel catalog.
+
 2026-11-20 Illustrator Layers panel:
 - The Illustrator default panel is now Layers, containing the Layer Tree and all 20 layer actions. The unused duplicate Layers panel is removed; catalog paths and stable contribution IDs remain unchanged. Layer Tree refresh events target the renamed panel.
 
