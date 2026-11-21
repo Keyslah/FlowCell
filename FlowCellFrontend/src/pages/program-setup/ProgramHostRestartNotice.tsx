@@ -9,7 +9,16 @@ import {
 import { makeSafeTauriUnlisten } from "../../lib/safeTauriUnlisten";
 import "./programHostRestartNotice.css";
 
-/** Keep the required host restart visible after a successful installation. */
+function actionableSetupInstructions(notes: string): string {
+  // Package manifests include future editing advice even when setup did not
+  // change the manifest. It is not an action required for this installation.
+  return notes.split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^restart\s+flowcell\s+after\s+changing\s+this\s+program\s+manifest\.$/i.test(line))
+    .join("\n");
+}
+
+/** Keep the program's actual setup instructions visible after installation. */
 export default function ProgramHostRestartNotice() {
   const [setup, setSetup] = useState<ProgramSetupResult | null>(null);
   const dismiss = useRef<HTMLButtonElement>(null);
@@ -26,7 +35,10 @@ export default function ProgramHostRestartNotice() {
         const installed = results.find((entry) =>
           entry.programName.toLowerCase() === event.payload.programName.toLowerCase()
         );
-        if (installed?.restartNotes.trim()) setSetup(installed);
+        if (installed) {
+          const instructions = actionableSetupInstructions(installed.restartNotes);
+          if (instructions) setSetup({ ...installed, restartNotes: instructions });
+        }
       }).catch((error) => {
         console.warn("Could not read the program's restart instructions.", error);
       });
@@ -49,12 +61,11 @@ export default function ProgramHostRestartNotice() {
         if (event.key === "Escape") setSetup(null);
         if (event.key === "Tab") { event.preventDefault(); dismiss.current?.focus(); }
       }}>
-      <h2 id="program-host-restart-title">Restart {setup.programName} to finish setup</h2>
+      <h2 id="program-host-restart-title">{setup.programName} setup instructions</h2>
       <div id="program-host-restart-description">
         <p>{setup.restartNotes}</p>
-        <p>Save your work, then close and reopen {setup.programName} before using the installed FlowCell buttons and themes.</p>
       </div>
-      <button ref={dismiss} type="button" onClick={() => setSetup(null)}>I’ll restart {setup.programName}</button>
+      <button ref={dismiss} type="button" onClick={() => setSetup(null)}>Got it</button>
     </section>
   </div>;
 }

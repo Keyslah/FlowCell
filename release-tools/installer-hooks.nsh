@@ -12,6 +12,12 @@ Var FlowCellFilesSelection
 Var FlowCellUtilityCheckbox
 Var FlowCellUtilitySelection
 !define FLOWCELL_STOP_HELPER_SOURCE "${__FILEDIR__}\..\flowcellbackend\helpers\Stop-InstalledBackend.ps1"
+!ifndef FLOWCELL_VERIFY_HELPER_SOURCE
+  !define FLOWCELL_VERIFY_HELPER_SOURCE "${__FILEDIR__}\Verify-InstallerPayload.ps1"
+!endif
+!ifndef FLOWCELL_RUNTIME_SOURCE
+  !define FLOWCELL_RUNTIME_SOURCE "${__FILEDIR__}\..\dist\installer-resources\flowcellbackend\runtime\AutoHotkey64.exe"
+!endif
 !define MUI_WELCOMEPAGE_TEXT "Setup includes the required Windows Startup panel and background service.$\r$\n$\r$\nChoose the optional Windows panels and desktop shortcut below."
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW FlowCellWelcomeShow
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE FlowCellWelcomeLeave
@@ -53,20 +59,53 @@ Function FlowCellWelcomeLeave
   ${NSD_GetState} $FlowCellUtilityCheckbox $FlowCellUtilitySelection
 FunctionEnd
 
-!macro NSIS_HOOK_PREINSTALL
-  ${If} ${FileExists} "$INSTDIR\flowcell-installed.json"
-  ${OrIf} ${FileExists} "$INSTDIR\flowcellbackend\runtime\AutoHotkey64.exe"
-    ; Older releases do not wait for their runtime to unlock. Run this installer's
-    ; current helper before replacing any application files, even on old upgrades.
+!macro FlowCellCheckExistingInstall RESOURCE_ROOT
+  ${If} ${FileExists} "${RESOURCE_ROOT}\flowcell-installed.json"
+  ${OrIf} ${FileExists} "${RESOURCE_ROOT}\flowcellbackend\runtime\AutoHotkey64.exe"
+  ${OrIf} ${FileExists} "${RESOURCE_ROOT}\flowcell_frontend.exe"
+    ; Check both critical executables before copying files or changing metadata.
+    ; An unmarked existing installation must fail closed rather than be replaced.
     InitPluginsDir
     File "/oname=$PLUGINSDIR\FlowCell-Stop-InstalledBackend.ps1" "${FLOWCELL_STOP_HELPER_SOURCE}"
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\FlowCell-Stop-InstalledBackend.ps1" -ResourceRoot "$INSTDIR"'
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\FlowCell-Stop-InstalledBackend.ps1" -ResourceRoot "${RESOURCE_ROOT}"'
     Pop $0
     ${If} $0 != 0
-      MessageBox MB_ICONEXCLAMATION|MB_OK "FlowCell could not release its background runtime. No application files were replaced. Close the process using this FlowCell installation and run Setup again. Review the installation details for the reason." /SD IDOK
+      MessageBox MB_ICONEXCLAMATION|MB_OK "FlowCell could not release an application file. No application files were replaced. Close FlowCell in all Windows sessions and run Setup again. Review the installation details for the reason." /SD IDOK
       SetErrorLevel 1
       Abort
     ${EndIf}
+  ${EndIf}
+!macroend
+!macro NSIS_HOOK_PREINSTALL
+  !insertmacro FlowCellCheckExistingInstall "$INSTDIR"
+!macroend
+!macro FlowCellAbortOnCopyFailure
+  ${If} ${Errors}
+    DetailPrint "FlowCell could not copy an installation file. Version information and shortcuts were not updated."
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
+!macroend
+; Called by the pinned Tauri template after copying payload and before any
+; version registry entries or shortcuts. The expected bytes are embedded at
+; build time, so this also detects a copy that silently left an older binary.
+!macro NSIS_HOOK_VERIFY_PAYLOAD
+  InitPluginsDir
+  ClearErrors
+  File "/oname=$PLUGINSDIR\FlowCell-Verify-InstallerPayload.ps1" "${FLOWCELL_VERIFY_HELPER_SOURCE}"
+  !insertmacro FlowCellAbortOnCopyFailure
+  ClearErrors
+  File "/oname=$PLUGINSDIR\FlowCell-Expected-Frontend.exe" "${MAINBINARYSRCPATH}"
+  !insertmacro FlowCellAbortOnCopyFailure
+  ClearErrors
+  File "/oname=$PLUGINSDIR\FlowCell-Expected-AutoHotkey.exe" "${FLOWCELL_RUNTIME_SOURCE}"
+  !insertmacro FlowCellAbortOnCopyFailure
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\FlowCell-Verify-InstallerPayload.ps1" -ResourceRoot "$INSTDIR" -ExpectedFrontend "$PLUGINSDIR\FlowCell-Expected-Frontend.exe" -ExpectedRuntime "$PLUGINSDIR\FlowCell-Expected-AutoHotkey.exe"'
+  Pop $0
+  ${If} $0 != 0
+    MessageBox MB_ICONEXCLAMATION|MB_OK "FlowCell could not verify its installed application files. Setup did not update version information or shortcuts. Run Setup again after resolving the installation error." /SD IDOK
+    SetErrorLevel 1
+    Abort
   ${EndIf}
 !macroend
 !macro NSIS_HOOK_POSTINSTALL

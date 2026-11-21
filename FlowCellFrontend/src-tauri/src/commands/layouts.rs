@@ -305,6 +305,14 @@ fn normalize_layout_file_path(path: &Path) -> PathBuf {
     PathBuf::from(format!("{path_text}.flowlayout.json"))
 }
 
+fn layout_save_path_confirmation(selected: &Path, destination: &Path, exists: bool) -> Option<String> {
+    if selected == destination || !exists {
+        return None;
+    }
+
+    Some(format!("The layout will be saved as:\n\n{}\n\nThis file already exists. Replace it?", destination.display()))
+}
+
 fn validate_layout_file_path(path: &Path) -> Result<(), String> {
     if path
         .to_string_lossy()
@@ -430,17 +438,34 @@ pub(crate) fn show_save_layout_dialog(
     let selected_path = set_dialog_parent(
         &app,
         FileDialog::new()
-            .set_title("Save Layout")
+            .set_title("Save Layout (.json)")
             .set_directory(initial_directory)
             .set_file_name(&file_name)
             // Windows appends this extension to an edited filename. A multipart
             // default repeats `.flowlayout` when the user includes it already.
             .add_filter("FlowCell Layout", &["json"]),
-        parent_label,
+        parent_label.clone(),
     )
     .save_file();
 
-    Ok(selected_path.map(|path| normalize_layout_file_path(&path).display().to_string()))
+    let Some(selected_path) = selected_path else {
+        return Ok(None);
+    };
+    let destination = normalize_layout_file_path(&selected_path);
+    if let Some(message) = layout_save_path_confirmation(&selected_path, &destination, destination.exists()) {
+        let mut dialog = rfd::MessageDialog::new()
+            .set_title("Confirm Layout Filename")
+            .set_description(&message)
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .set_level(rfd::MessageLevel::Warning);
+        if let Some(window) = parent_label.as_deref().and_then(|label| app.get_webview_window(label)) {
+            dialog = dialog.set_parent(&window);
+        }
+        if dialog.show() != rfd::MessageDialogResult::Yes {
+            return Ok(None);
+        }
+    }
+    Ok(Some(destination.display().to_string()))
 }
 
 #[tauri::command]
@@ -953,6 +978,54 @@ mod tests {
                 "input: {input}"
             );
         }
+    }
+
+    #[test]
+    fn normalized_layout_destination_is_confirmed_before_overwriting() {
+        let selected = Path::new("layout.flowlayout");
+        let destination = normalize_layout_file_path(selected);
+        let prompt = layout_save_path_confirmation(selected, &destination, true)
+            .expect("a changed destination needs confirmation");
+        assert!(prompt.contains("layout.flowlayout.json"));
+        assert!(prompt.contains("already exists"));
+        assert!(layout_save_path_confirmation(selected, &destination, false).is_none(),
+            "a new layout should save without an extra confirmation");
+        assert!(layout_save_path_confirmation(&destination, &destination, true).is_none());
+    }
+
+    #[test]
+    fn normalized_layout_confirmation_checks_the_real_destination() {
+        let folder = std::env::temp_dir().join(format!(
+            "flowcell-layout-confirmation-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&folder).expect("create disposable test folder");
+        let selected = folder.join("layout.flowlayout");
+        let destination = normalize_layout_file_path(&selected);
+        fs::write(&destination, b"existing layout").expect("create existing destination");
+        let prompt = layout_save_path_confirmation(&selected, &destination, destination.exists())
+            .expect("changed destination should be confirmed");
+        assert!(prompt.contains("already exists"));
+        assert_eq!(fs::read(&destination).unwrap(), b"existing layout");
+        fs::remove_file(&destination).unwrap();
+        fs::remove_dir(&folder).unwrap();
+    }
+
+    #[test]
+    fn file_dialog_uses_the_parent_of_a_remembered_settings_file() {
+        let folder = std::env::temp_dir().join(format!(
+            "flowcell-settings-folder-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("popout.json");
+        fs::write(&file, b"{}").unwrap();
+        assert_eq!(resolve_existing_dialog_directory(Some(file.display().to_string())), Some(folder.clone()));
+        fs::remove_file(&file).unwrap();
+        assert_eq!(resolve_existing_dialog_directory(Some(file.display().to_string())), Some(folder.clone()));
+        fs::remove_dir(&folder).unwrap();
     }
 
     #[test]

@@ -6,6 +6,8 @@ import { isButtonWindowCloseOffset, type ButtonWindowCloseOffset } from "../butt
 const MANAGED_LAYOUT_WINDOWS_STORAGE_KEY = "flowcell.button-layout-windows.v2";
 const LAST_MAIN_PAGE_LAYOUT_DIRECTORY_STORAGE_KEY =
   "flowcell.main-page-layout-directory.v1";
+const LAST_SAVED_MAIN_PAGE_LAYOUT_DIRECTORY_STORAGE_KEY =
+  "flowcell.main-page-layout-saved-directory.v1";
 
 export interface RegisteredLayoutWindow {
   windowLabel: string;
@@ -241,10 +243,21 @@ export function readLastMainPageLayoutDirectory(): string | null {
     return null;
   }
 
-  const rawValue = window.localStorage
-    .getItem(LAST_MAIN_PAGE_LAYOUT_DIRECTORY_STORAGE_KEY)
-    ?.trim();
-  return rawValue ? rawValue : null;
+  const savedDirectory = window.localStorage
+    .getItem(LAST_SAVED_MAIN_PAGE_LAYOUT_DIRECTORY_STORAGE_KEY)?.trim();
+  if (savedDirectory) return savedDirectory;
+
+  // Keep the old last-used directory as the first-use fallback for users who
+  // have not saved a layout since the saved-folder preference was introduced.
+  const lastUsedDirectory = window.localStorage
+    .getItem(LAST_MAIN_PAGE_LAYOUT_DIRECTORY_STORAGE_KEY)?.trim();
+  return lastUsedDirectory || null;
+}
+
+export function writeLastSavedMainPageLayoutDirectory(directory: string | null | undefined): void {
+  if (!canUseStorage()) return;
+  const normalized = directory?.trim();
+  if (normalized) window.localStorage.setItem(LAST_SAVED_MAIN_PAGE_LAYOUT_DIRECTORY_STORAGE_KEY, normalized);
 }
 
 export function writeLastMainPageLayoutDirectory(

@@ -1715,7 +1715,11 @@ function ButtonEditorContent({
       const paths = await showOpenFileDialog({
         title: `Load ${settingsPlacementLabel} Settings`,
         filter: "JSON Files (*.json)|*.json",
-        initialDirectory: settingsDirectory,
+        // The native dialog accepts a file path and opens its parent folder.
+        // Keep this scoped to the selected Pop-out; first use retains its default.
+        initialDirectory: settingsPlacementKind === "pop-out"
+          ? selectedSettingsFilePath ?? settingsDirectory
+          : settingsDirectory,
         multiselect: false
       });
       const selectedPath = paths[0]?.trim();

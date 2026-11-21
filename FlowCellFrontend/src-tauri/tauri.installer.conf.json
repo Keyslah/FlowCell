@@ -16,6 +16,7 @@
       "nsis": {
         "installMode": "currentUser",
         "displayLanguageSelector": false,
+        "template": "../../release-tools/installer-tauri-2.11.1.nsi",
         "installerHooks": "../../release-tools/installer-hooks.nsh"
       }
     }

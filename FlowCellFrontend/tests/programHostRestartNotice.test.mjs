@@ -70,6 +70,41 @@ test("completed program setup presents its actual restart instructions", async (
   view.unmount();
 });
 
+for (const programName of ["Windows", "Illustrator"]) {
+  test(`${programName} setup does not interrupt for conditional manifest-edit advice`, async () => {
+    const manifest = JSON.parse(readFileSync(new URL(`../../Programs/${programName}/flowcell.program.json`, import.meta.url), "utf8"));
+    const view = mount({ statuses: async () => [setup(programName, manifest.appRestartNotes)] });
+    view.emit({ kind: "program", programName });
+    await flush();
+    assert.equal(view.changes.length, 0);
+    assert.equal(view.render(), null);
+    view.unmount();
+  });
+}
+
+test("Blender setup retains its actual host restart instruction", async () => {
+  const note = "Restart Blender once to load the installed FlowCell add-on. Setup has not verified a live Blender connection.";
+  const manifest = JSON.parse(readFileSync(new URL("../../Programs/Blender/flowcell.program.json", import.meta.url), "utf8"));
+  const view = mount({ statuses: async () => [setup("Blender", `${note}\n${manifest.appRestartNotes}`)] });
+  view.emit({ kind: "program", programName: "Blender" });
+  await flush();
+  const [, description, button] = view.render().props.children.props.children;
+  assert.equal(description.props.children.props.children, note);
+  assert.equal(button.props.children, "Got it");
+  view.unmount();
+});
+
+test("nonconditional instructions remain visible without inventing a restart", async () => {
+  const view = mount({ statuses: async () => [setup("Illustrator", "Open Illustrator once to finish the connection.")] });
+  view.emit({ kind: "program", programName: "Illustrator" });
+  await flush();
+  const [heading, description, button] = view.render().props.children.props.children;
+  assert.equal(heading.props.children.join(""), "Illustrator setup instructions");
+  assert.equal(description.props.children.props.children, "Open Illustrator once to finish the connection.");
+  assert.equal(button.props.children, "Got it");
+  view.unmount();
+});
+
 test("panel setup and programs without restart instructions do not prompt", async () => {
   const view = mount({ statuses: async () => [setup("Blender", "")] });
   view.emit({ kind: "panel", programName: "Blender" });

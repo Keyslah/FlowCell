@@ -1,5 +1,5 @@
 <#
-Purpose: Release this installation's bundled runtime before NSIS upgrades/uninstalls it.
+Purpose: Release the installed backend and verify critical executables before NSIS replaces them.
 Context: Invoked by NSIS with its exact ResourceRoot; no other backend is targeted.
 Inputs: ResourceRoot. Changes: Stops matching headless backend processes and waits for runtime release.
 Deletion/conflicts: No files or user state removed. Unrelated processes are preserved.
@@ -39,7 +39,7 @@ function Wait-FlowCellRuntimeReleased {
         # Only explicit success after handle cleanup allows file replacement.
         if ($released) { return }
         if ($timer.ElapsedMilliseconds -ge $TimeoutMilliseconds) {
-            throw "FlowCell runtime is still locked; installation cannot continue: $Path. $lockError"
+            throw "A FlowCell application file is still locked; installation cannot continue: $Path. $lockError"
         }
         Start-Sleep -Milliseconds 100
     }
@@ -48,6 +48,9 @@ function Wait-FlowCellRuntimeReleased {
 $root=[IO.Path]::GetFullPath($ResourceRoot)
 if (-not (Test-Path -LiteralPath (Join-Path $root 'flowcell-installed.json'))) { throw 'Not an installed FlowCell resource root.' }
 $runtime=Join-Path $root 'flowcellbackend\runtime\AutoHotkey64.exe'
+# Do this before stopping the backend so a blocked upgrade leaves it running.
+# A frontend in another Windows session is never force-closed by this helper.
+Wait-FlowCellRuntimeReleased -Path (Join-Path $root 'flowcell_frontend.exe')
 $backend=Join-Path $root 'flowcellbackend\FlowCellBackend.ahk'
 $backendSessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId
 # Start-FlowCellBackend supplies the backend script first, then --headless.

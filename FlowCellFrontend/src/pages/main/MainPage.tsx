@@ -46,7 +46,8 @@ import {
 import {
   readLastMainPageLayoutDirectory,
   readRegisteredLayoutWindow,
-  writeLastMainPageLayoutDirectory
+  writeLastMainPageLayoutDirectory,
+  writeLastSavedMainPageLayoutDirectory
 } from "../../lib/layoutSnapshots";
 import {
   readLastLayoutPath,
@@ -753,8 +754,12 @@ function getParentDirectory(path: string): string | null {
   }
 
   const separatorIndex = Math.max(normalized.lastIndexOf("\\"), normalized.lastIndexOf("/"));
-  if (separatorIndex <= 0) {
+  if (separatorIndex < 0) {
     return null;
+  }
+
+  if (separatorIndex === 0 || (separatorIndex === 2 && /^[a-z]:[\\/]/i.test(normalized))) {
+    return normalized.slice(0, separatorIndex + 1);
   }
 
   return normalized.slice(0, separatorIndex);
@@ -2040,6 +2045,7 @@ export default function MainPage() {
 
       const savedPath = await saveLayoutSnapshot(targetPath, snapshot);
       writeLastMainPageLayoutDirectory(getParentDirectory(savedPath));
+      writeLastSavedMainPageLayoutDirectory(getParentDirectory(savedPath));
       writeLastLayoutPath(savedPath);
     } finally {
       layoutActionPendingRef.current = false;

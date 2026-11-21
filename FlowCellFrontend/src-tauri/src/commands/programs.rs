@@ -2215,6 +2215,20 @@ fn is_core_program_placeholder(programs_root: &Path, folder_name: &str) -> bool 
             .is_ok()
 }
 
+// A failed or interrupted package cleanup may leave behind the old, directory-only
+// destination. It is not a user package, but must be preserved for recovery.
+// Match the complete generated name and inspect its contents before hiding it:
+// unexpected files or links must continue to fail closed as an invalid package.
+fn is_internal_package_placeholder(programs_root: &Path, folder_name: &str) -> bool {
+    let Some(suffix) = folder_name.strip_prefix(".flowcell-package-placeholder-") else {
+        return false;
+    };
+    let parts: Vec<_> = suffix.split('-').collect();
+    parts.len() == 3
+        && parts.iter().all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        && super::program_packages::placeholder_directories(&programs_root.join(folder_name)).is_ok()
+}
+
 #[tauri::command]
 pub(crate) async fn list_available_program_packages() -> Result<AvailableProgramPackagesResponse, String> {
     run_add_program_blocking("inventory", list_available_program_packages_inner).await
@@ -2227,6 +2241,13 @@ fn list_available_program_packages_inner() -> Result<AvailableProgramPackagesRes
     let mut packages = Vec::new();
     let mut rejected_packages = Vec::new();
     for folder_name in available {
+        if is_internal_package_placeholder(&programs_root, &folder_name) {
+            append_flowcell_local_log("program-setup.log", &format!(
+                "Preserved internal package placeholder at {} after incomplete cleanup.",
+                programs_root.join(&folder_name).display()
+            ));
+            continue;
+        }
         if find_registered_program(&bindings, &folder_name).is_some()
             || is_core_program_placeholder(&programs_root, &folder_name)
         {
@@ -5721,7 +5742,9 @@ fn preview_plain_program_package_in(
             .into_iter()
             .collect::<BTreeSet<_>>();
     for folder_name in list_child_directory_names(&programs_root)? {
-        if is_core_program_placeholder(programs_root, &folder_name) {
+        if is_core_program_placeholder(programs_root, &folder_name)
+            || is_internal_package_placeholder(programs_root, &folder_name)
+        {
             continue;
         }
         let existing_manifest = load_program_manifest_from_root(programs_root, &folder_name)
@@ -6709,7 +6732,7 @@ mod managed_program_setup_tests {
         add_program_source_is_required, backend_run_method_for_runner,
         canonical_source_graph_matches, copy_external_panel_tree, create_plain_program_package,
         generated_plain_program_manifest, install_add_program_sources_while_source_locked,
-        is_core_program_placeholder,
+        is_core_program_placeholder, is_internal_package_placeholder,
         mark_add_program_native_applied, preflight_add_program_plan_inner,
         preview_plain_program_package_in, read_add_program_journal,
         recover_planned_active_record_path, recycle_owned_add_panel_destination_with,
@@ -7157,6 +7180,33 @@ mod managed_program_setup_tests {
         let error = preview_plain_program_package_in(&programs_root, program, executable)
             .expect_err("a directory containing files requires a valid manifest");
         assert!(error.contains("invalid or unreadable manifest"));
+    }
+
+    #[test]
+    fn internal_package_placeholder_does_not_block_plain_program_but_unexpected_content_does() {
+        let programs_root = temporary_root("plain-program-internal-placeholder");
+        let name = ".flowcell-package-placeholder-19060-1795221416633122900-1";
+        let placeholder = programs_root.join(name);
+        fs::create_dir_all(placeholder.join("Panels").join("Startup"))
+            .expect("create an interrupted internal placeholder");
+        let _cleanup = TestProgramPackage(programs_root.clone());
+        let program = programs_root.file_name().unwrap().to_str().unwrap();
+        let executable = Path::new(r"C:\Apps\Example.exe");
+
+        assert!(is_internal_package_placeholder(&programs_root, name));
+        assert!(!is_internal_package_placeholder(&programs_root, ".flowcell-package-placeholder-19060-abc-1"));
+        assert!(!is_internal_package_placeholder(&programs_root, ".flowcell-package-placeholder-19060-12-1-extra"));
+        preview_plain_program_package_in(&programs_root, program, executable)
+            .expect("directory-only internal placeholder must not block a new program");
+        assert!(placeholder.exists(), "preflight must preserve the placeholder");
+
+        let personal_file = placeholder.join("Panels").join("Startup").join("personal.txt");
+        fs::write(&personal_file, b"keep").expect("write unexpected content");
+        assert!(!is_internal_package_placeholder(&programs_root, name));
+        let error = preview_plain_program_package_in(&programs_root, program, executable)
+            .expect_err("unexpected content must not be silently ignored");
+        assert!(error.contains("invalid or unreadable manifest"));
+        assert_eq!(fs::read(personal_file).unwrap(), b"keep");
     }
 
     #[test]

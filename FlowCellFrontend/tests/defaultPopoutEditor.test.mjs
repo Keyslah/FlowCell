@@ -15,6 +15,7 @@ import { validateButtonStateDocument } from "./.compiled-button-system/button/st
 const editor = readFileSync(new URL("../src/button/editor/ButtonEditorPage.tsx", import.meta.url), "utf8");
 const derivation = editor.slice(editor.indexOf("const selectedSurface ="), editor.indexOf("const usesLogicalGridDefault ="));
 const handlers = editor.slice(editor.indexOf("const commitScopedDocument ="), editor.indexOf("const loadSettings ="));
+const loadHandler = editor.slice(editor.indexOf("const loadSettings ="), editor.indexOf("const loadDefaultSettings ="));
 assert.ok(derivation.includes("selectedFileIsDefaultPopout") && handlers.includes("saveSettings"));
 
 function fixture(kind = "regular") {
@@ -63,14 +64,14 @@ function fixture(kind = "regular") {
 
 function harness(base = fixture(), options = {}) {
   let canonical = structuredClone(base.document);
-  const saves = [], writes = [], publishes = [], messages = [], dialogs = [];
+  const saves = [], writes = [], publishes = [], messages = [], dialogs = [], openDialogs = [];
   const sandbox = {
     ...choices, cloneButtonDocument, buildButtonSettingsScopedDocument, applyButtonSettingsSavedScope,
     applyButtonSettingsFile, buildButtonSettingsFile, buttonSettingsPlacementKind, buttonSettingsPlacementLabel,
     validateButtonStateDocument, resolveDiscardedStagedOwnerButtonIds,
     defaultButtonSettingsFileName: () => "Pop-out.json",
     selectedSurfaceId: base.surfaceId, programName: "Windows", panelName: "Files",
-    settingsPlacementLabel: "Pop-out",
+    settingsPlacementLabel: "Pop-out", settingsPlacementKind: "pop-out",
     settingsFilePaths: {}, pendingDefaultPopout: null, busyRef: { current: false },
     stagedInstallsRef: { current: new Map() },
     setBusy: (value) => { sandbox.busyRef.current = value; },
@@ -82,6 +83,7 @@ function harness(base = fixture(), options = {}) {
     setSelectedPlacementIds: () => {}, setActivePage: () => {}, setReorderMode: () => {},
     getButtonSettingsDirectory: async () => "C:/Saved",
     showSaveFileDialog: async (dialog) => { dialogs.push(dialog); return options.dialog ? options.dialog() : "C:/Saved/Whole.json"; },
+    showOpenFileDialog: async (dialog) => { openDialogs.push(dialog); return []; },
     saveButtonSettingsFile: async (path, file) => {
       writes.push({ path, file: structuredClone(file) });
       if (options.writeFailure) throw new Error("file write failed");
@@ -122,16 +124,36 @@ function harness(base = fixture(), options = {}) {
   }
   globalThis.refresh = refreshSelection;
   ${handlers}
+  ${loadHandler}
   globalThis.toggleDefault = setSelectedFileAsDefaultPopout;
   globalThis.saveSetup = saveSettings;
   globalThis.stageFile = stageSettingsFile;
+  globalThis.loadSetup = loadSettings;
   `;
   vm.runInNewContext(ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, sandbox);
   sandbox.refresh();
-  return { ...base, sandbox, saves, writes, publishes, messages, dialogs,
+  return { ...base, sandbox, saves, writes, publishes, messages, dialogs, openDialogs,
     get canonical() { return canonical; },
     setCanonical(value) { canonical = structuredClone(value); } };
 }
+
+test("Pop-out Load starts at its saved file's folder after Save and after reopening", async () => {
+  const h = harness(fixture(), { dialog: () => "C:/Custom/Popouts/Whole.json" });
+  await h.sandbox.loadSetup();
+  assert.equal(h.openDialogs.at(-1).initialDirectory, "C:/Saved", "first use keeps the normal scoped folder");
+  await h.sandbox.saveSetup();
+  await h.sandbox.loadSetup();
+  assert.equal(h.openDialogs.at(-1).initialDirectory, "C:/Custom/Popouts/Whole.json");
+  const reopened = harness({ ...h, document: h.canonical });
+  await reopened.sandbox.loadSetup();
+  assert.equal(reopened.openDialogs.at(-1).initialDirectory, "C:/Custom/Popouts/Whole.json", "saved surface association survives reopen");
+  const otherPopout = harness(fixture("tool-set"));
+  await otherPopout.sandbox.loadSetup();
+  assert.equal(otherPopout.openDialogs.at(-1).initialDirectory, "C:/Saved", "another Pop-out keeps its own first-use folder");
+  reopened.sandbox.settingsPlacementKind = "main-page";
+  await reopened.sandbox.loadSetup();
+  assert.equal(reopened.openDialogs.at(-1).initialDirectory, "C:/Saved", "other settings types keep their own folder");
+});
 
 for (const kind of ["regular", "tool-set"]) {
   test(`checking an unsaved ${kind} visibly checks, saves the whole setup, and survives reopen/child focus`, async () => {
