@@ -1425,7 +1425,7 @@ export default function ThemeEditorPage({
                             });
                           }}>
                             <option value="default">Default</option>
-                            <option value="concrete">Concrete</option>
+                            {current.mode === "concrete" && <option value="concrete">Concrete</option>}
                             <option value="chipped-concrete">Chipped Concrete</option>
                             <option value="concrete-moss">Concrete Moss</option>
                             <option value="none">None</option>

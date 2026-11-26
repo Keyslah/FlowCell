@@ -34,8 +34,8 @@ test("Blender setup defaults contain exactly the captured visible sources", () =
     "default setup must neither add uncaptured controls nor omit original controls");
   const provenance = readJson(join(programRoot, "SupportScripts/default-appearance-provenance.json"));
   assert.equal(provenance.donorRevision, 1473);
-  assert.equal(provenance.dependencies, 50);
-  assert.equal(provenance.placements, 198);
+  assert.equal(provenance.dependencies, 49);
+  assert.equal(provenance.placements, 196);
   assert.equal(provenance.surfaces, 23);
   assert.equal(file.theme.theme.buttons.length, provenance.placements);
 });

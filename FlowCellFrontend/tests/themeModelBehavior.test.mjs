@@ -1815,9 +1815,10 @@ test("FlowCell page registry round-trips Main background and individual rail tok
   assert.equal(isFlowCellThemeFile(wrongPage), false);
 });
 
-test("the new Concrete Main theme draws every rail box and leaves Buttons and Default unchanged", () => {
-  assert.deepEqual(MAIN_THEME_PRESETS.map((preset) => preset.label), ["Concrete", "Chipped Concrete", "Concrete Moss"]);
+test("Main presets draw rendered rails and leave Buttons and Default unchanged", () => {
+  assert.deepEqual(MAIN_THEME_PRESETS.map((preset) => preset.label), ["Chipped Concrete", "Concrete Moss"]);
   assert.equal(mainThemePresetAppearance("missing"), null);
+  assert.equal(mainThemePresetAppearance("concrete"), null);
   for (const preset of MAIN_THEME_PRESETS) {
     const page = mainThemePresetAppearance(preset.id);
     assert.equal(isThemePageAppearance(page), true);
@@ -1826,14 +1827,8 @@ test("the new Concrete Main theme draws every rail box and leaves Buttons and De
     for (const rail of rails) {
       for (const part of ["background", "border"]) {
         const token = page.tokens[`rail-${rail.id}-${part}`];
-        if (preset.backgroundImageMode === "chipped-concrete" || preset.backgroundImageMode === "concrete-moss") {
-          // Rendered slab pictures draw these rails; a fill or edge would only tint them.
-          assert.equal(token, "transparent", `${preset.label} ${rail.name} rail ${part} must stay clear`);
-          continue;
-        }
-        const color = normalizeButtonSkinColor(token);
-        const alpha = color.length === 9 ? Number.parseInt(color.slice(7), 16) : 255;
-        assert.ok(alpha > 0, `${preset.label} ${rail.name} rail ${part} must be visible`);
+        // Rendered slab pictures draw these rails; a fill or edge would only tint them.
+        assert.equal(token, "transparent", `${preset.label} ${rail.name} rail ${part} must stay clear`);
       }
     }
 
@@ -1862,8 +1857,10 @@ test("the new Concrete Main theme draws every rail box and leaves Buttons and De
       assert.equal(defaultThemePageAppearance(pageId).assets[asset.id].mode, "default");
     }
   }
-  const concrete = mainThemePresetAppearance("concrete");
-  assert.deepEqual(concrete.assets["background-image"], { mode: "concrete", path: null });
+  // Existing saved appearances using the retired concrete mode remain valid.
+  const concrete = structuredClone(stock);
+  concrete.assets["background-image"] = { mode: "concrete", path: null };
+  assert.equal(isThemePageAppearance(concrete), true);
   const concreteWithPath = structuredClone(concrete);
   concreteWithPath.assets["background-image"].path = "C:\\Themes\\concrete.jpg";
   assert.equal(isThemePageAppearance(concreteWithPath), false);

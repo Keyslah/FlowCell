@@ -112,7 +112,9 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
         </div>
         <div className="theme-library-review">
           {selected ? <>
-            <h3>{selected.portable?.name ?? entries.find((entry) => entry.path === selected.path)?.name ?? selected.path.split(/[\\/]/).pop()}</h3>
+            <h3>{entries.find((entry) => entry.path === selected.path)?.name ??
+              ((selected.portable?.name || selected.path.split(/[\\/]/).pop() || "Theme")
+                .replace(/\.(?:flowcell-theme-pack\.json|flowtheme\.json|json)$/i, "") || "Theme")}</h3>
             {thumbnail && <img src={thumbnail} alt="Included theme image preview" decoding="async"
               style={{ maxWidth: "100%", maxHeight: 220, objectFit: "contain" }} />}
             <div className="theme-library-swatches" aria-label="Theme color preview">{colors.map((color) => <span key={color} style={{ backgroundColor: color }} title={color} />)}</div>

@@ -4220,6 +4220,43 @@ test("panel-owner reconcile and removal leave no stale owner graphs", () => {
   assert.equal(validation.valid, true, validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
 });
 
+test("deleting any panel closes up the panel keys left on the rail, by every removal path", () => {
+  const document = createButtonStateDocument();
+  const names = ["Files", "Utility", "Test", "Startup", "Testing"];
+  const slotY = (index) => 125.758993 + 49.726618 * index;
+  const entries = names.map((panelName, index) => ({
+    panelName, rect: { x: 230 - index * 3, y: slotY(index), width: 60 + index * 8, height: 37.294964 }
+  }));
+  const { surfaceId } = reconcileProgramPanelOwners(document, {
+    programName: "Windows", panels: entries, surfaceBounds: { width: 1225, height: 721 }
+  });
+  const rail = () => document.surfaces[surfaceId].placementIds
+    .map((id) => document.placements[id])
+    .sort((left, right) => left.y - right.y)
+    .map((placement) => ({
+      name: document.buttons[placement.buttonId].metadata.panelName,
+      slot: Math.round((placement.y - slotY(0)) / 49.726618 * 1e6) / 1e6,
+      x: placement.x, width: placement.width
+    }));
+  const original = Object.fromEntries(rail().map((key) => [key.name, key]));
+
+  // Main's Delete Panel (panel scope) closes the gap; each key keeps its x and size.
+  removePanelButtonDocumentScope(document, { programName: "Windows", panelName: "Test" });
+  assert.deepEqual(rail().map(({ name, slot }) => [name, slot]), [["Files", 0], ["Utility", 1], ["Startup", 2], ["Testing", 3]]);
+  for (const key of rail()) assert.deepEqual([key.x, key.width], [original[key.name].x, original[key.name].width]);
+
+  // Removing one owner graph directly, and a stale owner during reconcile, close up the same way.
+  removePanelOwnerGraph(document, "Windows", "Files");
+  assert.deepEqual(rail().map(({ name, slot }) => [name, slot]), [["Utility", 0], ["Startup", 1], ["Testing", 2]]);
+  reconcileProgramPanelOwners(document, {
+    programName: "Windows", panels: entries.filter((entry) => ["Utility", "Testing"].includes(entry.panelName)),
+    surfaceBounds: { width: 1225, height: 721 }
+  });
+  assert.deepEqual(rail().map(({ name, slot }) => [name, slot]), [["Utility", 0], ["Testing", 1]]);
+  const validation = validateButtonStateDocument(document);
+  assert.equal(validation.valid, true, validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
+});
+
 test("panel-owner discovery reconciliation never removes owners from a stale folder snapshot", () => {
   const document = createButtonStateDocument();
   const entries = [
@@ -4411,10 +4448,15 @@ test("panel scope deletion returns exact uninstall owners and preserves sibling 
     document.placements[siblingPanelPlacement.id],
     siblingPanelPlacement
   );
-  assert.deepEqual(
-    document.placements[siblingOwnerPlacement.id],
-    siblingOwnerPlacement
-  );
+  // The sibling's rail key only closes up into the freed slot; everything else about it stays.
+  const { y: _siblingOwnerY, ...siblingOwnerRest } = siblingOwnerPlacement;
+  const { y: _siblingOwnerNowY, ...siblingOwnerNow } = document.placements[siblingOwnerPlacement.id];
+  assert.deepEqual(siblingOwnerNow, siblingOwnerRest);
+  // Tools sat on the rail's top row (y 20), so Other and Utility move up into rows 20 and 72.
+  const railYs = document.surfaces[ids.blenderRailSurface].placementIds
+    .map((placementId) => document.placements[placementId].y)
+    .sort((left, right) => left - right);
+  assert.deepEqual(railYs, [20, 72]);
   assert.equal(document.buttons[ids.otherPanelOwner].role, "panel-owner");
   assert.equal(document.buttons[ids.utilityPanelOwner].role, "panel-owner");
   assertValidScopeFixture(document);

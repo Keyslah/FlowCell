@@ -716,10 +716,10 @@ test("Theme and managed-window Layout schemas remain independent in both load or
   assert.match(packageJson.scripts["test:button"], /tests\/themeModelBehavior\.test\.mjs/);
 });
 
-test("Main page offers the Concrete theme and a bundled Concrete background", () => {
+test("legacy Concrete backgrounds remain visible only when already selected", () => {
   const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
   const runtime = read("src", "theme", "themeRuntime.ts");
-  assert.match(editor, /<option value="concrete">Concrete<\/option>/);
+  assert.match(editor, /\{current\.mode === "concrete" && <option value="concrete">Concrete<\/option>\}/);
   assert.match(editor, /pageValue === "main" \? \([\s\S]{0,400}MAIN_THEME_PRESETS\.map/);
   assert.match(editor, /mainThemePresetAppearance\(presetId\)/);
   assert.match(runtime, /import concreteBackground from "\.\.\/assets\/backgrounds\/concrete\.jpg";/);

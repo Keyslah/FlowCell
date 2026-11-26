@@ -386,7 +386,7 @@ test("all 20 Layers Builder actions are ordinary manifest packages", () => {
       actionName === "snapshot"
         ? "3.1.4"
         : actionName === "archive" ? "3.1.3"
-        : actionName === "new-sub" || actionName === "3d" || actionName === "sort" || actionName === "copy-live" || actionName === "rename" || actionName === "add-to-live"
+        : actionName === "restore" || actionName === "new-sub" || actionName === "3d" || actionName === "sort" || actionName === "copy-live" || actionName === "rename" || actionName === "add-to-live"
           ? "3.1.2"
           : "3.1.1"
     );

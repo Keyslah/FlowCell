@@ -1,4 +1,7 @@
-use super::manifest::{load_program_manifest, ProgramManifest};
+use super::manifest::{
+    load_enabled_program_contributions, load_program_manifest, write_enabled_program_contributions,
+    EnabledProgramContributions, ProgramManifest,
+};
 use super::records::{
     active_record_file_name, read_active_record, ActiveSourceRecord, LocalInstallRecord,
     ACTIVE_SOURCE_RECORD_SUFFIX, INSTALL_RECORD_FILE_NAME,
@@ -949,7 +952,28 @@ pub(crate) fn validate_panel_folder_rename(
         None,
         None,
     )?;
+    // The program registration moves with the panel, so it has to load before the folder moves.
+    load_enabled_program_contributions(&manifest)?;
     Ok(())
+}
+
+/// Startup sync installs each enabled bundled source into the panel its program registration names
+/// and refuses a source active anywhere else, so a renamed panel's registration entries must follow it.
+fn rename_enabled_contribution_panel(
+    state: &mut EnabledProgramContributions,
+    previous_panel_name: &str,
+    next_panel_name: &str,
+) -> bool {
+    let mut changed = false;
+    for contribution in &mut state.enabled_sources {
+        if names_match(&contribution.panel_name, previous_panel_name)
+            && contribution.panel_name != next_panel_name
+        {
+            contribution.panel_name = next_panel_name.to_string();
+            changed = true;
+        }
+    }
+    changed
 }
 
 pub(crate) fn validate_program_folder_rename(program_name: &str) -> Result<(), String> {
@@ -1013,7 +1037,17 @@ pub(crate) fn migrate_panel_folder_identity(
         None,
         None,
     )?;
-    apply_json_batch(&program_root, owned_replacements(updates)?)
+    let mut registration = load_enabled_program_contributions(&manifest)?;
+    let registration_changed = registration.as_mut().is_some_and(|state| {
+        rename_enabled_contribution_panel(state, previous_panel_name, next_panel_name)
+    });
+    apply_json_batch(&program_root, owned_replacements(updates)?)?;
+    // Written last: if it fails, the caller's rollback reverses the records, and the reverse
+    // migration finds nothing to move in the unchanged registration.
+    if let (true, Some(state)) = (registration_changed, registration) {
+        write_enabled_program_contributions(&manifest, state)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn migrate_program_folder_identity(
@@ -1092,13 +1126,54 @@ pub(crate) fn migrate_program_folder_identity(
 mod tests {
     use super::{
         apply_json_batch_inner, json_rename_backup_path, json_rename_stage_path,
-        migrate_program_folder_identity, recover_json_rename_transaction, rewrite_execution_target,
-        write_json_rename_journal, JsonRenameJournalEntry, JsonRenameTransactionJournal,
-        JsonRenameTransactionPhase, JsonReplacement, JSON_RENAME_JOURNAL_SCHEMA_VERSION,
+        migrate_program_folder_identity, recover_json_rename_transaction,
+        rename_enabled_contribution_panel, rewrite_execution_target, write_json_rename_journal,
+        JsonRenameJournalEntry, JsonRenameTransactionJournal, JsonRenameTransactionPhase,
+        JsonReplacement, JSON_RENAME_JOURNAL_SCHEMA_VERSION,
+    };
+    use crate::program_sources::manifest::{
+        EnabledProgramContribution, EnabledProgramContributions,
     };
     use serde_json::{json, Value};
     use std::fs;
     use std::path::Path;
+
+    #[test]
+    fn panel_rename_moves_only_that_panels_registration_entries() {
+        let contribution = |source_id: &str, panel_name: &str| EnabledProgramContribution {
+            source_id: source_id.to_string(),
+            panel_name: panel_name.to_string(),
+            version: "1.0.0".to_string(),
+        };
+        let mut state = EnabledProgramContributions {
+            schema_version: 1,
+            program_id: "illustrator".to_string(),
+            program_name: "Illustrator".to_string(),
+            enabled_sources: vec![
+                contribution("illustrator.layers-builder.3d", "Layers Builder"),
+                contribution("illustrator.layers-builder.flatten", "layers builder "),
+                contribution("illustrator.export", "Export"),
+            ],
+        };
+        assert!(rename_enabled_contribution_panel(
+            &mut state,
+            "Layers Builder",
+            "Layers"
+        ));
+        let panels = state
+            .enabled_sources
+            .iter()
+            .map(|source| source.panel_name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(panels, ["Layers", "Layers", "Export"]);
+        assert!(!rename_enabled_contribution_panel(
+            &mut state,
+            "Layers Builder",
+            "Layers"
+        ));
+        assert!(rename_enabled_contribution_panel(&mut state, "Layers", "Layers Builder"));
+        assert_eq!(state.enabled_sources[2].panel_name, "Export");
+    }
 
     #[test]
     fn typed_execution_targets_rewrite_without_touching_unrelated_payload_values() {

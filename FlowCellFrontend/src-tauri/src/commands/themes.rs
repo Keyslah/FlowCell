@@ -470,6 +470,17 @@ pub(crate) fn migrate_theme_libraries_on_startup() -> Result<(), String> {
     Ok(())
 }
 
+fn theme_display_name(name: &str) -> &str {
+    for suffix in [".flowcell-theme-pack.json", ".flowtheme.json", ".json"] {
+        if let Some(base) = name.get(..name.len().saturating_sub(suffix.len())) {
+            if name.get(base.len()..).is_some_and(|ending| ending.eq_ignore_ascii_case(suffix)) && !base.is_empty() {
+                return base;
+            }
+        }
+    }
+    name
+}
+
 #[tauri::command]
 pub(crate) fn list_flowcell_themes(program_name: Option<String>) -> Result<Vec<Value>, String> {
     let selected = program_name.as_deref().filter(|name| !name.trim().is_empty());
@@ -501,7 +512,8 @@ pub(crate) fn list_flowcell_themes(program_name: Option<String>) -> Result<Vec<V
                 if path.is_dir() { pending.push(path); continue; }
                 let Ok(theme) = read_json(&path) else { continue; };
                 if validate_theme_target(&theme, selected).is_err() { continue; }
-                let name = theme.get("name").and_then(Value::as_str).unwrap_or_else(|| path.file_stem().and_then(|value| value.to_str()).unwrap_or("Theme"));
+                let name = theme_display_name(theme.get("name").and_then(Value::as_str).filter(|name| !name.trim().is_empty())
+                    .unwrap_or_else(|| path.file_name().and_then(|value| value.to_str()).unwrap_or("Theme")));
                 result.push(json!({ "name": name, "path": path.display().to_string(), "supplied": supplied,
                     "format": theme.get("kind").or_else(|| theme.get("format")), "target": theme.get("target"),
                     "preview": theme.get("preview"), "dependencies": theme.get("dependencies") }));
@@ -515,6 +527,15 @@ pub(crate) fn list_flowcell_themes(program_name: Option<String>) -> Result<Vec<V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_names_strip_theme_file_suffixes_without_changing_names() {
+        assert_eq!(theme_display_name("Chipped Concrete.flowtheme.json"), "Chipped Concrete");
+        assert_eq!(theme_display_name("光.flowcell-theme-pack.JSON"), "光");
+        assert_eq!(theme_display_name("Concrete.json"), "Concrete");
+        assert_eq!(theme_display_name("Concrete.flowtheme collection"), "Concrete.flowtheme collection");
+        assert_eq!(theme_display_name(".json"), ".json");
+    }
 
     fn fixture(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("flowcell-theme-{name}-{}-{}", std::process::id(),

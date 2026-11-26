@@ -433,7 +433,7 @@
     },
     {
       "id": "illustrator.layers-builder.restore",
-      "version": "3.1.1",
+      "version": "3.1.2",
       "panelName": "Layers",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/restore",
       "importKind": "script",

@@ -355,6 +355,47 @@ function ensurePanelOwnerMainPlacement(
   return { placement, changed: true, emptiedSurfaceIds: [] };
 }
 
+function panelRailPlacements(document: ButtonStateDocument, surfaceId: string): ButtonPlacement[] | null {
+  const surface = document.surfaces[surfaceId];
+  if (surface?.kind !== "main") return null;
+  const placements = surface.placementIds
+    .map((placementId) => document.placements[placementId])
+    .filter((placement): placement is ButtonPlacement => Boolean(placement));
+  if (placements.some((placement) => document.buttons[placement.buttonId]?.role !== "panel-owner")) return null;
+  return placements.sort((left, right) => left.y - right.y || left.x - right.x || left.id.localeCompare(right.id));
+}
+
+/** The rows a program's Main panel rails use before panels leave them: every key's y, top to bottom. */
+function panelRailSlots(document: ButtonStateDocument, surfaceIds: readonly string[]): Map<string, number[]> {
+  const slots = new Map<string, number[]>();
+  for (const id of new Set(surfaceIds)) {
+    const placements = panelRailPlacements(document, id);
+    if (placements) slots.set(id, placements.map((placement) => placement.y));
+  }
+  return slots;
+}
+
+/**
+ * Every time panels leave a program's Main panel rail, by any path, the panel keys that remain close up in their
+ * current order onto the rail's own top rows (the rows the rail used before), so a deleted panel never leaves a
+ * gap and no key moves down. Only y changes: each key keeps its x (centered for its own width), size and skin.
+ * Returns the moved placements.
+ */
+export function closePanelRailGaps(document: ButtonStateDocument, slotsBySurface: ReadonlyMap<string, readonly number[]>): string[] {
+  const moved: string[] = [];
+  for (const [id, slots] of [...slotsBySurface].sort(([left], [right]) => left.localeCompare(right))) {
+    const placements = panelRailPlacements(document, id);
+    if (!placements || placements.length > slots.length) continue;
+    placements.forEach((placement, index) => {
+      const y = slots[index];
+      if (placement.y === y) return;
+      placement.y = y;
+      moved.push(placement.id);
+    });
+  }
+  return moved;
+}
+
 function removeEmptyMainSurfaces(document: ButtonStateDocument, candidateIds: readonly string[]): string[] {
   const removed: string[] = [];
   for (const id of [...new Set(candidateIds)].sort()) {
@@ -636,6 +677,7 @@ function removeOwnerButtons(
   const mainSurfaceIds = owners.flatMap((owner) =>
     mainPlacementsForOwner(document, owner.id).map((placement) => placement.surfaceId)
   );
+  const railSlots = panelRailSlots(document, mainSurfaceIds);
   const removedOwnerButtonIds: string[] = [];
   const uninstallOwnerButtonIds: string[] = [];
   for (const owner of owners) {
@@ -645,8 +687,9 @@ function removeOwnerButtons(
     uninstallOwnerButtonIds.push(...result.uninstallOwnerButtonIds);
   }
   const removedSurfaceIds = removeEmptyMainSurfaces(document, mainSurfaceIds);
+  const closedGap = closePanelRailGaps(document, railSlots).length > 0;
   return {
-    changed: removedOwnerButtonIds.length > 0 || removedSurfaceIds.length > 0,
+    changed: removedOwnerButtonIds.length > 0 || removedSurfaceIds.length > 0 || closedGap,
     removedOwnerButtonIds: removedOwnerButtonIds.sort(),
     removedSurfaceIds,
     uninstallOwnerButtonIds: [...new Set(uninstallOwnerButtonIds)].sort()

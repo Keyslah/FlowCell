@@ -432,17 +432,7 @@ export interface MainThemePreset {
   railBorder: string;
 }
 
-// Rails are otherwise transparent and only show as boxes by blurring a busy background
-// image, so presets give every rail its own frosted fill and edge.
 export const MAIN_THEME_PRESETS: readonly MainThemePreset[] = [
-  {
-    id: "concrete",
-    label: "Concrete",
-    backgroundColor: "#94918C",
-    backgroundImageMode: "concrete",
-    railBackground: "rgba(255, 255, 255, 0.16)",
-    railBorder: "rgba(255, 255, 255, 0.42)"
-  },
   {
     // The Poly Haven Chipped Concrete scan (CC0) at its own resolution; the rails become
     // rendered raised slabs of the same concrete (see themeRuntime), so their fill and edge

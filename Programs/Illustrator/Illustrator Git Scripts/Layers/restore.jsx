@@ -58,35 +58,102 @@
         var targetName = target.name;
         var existingLiveLayer = findLiveTargetLayer(rootLayers.live, targetName);
         var directLiveItems = findDirectItemsByTargetName(rootLayers.live, targetName);
-        var incomingLayer;
+        var incomingLayer = null;
         var liveDisplayName = formatLiveTargetName(targetName, target.versionNote);
-        var sourceCleanupLayer = target.sourceLayer && target.sourceLayer.parent && target.sourceLayer.parent.typename === "Layer"
-            ? target.sourceLayer.parent
-            : null;
+        var originalName = existingLiveLayer ? existingLiveLayer.name : "";
+        var liveState = existingLiveLayer ? captureBranchState(existingLiveLayer) : null;
+        var itemStates = [];
+        var trashContainer;
+        var itemTrashEntry;
+        var i;
 
         if (!layerExists(target.sourceLayer)) {
             logLine("Skipped " + targetName + ": missing source layer");
             return;
         }
 
-        removeIncomingLayers(rootLayers.live, targetName);
-        incomingLayer = createIncomingLayer(rootLayers.live, targetName);
-        copySourceLayerInto(target.sourceLayer, incomingLayer);
-        removeEmptyAncestors(sourceCleanupLayer);
+        try {
+            // Never remove an earlier incoming layer: it may contain recoverable artwork.
+            incomingLayer = createIncomingLayer(rootLayers.live, targetName);
+            copySourceLayerInto(target.sourceLayer, incomingLayer);
+            incomingLayer.name = liveDisplayName;
+            incomingLayer.visible = true;
+            incomingLayer.locked = false;
+            if (existingLiveLayer) {
+                moveLayerBeforeSibling(incomingLayer, existingLiveLayer);
+            }
 
-        if (existingLiveLayer) {
-            moveLayerBeforeSibling(incomingLayer, existingLiveLayer);
-            moveLayerToTrash(rootLayers.trash, targetName, existingLiveLayer);
+            if (existingLiveLayer || directLiveItems.length > 0) {
+                trashContainer = ensureChildLayer(rootLayers.trash, targetName);
+            }
+            if (existingLiveLayer) {
+                var trashName = getNextNumberedName(trashContainer, "T");
+                unlockBranchFromState(liveState);
+                existingLiveLayer.move(trashContainer, ElementPlacement.PLACEATEND);
+                existingLiveLayer.name = trashName;
+                restoreBranchState(liveState);
+                existingLiveLayer.visible = true;
+                existingLiveLayer.locked = false;
+            }
+            if (directLiveItems.length > 0) {
+                itemTrashEntry = trashContainer.layers.add();
+                itemTrashEntry.name = getNextNumberedName(trashContainer, "T");
+                itemTrashEntry.visible = true;
+                itemTrashEntry.locked = false;
+                for (i = directLiveItems.length - 1; i >= 0; i -= 1) {
+                    var itemState = captureItemState(directLiveItems[i]);
+                    itemStates.push(itemState);
+                    unlockItemFromState(itemState);
+                    directLiveItems[i].move(itemTrashEntry, ElementPlacement.PLACEATEND);
+                    restoreItemState(itemState);
+                }
+            }
+            logLine("Restored target into Live/" + liveDisplayName);
+        } catch (err) {
+            // Keep the originals intact and return every moved object to Live.
+            var rollbackErrors = [];
+            for (i = itemStates.length - 1; i >= 0; i -= 1) {
+                try {
+                    unlockItemFromState(itemStates[i]);
+                    if (itemStates[i].ref.parent !== rootLayers.live) {
+                        itemStates[i].ref.move(rootLayers.live, ElementPlacement.PLACEATEND);
+                    }
+                } catch (itemError) {
+                    rollbackErrors.push("item: " + itemError);
+                } finally {
+                    restoreItemState(itemStates[i]);
+                }
+            }
+            if (existingLiveLayer) {
+                try {
+                    unlockBranchFromState(liveState);
+                    if (existingLiveLayer.parent !== rootLayers.live) {
+                        if (incomingLayer && layerExists(incomingLayer)) {
+                            existingLiveLayer.move(incomingLayer, ElementPlacement.PLACEBEFORE);
+                        } else {
+                            existingLiveLayer.move(rootLayers.live, ElementPlacement.PLACEATEND);
+                        }
+                    }
+                    existingLiveLayer.name = originalName;
+                } catch (layerError) {
+                    rollbackErrors.push("layer: " + layerError);
+                } finally {
+                    restoreBranchState(liveState);
+                }
+            }
+            if (incomingLayer) {
+                removeLayer(incomingLayer);
+            }
+            if (rollbackErrors.length) {
+                throw new Error("Restore failed: " + err + "; rollback failed: " + rollbackErrors.join(", "));
+            }
+            throw err;
         }
+    }
 
-        if (directLiveItems.length > 0) {
-            moveItemsToTrash(rootLayers.trash, targetName, directLiveItems);
-        }
-
-        incomingLayer.name = liveDisplayName;
-        incomingLayer.visible = true;
-        incomingLayer.locked = false;
-        logLine("Restored target into Live/" + liveDisplayName);
+    function restoreItemState(state) {
+        try { state.ref.hidden = state.hidden; } catch (ignore1) {}
+        try { state.ref.locked = state.locked; } catch (ignore2) {}
     }
 
     function moveLayerBeforeSibling(layerToMove, siblingLayer) {
@@ -270,7 +337,6 @@
         var topLayer;
         var current;
         var versionLayer = null;
-        var contentLayer = null;
         var targetName = null;
 
         if (!ownerLayer) {
@@ -315,11 +381,9 @@
                 targetName = versionLayer.name;
             }
 
-            contentLayer = findPrimaryContentLayer(versionLayer, targetName);
-
             return {
                 targetName: targetName,
-                sourceLayer: contentLayer || versionLayer,
+                sourceLayer: versionLayer,
                 versionNote: getVersionNote(versionLayer.name)
             };
         }
@@ -344,28 +408,6 @@
         return null;
     }
 
-    function findPrimaryContentLayer(versionLayer, targetName) {
-        var i;
-
-        if (!versionLayer) {
-            return null;
-        }
-
-        for (i = 0; i < versionLayer.layers.length; i += 1) {
-            if (!isOperationalLayerName(versionLayer.layers[i].name) &&
-                    sanitizeName(getCanonicalTargetName(versionLayer.layers[i].name)) === sanitizeName(getCanonicalTargetName(targetName))) {
-                return versionLayer.layers[i];
-            }
-        }
-
-        for (i = 0; i < versionLayer.layers.length; i += 1) {
-            if (!isOperationalLayerName(versionLayer.layers[i].name)) {
-                return versionLayer.layers[i];
-            }
-        }
-
-        return null;
-    }
 
     function getItemOwningLayer(item) {
         var current = item;
@@ -396,73 +438,16 @@
     function copySourceLayerInto(sourceLayer, targetLayer) {
         var state = captureBranchState(sourceLayer);
 
-        unlockBranchFromState(state);
-        copyLayerContents(sourceLayer, targetLayer, state);
-        restoreBranchState(state);
-    }
-
-    function moveLayerToTrash(trashRoot, targetName, layer) {
-        var trashContainer = ensureChildLayer(trashRoot, targetName);
-        var trashName = getNextNumberedName(trashContainer, "T");
-        var trashEntry = trashContainer.layers.add();
-        var state = captureBranchState(layer);
-
-        trashContainer.visible = true;
-        trashContainer.locked = false;
-        trashEntry.name = trashName;
-        trashEntry.visible = true;
-        trashEntry.locked = false;
-        unlockBranchFromState(state);
-        moveLayerContents(layer, trashEntry);
-        restoreBranchState(state);
-        removeLayer(layer);
-        logLine("Moved Live/" + targetName + " to Trash/" + targetName + "/" + trashName);
-    }
-
-    function moveItemsToTrash(trashRoot, targetName, items) {
-        var trashContainer = ensureChildLayer(trashRoot, targetName);
-        var trashName = getNextNumberedName(trashContainer, "T");
-        var trashEntry = trashContainer.layers.add();
-        var itemStates = [];
-        var i;
-
-        if (!items || items.length === 0) {
-            return;
-        }
-
-        trashContainer.visible = true;
-        trashContainer.locked = false;
-        trashEntry.name = trashName;
-        trashEntry.visible = true;
-        trashEntry.locked = false;
-
-        for (i = 0; i < items.length; i += 1) {
-            itemStates.push(captureItemState(items[i]));
-        }
-
-        for (i = 0; i < itemStates.length; i += 1) {
-            unlockItemFromState(itemStates[i]);
-        }
-
-        for (i = items.length - 1; i >= 0; i -= 1) {
-            try {
-                items[i].move(trashEntry, ElementPlacement.PLACEATEND);
-            } catch (ignore) {}
-        }
-
-        logLine("Moved direct Live objects for " + targetName + " to Trash/" + targetName + "/" + trashName);
-    }
-
-    function removeIncomingLayers(parentLayer, targetName) {
-        var incomingName = getIncomingLayerName(targetName);
-        var i;
-
-        for (i = parentLayer.layers.length - 1; i >= 0; i -= 1) {
-            if (parentLayer.layers[i].name === incomingName) {
-                removeLayer(parentLayer.layers[i]);
-            }
+        try {
+            unlockBranchFromState(state);
+            copyLayerContents(sourceLayer, targetLayer, state);
+        } finally {
+            restoreBranchState(state);
         }
     }
+
+
+
 
     function getIncomingLayerName(targetName) {
         return targetName + TEMP_SUFFIX;
@@ -536,20 +521,6 @@
         } catch (ignore) {}
     }
 
-    function removeEmptyAncestors(layer) {
-        var current = layer;
-        var parentLayer;
-
-        while (current && current.typename === "Layer" && !isSystemRoot(current)) {
-            if (layerHasContent(current)) {
-                break;
-            }
-
-            parentLayer = current.parent && current.parent.typename === "Layer" ? current.parent : null;
-            removeLayer(current);
-            current = parentLayer;
-        }
-    }
 
     function captureBranchState(rootLayer) {
         var state = {
@@ -655,9 +626,6 @@
         return result;
     }
 
-    function layerHasContent(layer) {
-        return !!layer && (layer.layers.length > 0 || getDirectPageItems(layer).length > 0);
-    }
 
     function findDirectItemsByTargetName(layer, targetName) {
         var result = [];
@@ -673,24 +641,6 @@
         return result;
     }
 
-    function moveLayerContents(sourceLayer, targetLayer) {
-        var childLayers = [];
-        var directItems;
-        var i;
-
-        for (i = 0; i < sourceLayer.layers.length; i += 1) {
-            childLayers.push(sourceLayer.layers[i]);
-        }
-
-        for (i = 0; i < childLayers.length; i += 1) {
-            childLayers[i].move(targetLayer, ElementPlacement.PLACEATEND);
-        }
-
-        directItems = getDirectPageItems(sourceLayer);
-        for (i = 0; i < directItems.length; i += 1) {
-            directItems[i].move(targetLayer, ElementPlacement.PLACEATEND);
-        }
-    }
 
     function copyLayerContents(sourceLayer, targetLayer, sourceState) {
         var childLayers = [];
@@ -777,16 +727,11 @@
     }
 
     function hideSnapshotBranch(layer) {
-        var i;
-
         if (!layer) {
             return;
         }
 
-        for (i = 0; i < layer.layers.length; i += 1) {
-            hideSnapshotBranch(layer.layers[i]);
-        }
-
+        // The owner hides the snapshot; keep saved descendants' states intact.
         try {
             layer.visible = false;
         } catch (ignore1) {}
