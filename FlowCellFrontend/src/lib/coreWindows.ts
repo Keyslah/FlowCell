@@ -296,6 +296,17 @@ export async function openMacroLabWindow(args: {
   });
 }
 
+export const openUpdateBlenderWindow = () => openCoreWindow({
+  label: "flowcell-update-blender",
+  context: { kind: "update-blender" },
+  title: "FlowCell - Update Blender",
+  width: 740,
+  height: 530,
+  minimumWidth: 500,
+  minimumHeight: 420,
+  decorations: true
+});
+
 export const openAddProgramWindow = () => openCoreWindow({
   label: "flowcell-add-program",
   context: { kind: "add-program" },

@@ -1,3 +1,8 @@
+2026-11-27 Blender update window:
+- When Blender offers to import a previous profile, Update Blender asks whether to import settings or use defaults. Blender completes first-run preference setup before FlowCell publishes the current scripts and button paths. Existing preferences are retained on repeat sync.
+- Blender > Files > Update Blender detects installed versions, accepts a browsed blender.exe and reconnects installed button sources to the selected host. The optional Windows Package Manager installation detects the installed release before syncing. Open or restart the selected Blender to load the updated bridge.
+- Windows verification used isolated Blender 5.1.2 and 5.3.0 profiles with 51 installed actions and a real Cone execution in each. Repeat repair, wrong-version rejection, rollback on a locked registry, and update-window selection and confirmation were exercised.
+
 2026-11-27 FlowCell v0.1.17 local Windows and rail fixes:
 - Program rail reconciliation preserves authored placements and allocates a free slot for new programs, preventing the Illustrator Pop collision with existing Windows and Blender positions.
 - Program and Panel rails expose all folders in independently scrollable lists when they exceed the available rail space; Add Program and Add Panel remain accessible.

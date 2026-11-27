@@ -60,6 +60,7 @@ import {
   closeInstalledPageWindow,
   openAddPanelWindow,
   openAddProgramWindow,
+  openUpdateBlenderWindow,
   openBindsWindow,
   openInstalledPageWindow,
   openMacroLabWindow,
@@ -1623,6 +1624,7 @@ export default function MainPage() {
     [allButtons]
   );
   const panelButtons = allButtons.filter((button) => button.scriptFileName);
+  const showBlenderUpdate = selectedProgramName?.toLowerCase() === "blender" && selectedPanelName?.toLowerCase() === "files";
   const panelViewport = panelButtonViewport(resolvedButtonsById.get("buttons-add-script")?.x);
   const contextMenuButton = contextMenu ? (resolvedButtonsById.get(contextMenu.buttonId) ?? null) : null;
   const isScriptContextMenu =
@@ -3726,7 +3728,7 @@ export default function MainPage() {
               </div>
             </section>;
           }) : null}
-          {buttonDocument && panelButtons.length > 0 ? (
+          {buttonDocument && (panelButtons.length > 0 || showBlenderUpdate) ? (
             <section
               key={canonicalProgramPanelKey(selectedProgramName ?? "", selectedPanelName ?? "")}
               className="main-page__panel-buttons"
@@ -3742,6 +3744,11 @@ export default function MainPage() {
               } as CSSProperties}
             >
               {panelButtons.map(renderIndependentButton)}
+              {showBlenderUpdate && <CanonicalActionButton id="update-blender" label="Update Blender" width={144}
+                className="main-page__update-blender" onActivate={async () => {
+                  try { await openUpdateBlenderWindow(); }
+                  catch (error) { window.alert(formatErrorMessage(error)); }
+                }} />}
             </section>
           ) : null}
           </div>

@@ -120,6 +120,7 @@ export type FlowCellWindowContext =
   | ButtonFanWindowContext
   | ButtonAnimationWindowContext
   | BindsWindowContext
+  | { kind: "update-blender" }
   | AddProgramWindowContext
   | AddPanelWindowContext
   | InstalledPageWindowContext
@@ -256,6 +257,7 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
   if (parsed.kind === "binds") {
     return { kind: "binds", prefill: parseBindsPrefill(parsed.prefill) };
   }
+  if (parsed.kind === "update-blender") return { kind: "update-blender" };
   if (parsed.kind === "add-program") return { kind: "add-program" };
   if (parsed.kind === "add-panel" && typeof parsed.programName === "string" && parsed.programName.trim()) {
     return { kind: "add-panel", programName: parsed.programName };

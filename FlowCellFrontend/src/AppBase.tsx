@@ -34,6 +34,7 @@ import MacroLabWindowPage from "./pages/macro-lab/MacroLabWindowPage";
 import ThemeEditorPage from "./pages/theme/ThemeEditorPage";
 import MainPage from "./pages/main/MainPage";
 import InstalledPageWindowPage from "./pages/installed-page/InstalledPageWindowPage";
+import UpdateBlenderWindowPage from "./pages/program-setup/UpdateBlenderWindowPage";
 import AddProgramWindowPage from "./pages/program-setup/AddProgramWindowPage";
 import ProgramHostRestartNotice from "./pages/program-setup/ProgramHostRestartNotice";
 import AddPanelWindowPage from "./pages/program-setup/AddPanelWindowPage";
@@ -51,6 +52,7 @@ function resolveScopedTopmostProgramName(
     windowContext.kind === "button-animation" ||
     windowContext.kind === "tooltip" ||
     windowContext.kind === "binds" ||
+    windowContext.kind === "update-blender" ||
     windowContext.kind === "add-program" ||
     windowContext.kind === "add-panel" ||
     windowContext.kind === "macro-lab" ||
@@ -391,6 +393,7 @@ export default function App() {
   if (windowContext.kind === "binds") {
     return <BindsWindowPage context={windowContext} />;
   }
+  if (windowContext.kind === "update-blender") return <UpdateBlenderWindowPage />;
   if (windowContext.kind === "add-program") {
     return <><AddProgramWindowPage /><ProgramHostRestartNotice /></>;
   }
