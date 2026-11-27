@@ -47,8 +47,10 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
     inspection.current += 1;
     setLibrary("supplied"); setEntries([]);
     setSelected(null); setIssues([]); setRequirements([]); setError(""); setOperation(null);
-    void listThemeLibrary(target).then((items) => { if (!disposed) setEntries(items); })
-      .catch((reason) => { if (!disposed) setError(`Theme library could not be opened: ${String(reason)}`); });
+    if (mode === "open") {
+      void listThemeLibrary(target).then((items) => { if (!disposed) setEntries(items); })
+        .catch((reason) => { if (!disposed) setError(`Theme library could not be opened: ${String(reason)}`); });
+    }
     return () => { disposed = true; inspection.current += 1; };
   }, [target, mode]);
   const selectLibrary = (next: ThemeLibrarySource) => {
@@ -79,6 +81,12 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
     } catch (reason) { if (generation === inspection.current) setError(`Theme inspection failed: ${String(reason).replace(/FLOWCELL_THEME_(?:OUTCOME_UNKNOWN|NOT_STARTED):\s*/g, "")}`); }
     finally { if (generation === inspection.current) setOperation(null); }
   };
+  useEffect(() => {
+    if (mode !== "import") return;
+    // Schedule after mounting so a Strict Mode cleanup cannot open two native dialogs.
+    const timer = window.setTimeout(() => { void inspect(() => chooseThemeFile(target)); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [target, mode]);
   const colors = selected ? [...new Set(JSON.stringify(selected.theme ?? selected.legacy).match(/#[0-9a-f]{6}(?:[0-9a-f]{2})?\b/gi) ?? [])].slice(0, 12) : [];
   const thumbnail = portableThemeThumbnail(selected?.portable);
   const visibleEntries = entries.filter((entry) => entry.supplied === (library === "supplied"));
@@ -89,7 +97,7 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
         onClose();
       }} disabled={operation === "applying"}>Close</button></header>
       <p>{target.kind === "program" ? target.programName : "Main"} themes</p>
-      <div className="theme-library-tabs" role="tablist" aria-label="Theme library">
+      {mode === "open" && <div className="theme-library-tabs" role="tablist" aria-label="Theme library">
         {(["supplied", "local"] as const).map((source) => <button key={source} type="button" role="tab"
           id={`${libraryId}-${source}`} aria-controls={`${libraryId}-panel`} aria-selected={library === source}
           tabIndex={library === source ? 0 : -1} disabled={operation === "applying"}
@@ -101,14 +109,16 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
             selectLibrary(next);
             event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next === "supplied" ? 0 : 1]?.focus();
           }}>{source === "supplied" ? "Supplied" : "Local"}</button>)}
-      </div>
-      <div className="theme-library-columns" role="tabpanel" id={`${libraryId}-panel`} aria-labelledby={`${libraryId}-${library}`}>
+      </div>}
+      <div className="theme-library-columns" role={mode === "open" ? "tabpanel" : undefined} id={`${libraryId}-panel`} aria-labelledby={mode === "open" ? `${libraryId}-${library}` : undefined}>
         <div className="theme-library-list">
+          {mode === "import" ? <button type="button" disabled={pending} onClick={() => void inspect(() => chooseThemeFile(target))}>Choose Theme File…</button> : <>
           {visibleEntries.map((entry) => <div key={entry.path}>
             <button type="button" disabled={pending} onClick={() => void inspect(() => readTheme(entry.path, target))}>{entry.name}</button>
           </div>)}
           {!visibleEntries.length && <p>No {library} themes in this library.</p>}
           {library === "local" && <button type="button" disabled={pending} onClick={() => void inspect(() => chooseThemeFile(target))}>Choose local theme file or archive…</button>}
+          </>}
         </div>
         <div className="theme-library-review">
           {selected ? <>
@@ -124,7 +134,7 @@ export default function ThemeLibraryDialog({ target, mode, onClose, onApply, onR
             {selected.portable?.dependencies.length ? <ul>{selected.portable.dependencies.map((dependency) => <li key={dependency.id}>{dependency.sourceName} · {dependency.sourceVersion}</li>)}</ul> : null}
             {requirements.length > 0 && <><p>Tools to install when you apply:</p><ul>{requirements.map((item) => <li key={item}>{item}</li>)}</ul></>}
             {issues.length > 0 && <><p>Resolve these requirements before applying:</p><ul>{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></>}
-          </> : <p>Select a theme to preview its colors, included settings, and required tools.</p>}
+          </> : <p>{mode === "import" ? "Choose a theme file to preview its colors, included settings, and required tools." : "Select a theme to preview its colors, included settings, and required tools."}</p>}
           {operation && <p role="status">{operation === "applying" ? "Applying theme and saving settings…" : "Checking theme settings and requirements…"}</p>}
           {error && <p role="alert">{error}</p>}
         </div>

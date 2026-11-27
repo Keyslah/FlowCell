@@ -29,6 +29,7 @@ pub(crate) use setup_bridge::ProgramSetupBridgeSession;
 const TOOLSET_MANIFEST_FILE_NAME: &str = "flowcell.toolset.json";
 const SCRIPT_MANIFEST_FILE_NAME: &str = "flowcell.script.json";
 const INSTALL_TRANSACTION_PREFIX: &str = ".flowcell-install-transaction-";
+const INSTALL_TRANSACTION_COMPACT_PREFIX: &str = ".fctx-";
 const INSTALL_TRANSACTION_JOURNAL_FILE_NAME: &str = "journal.json";
 const INSTALL_TRANSACTION_NEW_PACKAGE: &str = "new-package";
 const INSTALL_TRANSACTION_OLD_PACKAGE: &str = "old-package";
@@ -1887,6 +1888,27 @@ fn timestamp() -> String {
     format!("{}.{:09}Z", now.as_secs(), now.subsec_nanos())
 }
 
+fn create_install_transaction(local_root: &Path) -> Result<(String, PathBuf), String> {
+    for _ in 0..100 {
+        let id: u128 = unsafe { windows::Win32::System::Com::CoCreateGuid() }
+            .map_err(|error| format!("Failed to create install transaction identifier: {error}"))?
+            .into();
+        let token = format!("{INSTALL_TRANSACTION_COMPACT_PREFIX}{id:032x}");
+        let path = local_root.join(&token);
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok((token, path)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Failed to create install transaction {}: {error}", path.display())),
+        }
+    }
+    Err("Failed to create a unique install transaction after 100 attempts.".to_string())
+}
+
+fn is_install_transaction_token(token: &str) -> bool {
+    let lower = token.to_ascii_lowercase();
+    lower.starts_with(INSTALL_TRANSACTION_PREFIX) || lower.starts_with(INSTALL_TRANSACTION_COMPACT_PREFIX)
+}
+
 fn install_transaction_journal_path(transaction_root: &Path) -> PathBuf {
     transaction_root.join(INSTALL_TRANSACTION_JOURNAL_FILE_NAME)
 }
@@ -2653,11 +2675,7 @@ fn ensure_no_awaiting_canonical_update_in_program(
             .map_err(|error| format!("Failed to inspect {}: {error}", entry.path().display()))?;
         if !file_type.is_dir()
             || file_type.is_symlink()
-            || !entry
-                .file_name()
-                .to_string_lossy()
-                .to_ascii_lowercase()
-                .starts_with(INSTALL_TRANSACTION_PREFIX)
+            || !is_install_transaction_token(&entry.file_name().to_string_lossy())
         {
             continue;
         }
@@ -2721,11 +2739,7 @@ fn recover_install_transactions_in_program_with_canonical(
                 .file_type()
                 .map(|kind| kind.is_dir() && !kind.is_symlink())
                 .unwrap_or(false)
-                && entry
-                    .file_name()
-                    .to_string_lossy()
-                    .to_ascii_lowercase()
-                    .starts_with(INSTALL_TRANSACTION_PREFIX)
+                && is_install_transaction_token(&entry.file_name().to_string_lossy())
         })
         .map(|entry| entry.path())
         .collect::<Vec<_>>();
@@ -3809,17 +3823,7 @@ fn install_from_path_while_source_locked_with_completion(
             )?;
         }
     }
-    let transaction_token = format!(
-        "{INSTALL_TRANSACTION_PREFIX}{owner_button_id}-{}",
-        timestamp().replace(['.', ':'], "-")
-    );
-    let transaction_root = local_root.join(&transaction_token);
-    fs::create_dir(&transaction_root).map_err(|error| {
-        format!(
-            "Failed to create install transaction {}: {error}",
-            transaction_root.display()
-        )
-    })?;
+    let (transaction_token, transaction_root) = create_install_transaction(&local_root)?;
     let staged_package = install_transaction_new_package(&transaction_root);
     let staged_source_root = staged_package.join("source");
     let copy_started = Instant::now();
@@ -4089,9 +4093,7 @@ fn validate_update_transaction_token(value: &str) -> Result<String, String> {
     let path = Path::new(token);
     if token.is_empty()
         || token.len() > 240
-        || !token
-            .to_ascii_lowercase()
-            .starts_with(INSTALL_TRANSACTION_PREFIX)
+        || !is_install_transaction_token(token)
         || path.components().count() != 1
         || !matches!(path.components().next(), Some(Component::Normal(_)))
     {
@@ -4328,14 +4330,14 @@ pub(crate) fn merge_toolset_payload(
 mod tests {
     use super::{
         bridge_install_arguments, build_response, canonical_owner_execution_target,
-        canonical_source_projection, classify_canonical_update, detect_import_kind,
+        canonical_source_projection, classify_canonical_update, create_install_transaction, detect_import_kind,
         ensure_no_awaiting_canonical_update_in_program, install_transaction_old_package,
         merge_toolset_payload, path_relative_to_program, prepare_source,
         preserve_runtime_directory, previous_owned_record_path_matches,
         read_install_transaction_journal, recover_install_transaction,
         recover_update_residues_with, resolve_awaiting_canonical_transaction, update_residue_name,
         selected_file_package,
-        validate_core_execution_target, validate_toolset_layout, validate_update_shape,
+        validate_core_execution_target, validate_toolset_layout, validate_update_shape, validate_update_transaction_token,
         write_install_transaction_journal, CanonicalSourceProjection, CanonicalUpdateDisposition,
         InstallTransactionCompletionMode, InstallTransactionJournal, InstallTransactionPhase,
         PreparedSource, ScriptManifest, ToolsetManifest, INSTALL_TRANSACTION_SCHEMA_VERSION,
@@ -4361,6 +4363,22 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir().join(format!("flowcell-{name}-{}-{token}", std::process::id()))
+    }
+
+    #[test]
+    fn install_transaction_names_are_short_unique_and_legacy_tokens_remain_valid() {
+        let root = temporary_test_root("tx");
+        fs::create_dir(&root).unwrap();
+        let (first, first_path) = create_install_transaction(&root).unwrap();
+        let (second, second_path) = create_install_transaction(&root).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(first.len(), 38);
+        assert_eq!(second.len(), 38);
+        assert!(validate_update_transaction_token(&first).is_ok());
+        assert!(validate_update_transaction_token(".flowcell-install-transaction-legacy-owner-123").is_ok());
+        fs::remove_dir(first_path).unwrap();
+        fs::remove_dir(second_path).unwrap();
+        fs::remove_dir(root).unwrap();
     }
 
     /// Run explicitly against a disposable copy of Programs, never an installed

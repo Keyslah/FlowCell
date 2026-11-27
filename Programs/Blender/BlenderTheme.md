@@ -291,6 +291,8 @@ An explicitly empty HDRI path clears the world without loading a default HDRI;
 its saved rotation and strength values remain staged. Older files preserve
 fields they do not contain.
 
+Whole Layout starts checked for new Fill, Text, Highlight, and Glow configurations. The checkbox and Apply button follow each section title. Highlight and Glow apply their own curves and amounts, while enabled and color controls are shared; saved choices are retained.
+
 ## Validation And Reload
 
 After changing the catalog package:

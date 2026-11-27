@@ -6,7 +6,7 @@ import ts from "typescript";
 import { fileURLToPath } from "node:url";
 import { normalizeButtonSkinColor } from "./.compiled-button-system/button/skins/buttonSkinColors.js";
 import { rails } from "./.compiled-button-system/pages/main/mainLayout.js";
-import { FLOWCELL_THEME_PAGE_REGISTRY } from "./.compiled-button-system/theme/themePageRegistry.js";
+import { FLOWCELL_THEME_PAGE_REGISTRY, defaultThemePageAppearance, renderedMainTheme } from "./.compiled-button-system/theme/themePageRegistry.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = path.resolve(root, "..");
@@ -193,27 +193,31 @@ test("native close waits for snapshot preparation and releases after submission 
 
 test("filename selection is lightweight and portable saving sends one native worker request", async () => {
   const source = ts.createSourceFile("themeFile.ts", read("src", "theme", "themeFile.ts"), ts.ScriptTarget.Latest, true);
-  const names = ["choosePortableThemeSavePath", "savePortableThemeAtPath", "savePortableTheme", "themeProgramName"];
+  const names = ["suggestedThemeName", "importedThemeFileName", "choosePortableThemeSavePath", "savePortableThemeAtPath", "savePortableTheme", "exportPortableTheme", "themeProgramName"];
   const helpers = source.statements.filter((node) => ts.isFunctionDeclaration(node) && names.includes(node.name?.text))
     .map((node) => node.getText(source).replace(/^export /, "")).join("\n");
   const compiled = ts.transpileModule(helpers, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const calls = [];
   let chosen = null;
-  const { savePortableTheme } = new Function("flowCellThemeDirectory", "showSaveFileDialog", "invoke", "THEME_FILE_FILTER",
-    `${compiled}\nreturn { savePortableTheme };`)(
-    async () => "C:/Themes/Blender", async () => { calls.push("dialog"); return chosen; },
+  const { savePortableTheme, exportPortableTheme, importedThemeFileName } = new Function("flowCellThemeDirectory", "showSaveFileDialog", "invoke", "THEME_FILE_FILTER",
+    `${compiled}\nreturn { savePortableTheme, exportPortableTheme, importedThemeFileName };`)(
+    async () => "C:/Themes/Blender", async (options) => { calls.push(options); return chosen; },
     async (command, payload) => { calls.push({ command, payload }); return payload.path; }, "filter");
   const snapshot = { name: "Green", target: { kind: "program", programName: "Blender" } };
   assert.equal(await savePortableTheme(snapshot), null);
-  assert.deepEqual(calls, ["dialog"]);
+  assert.equal(calls[0].defaultFileName, "Green.json");
+  assert.equal(importedThemeFileName({ name: "Green", id: "identity" }), "Green.json");
   calls.length = 0;
   chosen = "C:/Themes/Blender/Green.json";
   assert.equal(await savePortableTheme(snapshot), chosen);
-  assert.equal(calls[0], "dialog");
+  assert.equal(calls[0].defaultFileName, "Green.json");
   assert.deepEqual(calls[1], { command: "save_portable_theme", payload: { path: chosen, theme: snapshot, programName: "Blender" } });
   calls.length = 0;
   assert.equal(await savePortableTheme(snapshot, chosen), chosen);
   assert.equal(calls.length, 1, "Remembered library paths keep their existing save behavior");
+  calls.length = 0;
+  await exportPortableTheme(snapshot);
+  assert.equal(calls[0].defaultFileName, "Green.json");
 });
 
 test("complete theme capture freezes document, gradient and selection sets before asynchronous work", async () => {
@@ -275,7 +279,7 @@ test("legacy theme apply keeps omitted host fields out and reuses its captured t
       return { saved, warnings: [] };
     },
     updateContributionSelection: async (_theme, _path, snapshot) => { selectedSnapshot = snapshot; },
-    rememberTheme: () => {}, setStatus: () => {}, warningSuffix: () => "", errorMessage: String
+    rememberTheme: () => {}, setCreatingTheme: () => {}, setStatus: () => {}, warningSuffix: () => "", errorMessage: String
   });
   await apply({ path: "Green.json", legacy: {} }, false);
   assert.deepEqual(committedTheme.contributions[previous.sourceId].state, {
@@ -285,6 +289,69 @@ test("legacy theme apply keeps omitted host fields out and reuses its captured t
   assert.deepEqual(counts, { capture: 1, document: 1, descriptors: 1 });
   assert.equal(selectedSnapshot.document, saved);
   assert.equal(selectedSnapshot.descriptors, descriptors);
+});
+
+test("a rendered look hides editor controls only after the page change is committed", () => {
+  const custom = defaultThemePageAppearance("main");
+  custom.assets["background-image"] = { mode: "none", path: null };
+  let draft = { main: custom };
+  let committed = { main: structuredClone(custom) };
+  const update = themeCallback("ThemeEditorPage.tsx", "updatePageAppearance", {
+    markEditorDirty: () => {}, pageValue: "main", defaultThemePageAppearance,
+    setPageAppearances: (change) => { draft = change(draft); }
+  });
+  update((page) => { page.assets["background-image"] = { mode: "concrete-moss", path: null }; });
+  assert.equal(renderedMainTheme(committed.main), null);
+  assert.equal(renderedMainTheme(draft.main)?.label, "Concrete Moss");
+
+  const accept = themeCallback("ThemeEditorPage.tsx", "acceptCommittedTheme", {
+    dirtyPlacementIds: { current: new Set() }, editorDirty: { current: true },
+    canonicalBaseline: { current: null }, setCanonicalDocument: () => {},
+    setDraftDocument: () => {}, cloneButtonDocument: (value) => value,
+    setPageAppearances: (change) => { draft = change(draft); },
+    setCommittedPageAppearances: (change) => { committed = change(committed); }
+  });
+  accept({}, draft.main);
+  assert.equal(renderedMainTheme(committed.main)?.label, "Concrete Moss");
+});
+
+test("rendered themes keep management controls and can start an editable draft", () => {
+  const source = read("src", "pages", "theme", "ThemeEditorPage.tsx");
+  const header = source.slice(source.indexOf('<div className="theme-editor__header-actions">'), source.indexOf("</header>"));
+  for (const label of ["Open Theme", "New Theme", "Save Theme", "Import Theme", "Export Theme", "Apply", "Discard", "Close"]) {
+    assert.ok(header.includes(`>${label}</button>`), `${label} must be available`);
+  }
+  assert.doesNotMatch(header, /!renderedThemeSelected/);
+  let draft = defaultThemePageAppearance("main");
+  const previousTheme = { current: null };
+  let selection = { id: "default", path: "default.json", name: "default" };
+  let name = "default";
+  let creating = false;
+  const start = themeCallback("ThemeEditorPage.tsx", "startNewTheme", {
+    previousTheme, activeTheme: selection, themeName: name,
+    setActiveTheme: (value) => { selection = value; },
+    setThemeName: (value) => { name = value; },
+    setCreatingTheme: (value) => { creating = value; }, setNamingTheme: () => {},
+    updatePageAppearance: (mutate) => { draft = structuredClone(draft); mutate(draft); },
+    setSaveStatus: () => {}, setStatus: () => {}
+  });
+  start("   ");
+  assert.equal(creating, false);
+  assert.equal(selection.name, "default");
+  start(" My Theme ");
+  assert.equal(selection, null);
+  assert.equal(name, "My Theme");
+  assert.equal(creating, true);
+  assert.equal(renderedMainTheme(draft), null);
+  assert.equal(previousTheme.current.selection.name, "default");
+  assert.match(source, /aria-labelledby="new-theme-title"/);
+  assert.match(source, /startNewTheme\(newThemeName\)/);
+});
+
+test("Import Theme opens a file picker and offers a retry", () => {
+  const source = read("src", "pages", "theme", "ThemeLibraryDialog.tsx");
+  assert.match(source, /mode !== "import"[\s\S]*?inspect\(\(\) => chooseThemeFile\(target\)\)/);
+  assert.match(source, /Choose Theme File…/);
 });
 
 test("unknown and unsent host outcomes roll back local preparation without another host apply", async () => {
@@ -720,8 +787,7 @@ test("legacy Concrete backgrounds remain visible only when already selected", ()
   const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
   const runtime = read("src", "theme", "themeRuntime.ts");
   assert.match(editor, /\{current\.mode === "concrete" && <option value="concrete">Concrete<\/option>\}/);
-  assert.match(editor, /pageValue === "main" \? \([\s\S]{0,400}MAIN_THEME_PRESETS\.map/);
-  assert.match(editor, /mainThemePresetAppearance\(presetId\)/);
+  assert.doesNotMatch(editor, /Choose a preset|handleMainThemePreset/);
   assert.match(runtime, /import concreteBackground from "\.\.\/assets\/backgrounds\/concrete\.jpg";/);
   assert.match(runtime, /\bmode === "concrete"\s*\?\s*`url\("\$\{concreteBackground\}"\)`/);
   const concrete = readFileSync(path.join(root, "src", "assets", "backgrounds", "concrete.jpg"));
@@ -742,7 +808,7 @@ test("Chipped Concrete stacks a page-sized base slab, rendered rail slabs and th
   assert.match(runtime, /"chipped-concrete": railSlabEntries\(chippedConcreteBase, CHIPPED_CONCRETE_RAIL_SLABS\)/);
   assert.match(css, /background-color: var\(--flowcell-main-background-fill, var\(--flowcell-main-background-color, #887F73\)\);/);
   // Chipped Concrete is the default Main look: "Default" resolves to it, and the Main page gets it with nothing saved.
-  assert.match(runtime, /const mode = effectiveThemePageAssetMode\(background, appearance\.assets\["background-image"\]\);\s*return mode === "chipped-concrete" \|\| mode === "concrete-moss" \? mode : null;/);
+  assert.match(runtime, /const mode = renderedMainTheme\(appearance\)\?\.backgroundImageMode/);
   assert.match(runtime, /stored\.pages\[pageId\] \?\? \(pageId === "main" \? defaultThemePageAppearance\("main"\) : null\)/);
   assert.match(read("src", "pages", "main", "MainPage.tsx"), /import mainBackground from "\.\.\/\.\.\/assets\/backgrounds\/chipped-concrete-base\.webp";/);
   // Rail and header Button shadows stop at the base's edge, and the main window drops its frame shadow.

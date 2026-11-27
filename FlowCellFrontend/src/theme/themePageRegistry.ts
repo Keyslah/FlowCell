@@ -426,6 +426,8 @@ export function effectiveThemePageAssetMode(
 export interface MainThemePreset {
   id: string;
   label: string;
+  /** Rendered looks use artwork instead of a configurable page surface. */
+  renderKind: "rendered" | "standard";
   backgroundColor: string;
   backgroundImageMode: Exclude<ThemePageAssetValue["mode"], "custom">;
   railBackground: string;
@@ -439,6 +441,7 @@ export const MAIN_THEME_PRESETS: readonly MainThemePreset[] = [
     // stay clear.
     id: "chipped-concrete",
     label: "Chipped Concrete",
+    renderKind: "rendered",
     backgroundColor: "#887F73",
     backgroundImageMode: "chipped-concrete",
     railBackground: "transparent",
@@ -449,12 +452,22 @@ export const MAIN_THEME_PRESETS: readonly MainThemePreset[] = [
     // in long gradual stretches instead of chips; key text is lit from inside the cut.
     id: "concrete-moss",
     label: "Concrete Moss",
+    renderKind: "rendered",
     backgroundColor: "#2E2A09",
     backgroundImageMode: "concrete-moss",
     railBackground: "transparent",
     railBorder: "transparent"
   }
 ];
+
+/** Resolve the actual rendered look, including the page's default asset mode. */
+export function renderedMainTheme(appearance: ThemePageAppearance): MainThemePreset | null {
+  if (appearance.pageId !== "main") return null;
+  const background = getFlowCellThemePageDefinition("main").assets.find((asset) => asset.id === "background-image");
+  if (!background) return null;
+  const mode = effectiveThemePageAssetMode(background, appearance.assets[background.id]);
+  return MAIN_THEME_PRESETS.find((preset) => preset.renderKind === "rendered" && preset.backgroundImageMode === mode) ?? null;
+}
 
 export function mainThemePresetAppearance(presetId: string): ThemePageAppearance | null {
   const preset = MAIN_THEME_PRESETS.find((entry) => entry.id === presetId);

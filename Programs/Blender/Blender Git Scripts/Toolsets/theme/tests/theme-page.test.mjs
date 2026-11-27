@@ -176,7 +176,13 @@ function plain(value) {
 }
 
 async function clickPageButton(root, label) {
-  const button = root.querySelectorAll("button").find((candidate) => candidate.textContent === label);
+  if (label === "Apply Highlights & Glow") {
+    await clickPageButton(root, "Apply Highlight");
+    await clickPageButton(root, "Apply Glow");
+    return;
+  }
+  const mapped = label === "Apply Gradient" ? "Apply Button Fill" : label === "Apply Text Gradient" ? "Apply Button Text" : label;
+  const button = root.querySelectorAll("button").find((candidate) => candidate.textContent === mapped || candidate["aria-label"] === mapped);
   assert.ok(button, `Missing ${label} button`);
   button.click();
   await settlePageAction();
@@ -380,7 +386,7 @@ test("theme roles and gradient stops use the original native color popups for nu
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.1.6");
+  assert.equal(contribution.version, "3.1.10");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -556,7 +562,7 @@ test("popped Button colors use an aggregate revision-bound Core contract", async
   assert.equal(page.config.buttonTheme.gradientColorCountMinimum, 2);
   assert.equal(page.config.buttonTheme.gradientColorCountMaximum, 16);
   assert.equal(page.config.buttonTheme.gradientColorCountLabel, "Gradient Colors");
-  assert.equal(page.config.buttonTheme.screenTopToBottom, false);
+  assert.equal(page.config.buttonTheme.screenTopToBottom, true);
   assert.equal(page.config.buttonTheme.screenTopToBottomLabel, "Whole Layout");
   assert.equal(page.config.buttonTheme.topLabel, "Start");
   assert.equal(page.config.buttonTheme.bottomLabel, "End");
@@ -1119,7 +1125,7 @@ test("popped Button gradient migrates the legacy count and keeps edited endpoint
   bottomInput.value = "#FEDCBA";
   dispatch(bottomInput, "change");
 
-  const applyGradient = root.querySelectorAll("button").find(({ textContent }) => textContent === "Apply Gradient");
+  const applyGradient = toolButton(channelBox(root, "fill"), "Apply Button Fill");
   applyGradient.click();
   await settlePageAction();
   assert.equal(gradientRequest.colors.length, 4);
@@ -1220,7 +1226,7 @@ test("popped Button Refill fails closed when the Theme image has too few distinc
   assert.equal(gradientRequests.length, 0, "too few sampled colors must not invoke the gradient apply");
   assert.match(root.status.textContent, /only 2 distinct colors.*Lower Gradient Colors/i);
 
-  toolButton(channelBox(root, "fill"), "Apply Gradient").click();
+  toolButton(channelBox(root, "fill"), "Apply Button Fill").click();
   await settlePageAction();
   assert.equal(gradientRequests.length, 1);
   assert.deepEqual(gradientRequests[0].colors, priorColors, "failed Refill must retain the prior gradient colors");
@@ -1528,7 +1534,7 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
   const root = await renderThemePage();
   const buttons = root.querySelectorAll("button");
   // Grid visibility and spacing apply directly through their inputs.
-  assert.equal(buttons.length, 27 + 5 + 2 * 18 + 2 * 19 + page.config.roles.length + page.config.environment.valueFields.length);
+  assert.equal(buttons.length, 28 + 5 + 2 * 18 + 2 * 19 + page.config.roles.length + page.config.environment.valueFields.length);
   assert.deepEqual(
     buttons.flatMap((button, index) => button.title.trim() ? [] : [`${index}: ${button.textContent}`]),
     []
@@ -2053,6 +2059,7 @@ test("first use promotes the saved popped gradient over captured live effects, w
   assert.deepEqual(writes, [poppedSettings({
     colors: ["#ABCDEF", "#102030"], spread: 38, scatter: 9, seed: 18,
     screenTopToBottom: false, angle: 0, curve: LINEAR_CURVE,
+    textScreenTopToBottom: true, highlightScreenTopToBottom: true, glowScreenTopToBottom: true,
     hoverGlowAmount: 17, hoverColor: "#FFFFFFCC", activeColor: "#FFFFFFCC"
   })]);
   assert.equal(poppedControl(root, "idleGlowAmount").value, "0");
@@ -2285,7 +2292,7 @@ test("a locked legacy package switch preserves every staged appearance control w
   const stops = () => gradient().querySelectorAll("div")
     .find((node) => node.className === "button-theme-gradient__stops")
     .querySelectorAll("input").filter((input) => input.type === "color");
-  const screenFlag = () => gradient().querySelectorAll("input").find((input) => input.type === "checkbox");
+  const screenFlag = () => labelledInput(channelBox(root, "fill"), "Button Fill Whole Layout");
   const count = colorCount();
   count.value = "3";
   dispatch(count, "change");
@@ -2458,8 +2465,8 @@ test("the Individual Buttons list is gone and Fill and Text each get their own g
     assert.equal(labelledInput(box, `${title} angle`).value, "0", "0 degrees runs top to bottom");
     assert.equal(box.querySelectorAll("input").filter(({ type }) => type === "checkbox").length, 1);
   }
-  assert.ok(toolButton(channelBox(root, "fill"), "Apply Gradient"));
-  assert.ok(toolButton(channelBox(root, "text"), "Apply Text Gradient"));
+  assert.ok(toolButton(channelBox(root, "fill"), "Apply Button Fill"));
+  assert.ok(toolButton(channelBox(root, "text"), "Apply Button Text"));
   assert.deepEqual(channelStops(root, "text").map(({ value }) => value), ["#FFFFFF"], "text starts as one solid color");
   const sample = root.querySelectorAll("div").find((node) => node.className === "button-theme-sample");
   assert.equal(sample.children.length, 12);
@@ -2607,6 +2614,34 @@ test("every curve visibly explains its axes and distinguishes color progression 
   }
 });
 
+test("curve controls start at the top and Whole Layout defaults to checked for a new configuration", async () => {
+  for (const embedded of [false, true]) {
+    let live = poppedSettings({ screenTopToBottom: false });
+    const root = await renderThemePage({}, {
+      "button-theme.settings": (payload) => {
+        if (payload.settings) live = plain(payload.settings);
+        return { settings: live, configured: false };
+      }
+    }, embedded);
+    for (const [channel, title] of [["fill", "Button Fill"], ["text", "Button Text"], ["highlight", "Highlight"], ["glow", "Glow"]]) {
+      const panel = channelBox(root, channel);
+      const toggle = labelledInput(panel, `${title} Whole Layout`);
+      assert.equal(toggle.checked, true, `${channel} defaults to Whole Layout`);
+      const heading = panel.children[0];
+      assert.equal(heading.children[0].textContent, title);
+      assert.ok(heading.children[1].querySelectorAll("input").includes(toggle));
+      assert.equal(heading.children[2].textContent, "Apply");
+      assert.equal(heading.children[2]["aria-label"], `Apply ${title}`);
+    }
+  }
+  const saved = poppedSettings({ screenTopToBottom: false, textScreenTopToBottom: false,
+    highlightScreenTopToBottom: false, glowScreenTopToBottom: false });
+  const root = await renderThemePage({}, { "button-theme.settings": { settings: saved, configured: true } }, true);
+  for (const [channel, title] of [["fill", "Button Fill"], ["text", "Button Text"], ["highlight", "Highlight"], ["glow", "Glow"]]) {
+    assert.equal(labelledInput(channelBox(root, channel), `${title} Whole Layout`).checked, false);
+  }
+});
+
 test("effect Fade keeps strength separate from angle and Whole Layout when applied", async () => {
   let live = poppedSettings();
   const original = plain(live);
@@ -2624,14 +2659,14 @@ test("effect Fade keeps strength separate from angle and Whole Layout when appli
     dispatch(whole, "change");
     for (const angle of [0, 90, 45]) {
       setInput(labelledInput(panel, `${title} angle`), angle);
-      await clickPageButton(root, "Apply Highlights & Glow");
+      await clickPageButton(root, `Apply ${title}`);
       assert.deepEqual(live[`${channel}Curve`].map(({ x, y }) => ({ x, y })), [{ x: 0, y: 1 }, { x: 1, y: 0 }]);
       assert.equal(live[`${channel}Angle`] ?? 0, angle);
       assert.equal(live[`${channel}ScreenTopToBottom`], true);
     }
     selectCurvePoint(panel, 0);
     setInput(labelledInput(panel, `${title} point strength percent`), 75);
-    await clickPageButton(root, "Apply Highlights & Glow");
+    await clickPageButton(root, `Apply ${title}`);
     assert.equal(live[`${channel}Curve`][0].x, 0);
     assert.equal(live[`${channel}Curve`][0].y, 0.75);
     assert.equal(live[`${channel}Curve`].at(-1).y, 0);
@@ -2675,7 +2710,9 @@ test("spatial effect curves edit, apply, save, lock, reopen and reset independen
   await root.flushTimers();
   const staged = root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state;
   assert.equal(staged.buttonTheme.highlightCurve[1].y, 0.6);
-  await clickPageButton(root, "Apply Highlights & Glow");
+  await clickPageButton(root, "Apply Highlight");
+  assert.equal(live.glowCurve, undefined, "Highlight does not apply the staged Glow curve");
+  await clickPageButton(root, "Apply Glow");
   assert.equal(live.highlightCurve[1].y, 0.6);
   assert.equal(live.highlightAngle, 90);
   assert.deepEqual(live.glowCurve, LINEAR_CURVE);

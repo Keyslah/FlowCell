@@ -1,3 +1,29 @@
+2026-11-27 FlowCell v0.1.17 release preparation:
+- Versioned the application 0.1.16 -> 0.1.17 for a Windows installer and Blender and Illustrator Program ZIP release, including the current Theme Editor, Blender Theme and startup changes.
+- Release preparation validation: 1044 of 1044 frontend tests and 87 of 87 Blender Theme page tests passed.
+
+2026-11-26 Blender Theme curve heading row:
+- Theme 3.1.10 places each Highlight and Glow title, Whole Layout, Apply, and state tabs on one row with compact spacing.
+
+2026-11-26 Blender Theme curve section headers:
+- Theme 3.1.9 puts Whole Layout and Apply immediately after each Fill, Text, Highlight, and Glow title. Highlight and Glow apply their respective curves and amounts independently; enabled and color settings remain shared.
+
+2026-11-26 Blender Theme curve controls:
+- Theme 3.1.8 places Whole Layout and the Fill/Text Apply controls at the top of their sections; Highlight and Glow place Whole Layout at the top. All four default to checked for new configurations, while saved choices remain intact.
+
+2026-11-26 Rendered theme view:
+- Registered rendered looks show their actual look name in the Theme Editor instead of editing options, regardless of theme library or file name; this includes the initial Chipped Concrete default. Theme management buttons, page and target navigation, and operation status remain available. New Theme prompts for a name and starts an editable draft with no background image, while Discard restores the current appearance. Non-rendered looks retain editing controls.
+- Theme saves, imports, and exports use the theme name with a .json extension, without added product suffixes or identity strings. Existing theme files remain readable; conflicting theme identities are protected from replacement.
+- Import Theme opens the file picker immediately, then reviews the selected theme before applying it; the review keeps a Choose Theme File action for another selection.
+
+2026-11-26 Development startup:
+- Shell recycling no longer queries the Recycle Bin's total size and item count before each operation. Absolute local paths, recycle-only Shell flags, the permanent-delete veto, and the returned destination checks remain in place.
+- New Button source install transaction folder names use a 38-character token instead of the owner ID and timestamp. Recovery recognizes both the new and older transaction names.
+- Two committed Illustrator transaction folders were backed up and verified at flowcellbackend/local/diagnostics/tx-safe-20261126/ before their paths were shortened. The development release rebuilt, Button-state bootstrap completed, and the Theme Editor opened with Chipped Concrete selected. The Recycle Bin guard suite passed 7 of 7 tests and the short transaction naming test passed 1 of 1.
+
+2026-11-26 Theme Editor controls:
+- Removed the Main Page Preset dropdown. For Chipped Concrete, Concrete Moss, and the default Chipped Concrete look, the editor hides the Workspace Background color because the rendered slab overrides it. The custom image path and Browse controls appear only for Custom image; rail colors remain editable.
+
 2026-11-25 FlowCell v0.1.16 release and installation:
 - Published Windows.FlowCell.installer.zip, FlowCell-Blender.zip, FlowCell-Illustrator.zip and SHA256SUMS.txt at https://github.com/Keyslah/FlowCell/releases/tag/v0.1.16 from source commit f348a0e026e826de4330c61de6d0c0fe7a5825ef. Blender captures saved revision 1516 with 49 dependencies, 203 placements, 24 surfaces, 26 fields, 5 themes and 10 assets; Illustrator contains the current catalog without a captured appearance or layout.
 - The separate tag-triggered full-package workflow 45750808793 stopped at saved-profile preflight because the hosted runner has no FLOWCELL_PROGRAM_LOCAL_ROOT configured; the locally built assets passed the separate prebuilt installer smoke workflow above.

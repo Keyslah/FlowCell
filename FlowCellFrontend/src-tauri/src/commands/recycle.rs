@@ -11,9 +11,9 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Shell::{
     FileOperation, IFileOperation, IFileOperationProgressSink, IFileOperationProgressSink_Impl,
-    IShellItem, SHCreateItemFromParsingName, SHQueryRecycleBinW, FOFX_ADDUNDORECORD,
+    IShellItem, SHCreateItemFromParsingName, FOFX_ADDUNDORECORD,
     FOFX_EARLYFAILURE, FOFX_RECYCLEONDELETE, FOF_NOCONFIRMATION, FOF_NOERRORUI,
-    FOF_NO_CONNECTED_ELEMENTS, FOF_SILENT, FOF_WANTNUKEWARNING, SHQUERYRBINFO,
+    FOF_NO_CONNECTED_ELEMENTS, FOF_SILENT, FOF_WANTNUKEWARNING,
     TSF_DELETE_RECYCLE_IF_POSSIBLE,
 };
 
@@ -304,27 +304,9 @@ fn recycle_on_sta(paths: &[PathBuf]) -> Result<(), String> {
         )
     }
     .map_err(|error| format!("Cannot configure Recycle Bin operation: {error}"))?;
-    let mut checked_volumes = Vec::new();
     let mut items = Vec::new();
     let mut guards = Vec::new();
     for path in paths {
-        let volume = recycle_volume(path)?;
-        if !checked_volumes.contains(&volume) {
-            let volume_wide = wide(&volume);
-            let mut info = SHQUERYRBINFO {
-                cbSize: std::mem::size_of::<SHQUERYRBINFO>() as u32,
-                ..Default::default()
-            };
-            unsafe { SHQueryRecycleBinW(PCWSTR(volume_wide.as_ptr()), &mut info) }.map_err(
-                |error| {
-                    format!(
-                        "Recycle Bin is unavailable for {}: {error}",
-                        volume.display()
-                    )
-                },
-            )?;
-            checked_volumes.push(volume);
-        }
         let path_wide = wide(path);
         let item: IShellItem =
             unsafe { SHCreateItemFromParsingName(PCWSTR(path_wide.as_ptr()), None) }.map_err(

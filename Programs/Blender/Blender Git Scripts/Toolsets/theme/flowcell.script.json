@@ -7899,7 +7899,7 @@
         "spread": 100,
         "scatter": 20,
         "seed": 1,
-        "screenTopToBottom": false,
+        "screenTopToBottom": true,
         "gradientColorCountMinimum": 2,
         "gradientColorCountMaximum": 16,
         "topLabel": "Start",

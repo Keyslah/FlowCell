@@ -419,7 +419,37 @@ select:focus-visible {
 }
 
 .button-theme-channel .theme-card__heading {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: 0;
+}
+
+.button-theme-channel .theme-card__heading > button:last-child:not([aria-label^="Apply "]) {
+  margin-left: auto;
+}
+
+.button-theme-channel .effect-curve-heading {
+  flex-wrap: nowrap;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.effect-curve-heading > * {
+  flex: 0 0 auto;
+}
+
+.effect-curve-heading .effect-curve-tabs {
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+.effect-curve-heading .effect-curve-tabs__item {
+  gap: 3px;
+}
+
+.effect-curve-heading .effect-curve-tabs__tab {
+  padding-inline: 6px;
 }
 
 .effect-curve-tabs {

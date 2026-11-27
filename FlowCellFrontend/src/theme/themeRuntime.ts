@@ -28,6 +28,7 @@ import {
   effectiveThemePageAssetMode,
   getFlowCellThemePageDefinition,
   isThemePageAppearance,
+  renderedMainTheme,
   themePageTokenCssEntries,
   type FlowCellThemePageId,
   type ThemePageAppearance
@@ -305,12 +306,8 @@ const MAIN_SLAB_LOOKS = {
 
 /** The rendered-slab look the Main page shows, if any. */
 function mainSlabLook(appearance: ThemePageAppearance): keyof typeof MAIN_SLAB_LOOKS | null {
-  if (appearance.pageId !== "main") return null;
-  const background = getFlowCellThemePageDefinition("main").assets.find((asset) => asset.id === "background-image");
-  if (!background) return null;
-  // "Default" counts: Chipped Concrete is the Main page's default look.
-  const mode = effectiveThemePageAssetMode(background, appearance.assets["background-image"]);
-  return mode === "chipped-concrete" || mode === "concrete-moss" ? mode : null;
+  const mode = renderedMainTheme(appearance)?.backgroundImageMode;
+  return mode && mode in MAIN_SLAB_LOOKS ? mode as keyof typeof MAIN_SLAB_LOOKS : null;
 }
 
 function mainRailSlabCssEntries(

@@ -64,11 +64,10 @@ import {
 } from "../../theme/themeModel.js";
 import {
   FLOWCELL_THEME_PAGE_REGISTRY,
-  MAIN_THEME_PRESETS,
   defaultThemePageAppearance,
   getFlowCellThemePageDefinition,
   isFlowCellThemePageId,
-  mainThemePresetAppearance,
+  renderedMainTheme,
   type FlowCellThemePageId,
   type ThemePageAppearance,
   type ThemePageAssetDefinition,
@@ -494,6 +493,7 @@ export default function ThemeEditorPage({
   const canonicalLoadRequest = useRef(0);
   const [draftDocument, setDraftDocument] = useState<ButtonStateDocument | null>(null);
   const [pageAppearances, setPageAppearances] = useState(readAllPageAppearances);
+  const [committedPageAppearances, setCommittedPageAppearances] = useState(readAllPageAppearances);
   const [savedSkins, setSavedSkins] = useState<SavedSkinChoice[]>([]);
   const [selectedPlacementId, setSelectedPlacementId] = useState("");
   const [selectedSavedSkinPath, setSelectedSavedSkinPath] = useState("");
@@ -524,6 +524,10 @@ export default function ThemeEditorPage({
   const [contributionAvailable, setContributionAvailable] = useState<boolean | null>(null);
   const [themeName, setThemeName] = useState("My Theme");
   const [activeTheme, setActiveTheme] = useState<{ id: string; path: string; name: string } | null>(null);
+  const [creatingTheme, setCreatingTheme] = useState(false);
+  const [namingTheme, setNamingTheme] = useState(false);
+  const [newThemeName, setNewThemeName] = useState("");
+  const previousTheme = useRef<{ selection: typeof activeTheme; name: string } | null>(null);
   const contribution = useRef<ThemeContributionController | null>(null);
   const poppedColors = useRef<PoppedButtonColorsController | null>(null);
   const dirtyPlacementIds = useRef(new Set<string>());
@@ -547,20 +551,22 @@ export default function ThemeEditorPage({
   const showingProgramPage = target.kind === "program";
   useEffect(() => {
     let cancelled = false;
+    setActiveTheme(null);
     setContributionAvailable(null);
     poppedColors.current = null;
     void migrateStoredThemePaths().then(() => {
-      if (cancelled) return;
       try {
         const saved = JSON.parse(window.localStorage.getItem("flowcell.selected-themes.v1") ?? "{}")[targetLibraryKey];
+        if (cancelled) return;
         setActiveTheme(saved ?? null);
         setThemeName(saved?.name ?? `${targetLibraryKey === "main" ? "Main" : targetLibraryKey} Theme`);
-      } catch { setActiveTheme(null); }
+      } catch { if (!cancelled) setActiveTheme(null); }
     }).catch((error) => { if (!cancelled) setStatus(`Theme paths could not migrate: ${errorMessage(error)}`); });
     setLibraryMode(null);
     return () => { cancelled = true; };
   }, [targetLibraryKey]);
   const rememberTheme = (selection: { id: string; path: string; name: string }) => {
+    previousTheme.current = null;
     setActiveTheme(selection); setThemeName(selection.name);
     try {
       const stored = JSON.parse(window.localStorage.getItem("flowcell.selected-themes.v1") ?? "{}");
@@ -583,7 +589,9 @@ export default function ThemeEditorPage({
         if (cancelled || request !== canonicalLoadRequest.current) return;
         setCanonicalDocument(document);
         canonicalBaseline.current = document;
-        setPageAppearances(readAllPageAppearances());
+        const pages = readAllPageAppearances();
+        setPageAppearances(pages);
+        setCommittedPageAppearances(pages);
         setDraftDocument(cloneButtonDocument(document));
         setStatus("Ready.");
       })
@@ -1091,6 +1099,7 @@ export default function ThemeEditorPage({
     setDraftDocument(cloneButtonDocument(saved));
     if (page) {
       setPageAppearances((current) => ({ ...current, [page.pageId]: page }));
+      setCommittedPageAppearances((current) => ({ ...current, [page.pageId]: page }));
     }
   };
 
@@ -1115,6 +1124,8 @@ export default function ThemeEditorPage({
     try {
       const theme = await captureCompleteTheme({ localApply: true });
       const committed = await commitCompleteTheme(theme);
+      setCreatingTheme(false);
+      previousTheme.current = null;
       const acceptedGradient = theme.theme.gradient ?? DEFAULT_GRADIENT;
       writeThemeEditorScopeState(target, {
         gradient: acceptedGradient,
@@ -1174,7 +1185,7 @@ export default function ThemeEditorPage({
     let path = loaded.path;
     let id = "";
     const warnings: string[] = [];
-    let name = path.split(/[\\/]/).pop()?.replace(/\.(flowtheme|flowcell-theme-pack)\.json$/i, "") ?? "Theme";
+    let name = path.split(/[\\/]/).pop()?.replace(/\.(?:(?:flowtheme|flowcell-theme-pack)\.)?json$/i, "") ?? "Theme";
     if (loaded.portable) {
       const theme = await materializeTheme(loaded.portable);
       id = theme.id; name = theme.name;
@@ -1188,7 +1199,7 @@ export default function ThemeEditorPage({
       const scoped = { ...loaded.theme, target };
       if (importCopy) {
         const root = await invoke<string>("get_flowcell_theme_directory", { programName: target.kind === "program" ? target.programName : null });
-        path = await invoke<string>("save_flowcell_theme_file", { path: `${root}/${name}.flowtheme.json`, theme: loaded.theme,
+        path = await invoke<string>("save_flowcell_theme_file", { path: `${root}/${name}.json`, theme: loaded.theme,
           programName: target.kind === "program" ? target.programName : null });
       }
       const committed = await commitTheme(scoped);
@@ -1223,6 +1234,7 @@ export default function ThemeEditorPage({
       await updateContributionSelection(complete, path, { document: committed.saved, descriptors })
         .catch((error) => warnings.push(`Selected theme controls could not update: ${errorMessage(error)}`));
     }
+    setCreatingTheme(false);
     rememberTheme({ id, path, name });
     setStatus(`Applied theme: ${path}${warningSuffix(warnings)}`);
   };
@@ -1256,17 +1268,6 @@ export default function ThemeEditorPage({
     finally { setPending(false); }
   };
 
-  const handleMainThemePreset = (presetId: string) => {
-    const preset = MAIN_THEME_PRESETS.find((entry) => entry.id === presetId);
-    const presetAppearance = mainThemePresetAppearance(presetId);
-    if (!preset || !presetAppearance) return;
-    updatePageAppearance((appearance) => {
-      appearance.tokens = presetAppearance.tokens;
-      appearance.assets = presetAppearance.assets;
-    });
-    setStatus(`Loaded the ${preset.label} preset. Apply to use it, or Save Theme to keep it as a file. Buttons are unchanged.`);
-  };
-
   const handleBrowsePageAsset = async (asset: ThemePageAssetDefinition) => {
     const path = (await showOpenFileDialog({
       title: `Choose ${selectedPageDefinition.label} ${asset.label}`,
@@ -1280,8 +1281,16 @@ export default function ThemeEditorPage({
   };
 
   const resetDraftFromCanonical = () => {
+    setCreatingTheme(false);
+    if (previousTheme.current) {
+      setActiveTheme(previousTheme.current.selection);
+      setThemeName(previousTheme.current.name);
+      previousTheme.current = null;
+    }
     if (canonicalDocument) setDraftDocument(cloneButtonDocument(canonicalDocument));
-    setPageAppearances(readAllPageAppearances());
+    const pages = readAllPageAppearances();
+    setPageAppearances(pages);
+    setCommittedPageAppearances(pages);
     const stored = readThemeEditorScopeState(target);
     setGradient(initialScopeGradient(stored?.gradient));
     dirtyPlacementIds.current.clear();
@@ -1290,6 +1299,21 @@ export default function ThemeEditorPage({
     highlightColorResetPlacementIds.current.active.clear();
     editorDirty.current = false;
     setStatus("Discarded unsaved Theme Editor changes.");
+  };
+
+  const startNewTheme = (name: string) => {
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+    previousTheme.current = { selection: activeTheme, name: themeName };
+    setActiveTheme(null);
+    setThemeName(trimmedName);
+    setCreatingTheme(true);
+    setNamingTheme(false);
+    updatePageAppearance((appearance) => {
+      appearance.assets["background-image"] = { mode: "none", path: null };
+    });
+    setSaveStatus("");
+    setStatus("New theme draft. Save or apply it when ready.");
   };
 
   const surfaceSummary = useMemo(() => {
@@ -1321,16 +1345,19 @@ export default function ThemeEditorPage({
   const selectedSkinIdentity = selectedPlacement && draftDocument
     ? themeSkinAssignmentIdentity(draftDocument, selectedPlacement)
     : null;
+  const renderedLook = target.kind === "flowcell" ? renderedMainTheme(committedPageAppearances[pageValue]) : null;
+  const renderedThemeSelected = renderedLook !== null && !creatingTheme;
 
   return (
     <main className={`theme-editor${showingProgramPage ? " theme-editor--program-page" : ""}`}>
       <header className="theme-editor__header">
         <div>
           <h1>Theme Editor</h1>
-          <p>Interface colors, Button appearance, and authored arrangements.</p>
+          {!renderedThemeSelected && <p>Interface colors, Button appearance, and authored arrangements.</p>}
         </div>
         <div className="theme-editor__header-actions">
           <button type="button" disabled={pending} onClick={() => void handleLoadTheme()}>Open Theme</button>
+          {renderedThemeSelected && <button type="button" disabled={pending || !draftDocument} onClick={() => { setNewThemeName(""); setNamingTheme(true); }}>New Theme</button>}
           <button type="button" disabled={pending || saving || !draftDocument} onClick={() => void handleSaveTheme()}>Save Theme</button>
           <button type="button" disabled={pending} onClick={() => setLibraryMode("import")}>Import Theme</button>
           <button type="button" disabled={pending} onClick={() => void handleExportTheme()}>Export Theme</button>
@@ -1343,7 +1370,7 @@ export default function ThemeEditorPage({
       <section className="theme-editor__card theme-editor__scope">
         <label>
           <span>Target</span>
-          <select value={targetValue} onChange={(event) => setTargetValue(event.currentTarget.value)}>
+          <select value={targetValue} disabled={pending || libraryMode !== null} onChange={(event) => setTargetValue(event.currentTarget.value)}>
             <option value={FLOWCELL_TARGET_VALUE}>Main</option>
             {programNames.map((programName) => (
               <option key={programName} value={programName}>{programName}</option>
@@ -1353,7 +1380,7 @@ export default function ThemeEditorPage({
         {targetValue === FLOWCELL_TARGET_VALUE ? (
           <label>
             <span>Page</span>
-            <select value={pageValue} onChange={(event) => {
+            <select value={pageValue} disabled={pending || libraryMode !== null} onChange={(event) => {
               const value = event.currentTarget.value;
               if (isFlowCellThemePageId(value)) setPageValue(value);
             }}>
@@ -1363,13 +1390,15 @@ export default function ThemeEditorPage({
             </select>
           </label>
         ) : null}
-        {!showingProgramPage && <p className="theme-editor__scope-summary">
+        {!renderedThemeSelected && !showingProgramPage && <p className="theme-editor__scope-summary">
           {scopedPlacements.length} Button occurrence{scopedPlacements.length === 1 ? "" : "s"} in scope
           {surfaceSummary ? ` · ${surfaceSummary}` : ""}
         </p>}
       </section>
 
-      <div className="theme-editor__content">
+      {renderedThemeSelected && <section className="theme-editor__card"><h2>{renderedLook.label}</h2></section>}
+      {creatingTheme && <section className="theme-editor__card"><label>Theme name <input value={themeName} onChange={(event) => setThemeName(event.currentTarget.value)} /></label></section>}
+      <div className="theme-editor__content" style={renderedThemeSelected ? { display: "none" } : undefined}>
       {!showingProgramPage && <div className="theme-editor__common">
       {target.kind === "flowcell" ? (
         <section className="theme-editor__card">
@@ -1378,19 +1407,6 @@ export default function ThemeEditorPage({
               <h2>{selectedPageDefinition.label} Page</h2>
               <p>Pick colors visually; opacity is shown as a percentage.</p>
             </div>
-            {pageValue === "main" ? (
-              <div className="theme-editor__section-actions">
-                <label>
-                  <span>Preset</span>
-                  <select value="" disabled={pending} onChange={(event) => handleMainThemePreset(event.currentTarget.value)}>
-                    <option value="">Choose a preset</option>
-                    {MAIN_THEME_PRESETS.map((preset) => (
-                      <option key={preset.id} value={preset.id}>{preset.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            ) : null}
           </div>
           <div className="theme-editor__token-groups">
             {selectedPageGroups.map((group) => (
@@ -1432,8 +1448,10 @@ export default function ThemeEditorPage({
                             <option value="custom">Custom image</option>
                           </select>
                         </label>
-                        <output>{current.path ?? "No custom image selected"}</output>
-                        <button type="button" onClick={() => void handleBrowsePageAsset(asset)}>Browse</button>
+                        {current.mode === "custom" && <>
+                          <output>{current.path ?? "No custom image selected"}</output>
+                          <button type="button" onClick={() => void handleBrowsePageAsset(asset)}>Browse</button>
+                        </>}
                       </div>
                     );
                   })}
@@ -1695,7 +1713,7 @@ export default function ThemeEditorPage({
       </div>}
       {target.kind === "program" && <ThemeContribution key={target.programName} programName={target.programName}
         canClose={canCloseEditor}
-        active={contributionAvailable !== false && libraryMode === null}
+        active={!renderedThemeSelected && contributionAvailable !== false && libraryMode === null}
         onAvailable={setContributionAvailable}
         onReady={(controller) => { contribution.current = controller; }}
         onLibraryAction={(action) => {
@@ -1706,9 +1724,18 @@ export default function ThemeEditorPage({
       {target.kind === "program" && contributionAvailable === false &&
         <PoppedButtonColorsPage key={`popped-colors-${target.programName}`} programName={target.programName}
           canClose={canCloseEditor}
-          active={libraryMode === null} onReady={(controller) => { poppedColors.current = controller; }} />}
+          active={!renderedThemeSelected && libraryMode === null} onReady={(controller) => { poppedColors.current = controller; }} />}
       </div>
       <footer className="theme-editor__status" role="status">{[status, saveStatus].filter(Boolean).join(" · ")}</footer>
+      {namingTheme && <div className="theme-library-backdrop">
+        <form className="theme-library-dialog" style={{ width: "min(480px, 100%)" }} role="dialog" aria-modal="true" aria-labelledby="new-theme-title"
+          onSubmit={(event) => { event.preventDefault(); startNewTheme(newThemeName); }}
+          onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setNamingTheme(false); } }}>
+          <h2 id="new-theme-title">New Theme</h2>
+          <label>Theme name <input autoFocus required value={newThemeName} onChange={(event) => setNewThemeName(event.currentTarget.value)} /></label>
+          <footer><button type="button" onClick={() => setNamingTheme(false)}>Cancel</button>{" "}<button type="submit" disabled={!newThemeName.trim()}>Create</button></footer>
+        </form>
+      </div>}
       {libraryMode && <ThemeLibraryDialog target={target} mode={libraryMode} onClose={() => setLibraryMode(null)}
         onReview={(loaded) => reviewThemeContribution(contribution.current, loaded)}
         onApply={(loaded) => applyLoadedTheme(loaded, libraryMode === "import")} />}

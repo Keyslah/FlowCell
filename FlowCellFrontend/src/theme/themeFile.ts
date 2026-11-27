@@ -9,7 +9,7 @@ import {
 import { isPortableTheme, themeTargetsMatch, type PortableTheme, type ThemeToolDescriptor } from "./portableTheme.js";
 
 const THEME_FILE_FILTER =
-  "FlowCell Themes (*.flowtheme.json;*.flowcell-theme-pack.json)|*.flowtheme.json;*.flowcell-theme-pack.json|JSON Files (*.json)|*.json";
+  "Themes (*.json)|*.json";
 
 export function themeProgramName(target: ThemeTarget): string | null {
   return target.kind === "program" ? target.programName : null;
@@ -20,10 +20,10 @@ export function flowCellThemeDirectory(target: ThemeTarget): Promise<string> {
 }
 
 function suggestedThemeName(name: string): string {
-  const stem = name.trim().replace(/[<>:\"/\\|?*]+/g, "-").replace(/\s+/g, " ") || "FlowCell Theme";
-  return stem.toLowerCase().endsWith(".flowtheme.json")
+  const stem = name.trim().replace(/[<>:\"/\\|?*]+/g, "-").replace(/\s+/g, " ") || "Theme";
+  return stem.toLowerCase().endsWith(".json")
     ? stem
-    : `${stem}.flowtheme.json`;
+    : `${stem}.json`;
 }
 
 export async function saveFlowCellThemeFile(
@@ -127,9 +127,7 @@ export async function legacyThemeIdentity(value: unknown): Promise<string> {
 }
 
 export function importedThemeFileName(theme: Pick<PortableTheme, "name" | "id">): string {
-  const name = theme.name.replace(/[<>:"/\\|?*]+/g, "-");
-  const identity = theme.id.replace(/[^a-z0-9]/gi, "").slice(-16);
-  return `${name}--${identity}.flowcell-theme-pack.json`;
+  return suggestedThemeName(theme.name);
 }
 
 export async function choosePortableThemeSavePath(
@@ -139,7 +137,7 @@ export async function choosePortableThemeSavePath(
   const canonical = (value: string) => value.replaceAll("\\", "/").toLowerCase();
   const remembered = existingPath && canonical(existingPath).startsWith(`${canonical(root)}/`) ? existingPath : null;
   return remembered || await showSaveFileDialog({ title: "Save Theme", filter: THEME_FILE_FILTER,
-    defaultFileName: `${theme.name.replace(/[<>:"/\\|?*]+/g, "-")}.flowcell-theme-pack.json`, initialDirectory: root });
+    defaultFileName: suggestedThemeName(theme.name), initialDirectory: root });
 }
 
 export function savePortableThemeAtPath(theme: PortableTheme, path: string): Promise<string> {
@@ -155,7 +153,7 @@ export async function savePortableTheme(theme: PortableTheme, existingPath?: str
 
 export async function exportPortableTheme(theme: PortableTheme): Promise<string | null> {
   const path = await showSaveFileDialog({ title: "Export Theme", filter: THEME_FILE_FILTER,
-    defaultFileName: `${theme.name.replace(/[<>:"/\\|?*]+/g, "-")}.flowcell-theme-pack.json`,
+    defaultFileName: suggestedThemeName(theme.name),
     initialDirectory: await flowCellThemeDirectory(theme.target) });
   if (!path) return null;
   return invoke("export_flowcell_theme_archive", { path, theme, programName: themeProgramName(theme.target) });

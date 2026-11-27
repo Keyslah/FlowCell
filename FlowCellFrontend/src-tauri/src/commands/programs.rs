@@ -4666,6 +4666,7 @@ fn is_flowcell_owned_panel_artifact(file_name: &str) -> bool {
         || lower == PANEL_DELETION_MARKER_FILE_NAME
         || lower == "installed-page-state.json"
         || lower.starts_with(".flowcell-install-transaction-")
+        || lower.starts_with(".fctx-")
         || lower.starts_with(".flowcell-source-rename-")
         || lower.starts_with(".flowcell-add-panel-staging-")
 }

@@ -576,13 +576,10 @@ pub(crate) fn show_save_file_dialog(
 fn normalize_theme_file_path(path: &Path) -> PathBuf {
     let path_text = path.to_string_lossy().to_string();
     let lower_path = path_text.to_ascii_lowercase();
-    if lower_path.ends_with(".flowtheme.json") || lower_path.ends_with(".flowcell-theme-pack.json") {
+    if lower_path.ends_with(".json") {
         return PathBuf::from(path_text);
     }
-    if lower_path.ends_with(".json") {
-        return PathBuf::from(format!("{}{}", &path_text[..path_text.len() - 5], ".flowtheme.json"));
-    }
-    PathBuf::from(format!("{path_text}.flowtheme.json"))
+    PathBuf::from(format!("{path_text}.json"))
 }
 
 #[tauri::command]
@@ -742,6 +739,14 @@ pub(crate) fn load_layout_snapshot(path: String) -> Result<LayoutSnapshotFile, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_save_paths_use_simple_json_names_and_keep_legacy_names() {
+        assert_eq!(normalize_theme_file_path(Path::new("Green")), PathBuf::from("Green.json"));
+        assert_eq!(normalize_theme_file_path(Path::new("Green.json")), PathBuf::from("Green.json"));
+        assert_eq!(normalize_theme_file_path(Path::new("Green.flowtheme.json")), PathBuf::from("Green.flowtheme.json"));
+        assert_eq!(normalize_theme_file_path(Path::new("Green.flowcell-theme-pack.json")), PathBuf::from("Green.flowcell-theme-pack.json"));
+    }
 
     fn current_layout_json() -> &'static str {
         r#"{

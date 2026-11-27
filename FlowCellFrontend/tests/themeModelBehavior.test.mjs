@@ -35,6 +35,7 @@ import {
   effectiveThemePageAssetMode,
   isThemePageAppearance,
   mainThemePresetAppearance,
+  renderedMainTheme,
   themePageSupportsButtonSurface,
   themePageTokenCssEntries
 } from "./.compiled-button-system/theme/themePageRegistry.js";
@@ -1845,6 +1846,22 @@ test("Main presets draw rendered rails and leave Buttons and Default unchanged",
 
   // Chipped Concrete is the default Main look: the stock appearance is the preset, and "Default" draws it.
   const stock = defaultThemePageAppearance("main");
+  assert.equal(renderedMainTheme(stock)?.label, "Chipped Concrete");
+  for (const preset of MAIN_THEME_PRESETS.filter((entry) => entry.renderKind === "rendered")) {
+    assert.equal(renderedMainTheme(mainThemePresetAppearance(preset.id))?.id, preset.id);
+  }
+  const defaultAsset = structuredClone(stock);
+  defaultAsset.assets["background-image"] = { mode: "default", path: null };
+  assert.equal(renderedMainTheme(defaultAsset)?.label, "Chipped Concrete");
+  defaultAsset.tokens["background-color"] = "#9db678";
+  assert.equal(renderedMainTheme(defaultAsset)?.label, "Chipped Concrete");
+  assert.equal(renderedMainTheme(mainThemePresetAppearance("concrete-moss"))?.label, "Concrete Moss");
+  const custom = structuredClone(stock);
+  custom.assets["background-image"] = { mode: "custom", path: "C:/image.png" };
+  assert.equal(renderedMainTheme(custom), null);
+  custom.assets["background-image"] = { mode: "none", path: null };
+  assert.equal(renderedMainTheme(custom), null);
+  assert.equal(renderedMainTheme(defaultThemePageAppearance("macro-lab")), null);
   assert.equal(stock.tokens["background-color"], "#887F73");
   assert.deepEqual(stock.assets["background-image"], { mode: "chipped-concrete", path: null });
   assert.equal(stock.tokens["rail-program-rail-background"], "transparent");

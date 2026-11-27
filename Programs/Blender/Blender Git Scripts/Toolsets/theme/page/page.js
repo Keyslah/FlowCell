@@ -111,16 +111,16 @@
       textColors: ["#FFFFFF"],
       textAngle: 0,
       textCurve: linearCurve(),
-      textScreenTopToBottom: false,
+      textScreenTopToBottom: true,
       highlightCurve: fullStrengthCurve(),
       activeHighlightCurve: fullStrengthCurve(),
       highlightAngle: 0,
-      highlightScreenTopToBottom: false,
+      highlightScreenTopToBottom: true,
       glowCurve: fullStrengthCurve(),
       activeGlowCurve: fullStrengthCurve(),
       hoverGlowCurve: fullStrengthCurve(),
       glowAngle: 0,
-      glowScreenTopToBottom: false,
+      glowScreenTopToBottom: true,
       effectCurveEditors: Object.fromEntries(Object.entries(EFFECT_CHANNELS).map(([channel, { states }]) => [channel, {
         selected: "regular", linked: Object.fromEntries(states.map(({ id }) => [id, true]))
       }])),
@@ -1030,20 +1030,36 @@
     }
   }
 
-  async function applyButtonThemeEffects() {
+  async function applyButtonThemeEffects(channel) {
     if (busy) return;
+    const spec = EFFECT_CHANNELS[channel];
+    const other = EFFECT_CHANNELS[channel === "highlight" ? "glow" : "highlight"];
+    const keys = [...spec.states.map(({ curveKey }) => curveKey), spec.angleKey, spec.screenKey];
+    const otherKeys = [...other.states.map(({ curveKey }) => curveKey), other.angleKey, other.screenKey,
+      ...["hover", "active", "idle"].map((state) => `${state}${other.title}Amount`)];
+    const stagedOther = Object.fromEntries(otherKeys.map((key) => [key, cloneValue(model.buttonTheme[key])]));
     const effects = buttonThemeEffects();
+    const selected = Object.fromEntries(Object.entries(effects).filter(([key]) =>
+      keys.includes(key) || /^(hover|active|idle)(Enabled|Color)$/.test(key) || key.endsWith(`${spec.title}Amount`)));
     setBusy(true);
     try {
       const settings = await readPoppedButtonSettings(true);
-      // Staged Fill and Text gradients wait for their own Apply buttons.
       if (settings) {
-        const base = Object.fromEntries(Object.entries(settings).filter(([key]) => !EFFECT_SHAPE_KEYS.includes(key)));
-        await applyPoppedButtonSettings({ ...base, ...effects }, true, false, false);
+        const base = Object.fromEntries(Object.entries(settings).filter(([key]) => !keys.includes(key)));
+        await applyPoppedButtonSettings({ ...base, ...selected }, true, false, false);
       }
     } finally {
+      Object.assign(model.buttonTheme, stagedOther);
+      schedulePersistence();
       setBusy(false);
     }
+  }
+
+  function sectionApplyButton(channel, actionId, handler) {
+    const button = actionButton(actionId, handler, `Apply ${GRADIENT_CHANNELS[channel].title} settings.`);
+    button.textContent = "Apply";
+    button.setAttribute("aria-label", `Apply ${GRADIENT_CHANNELS[channel].title}`);
+    return button;
   }
 
   function buttonThemeTextSettings() {
@@ -2665,7 +2681,13 @@
       redrawGradientChannel(channel);
     });
     registerGradientRedraw(channel, () => setCurveControlDisabled(reverse, model.buttonTheme[spec.colorsKey].length < 2));
-    heading.append(reverse);
+    heading.append(
+      renderGradientScreenControl(channel),
+      channel === "fill"
+        ? sectionApplyButton(channel, localActions.applyButtonGradient, applyButtonThemeGradient)
+        : sectionApplyButton(channel, localActions.applyButtonText, applyButtonThemeText),
+      reverse
+    );
     controls.append(stops, renderGradientColorCountControl(channel, stops));
     if (channel === "fill") {
       controls.append(
@@ -2673,14 +2695,7 @@
         renderButtonThemeRangeControl(buttonThemeConfig.scatterLabel || "Scatter", "scatter")
       );
     }
-    const footer = element("div", "button-theme-channel__footer");
-    footer.append(
-      renderGradientScreenControl(channel),
-      channel === "fill"
-        ? actionButton(localActions.applyButtonGradient, applyButtonThemeGradient)
-        : actionButton(localActions.applyButtonText, applyButtonThemeText)
-    );
-    controls.append(renderGradientCurveEditor(channel), renderGradientAngleControl(channel), footer);
+    controls.append(renderGradientCurveEditor(channel), renderGradientAngleControl(channel));
     box.append(heading, controls);
     return box;
   }
@@ -2872,19 +2887,20 @@
     const curves = element("div", "button-theme-gradients");
     for (const [channel, spec] of Object.entries(EFFECT_CHANNELS)) {
       const box = element("section", `button-theme-channel button-theme-channel--${channel}`);
-      const curveHeading = element("div", "theme-card__heading");
-      curveHeading.append(element("h3", "", spec.title), renderEffectCurveTabs(channel));
+      const curveHeading = element("div", "theme-card__heading effect-curve-heading");
+      curveHeading.append(element("h3", "", spec.title), renderGradientScreenControl(channel),
+        sectionApplyButton(channel, buttonThemeActions.settings, () => applyButtonThemeEffects(channel)),
+        renderEffectCurveTabs(channel));
       box.append(curveHeading,
         element("p", "button-theme-effects__help", "Checked tabs share curve edits; unchecked tabs keep their own curve. " +
           (channel === "highlight" ? "Regular also shapes Hover highlight, using its own Hover amount. " : "") +
           "Angle and Whole Layout are shared by all tabs in this section. Left to right: position along the Angle. Bottom to top: strength. " +
           "Fade gives full strength at Start and none at End; at 0 degrees that means top to bottom. Whole Layout spans visible Buttons on each monitor and still follows Angle. " +
           "A single-button window samples Start when Whole Layout is unchecked."),
-        renderGradientCurveEditor(channel), renderGradientAngleControl(channel), renderGradientScreenControl(channel));
+        renderGradientCurveEditor(channel), renderGradientAngleControl(channel));
       curves.append(box);
     }
-    effects.append(heading, description, grid, curves,
-      actionButton(buttonThemeActions.settings, applyButtonThemeEffects));
+    effects.append(heading, description, grid, curves);
     return effects;
   }
 
@@ -3071,11 +3087,20 @@
       const settings = normalizePoppedButtonSettings(settingsResponse?.settings);
       if (!settings) throw new Error(`${programName} returned invalid popped Button settings.`);
       if (settingsResponse.configured === false && !embeddedTheme) {
-        const applied = await applyPoppedButtonSettings({ ...settings, ...(previousGradient || {}) }, true);
+        const applied = await applyPoppedButtonSettings({ ...settings, ...(previousGradient || {}),
+          screenTopToBottom: model.buttonTheme.screenTopToBottom,
+          textScreenTopToBottom: model.buttonTheme.textScreenTopToBottom,
+          highlightScreenTopToBottom: model.buttonTheme.highlightScreenTopToBottom,
+          glowScreenTopToBottom: model.buttonTheme.glowScreenTopToBottom }, true);
         if (!applied || statusNode.dataset.kind === "error") {
           render();
           return;
         }
+      } else if (settingsResponse.configured === false) {
+        const screenKeys = ["screenTopToBottom", "textScreenTopToBottom", "highlightScreenTopToBottom", "glowScreenTopToBottom"];
+        const staged = Object.fromEntries(screenKeys.map((key) => [key, model.buttonTheme[key]]));
+        adoptPoppedButtonSettings(settings);
+        Object.assign(model.buttonTheme, staged);
       } else {
         adoptPoppedButtonSettings(settings);
       }
