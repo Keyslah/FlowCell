@@ -1,3 +1,6 @@
+2026-11-27 FlowCell v0.1.18 release:
+- Windows installer and Blender/Illustrator program ZIPs include the Blender update and first-run preference workflow, scrollable rails, program placement fix, and Windows recycling fix. Illustrator retains its catalog-only distribution.
+
 2026-11-27 Blender update window:
 - When Blender offers to import a previous profile, Update Blender asks whether to import settings or use defaults. Blender completes first-run preference setup before FlowCell publishes the current scripts and button paths. Existing preferences are retained on repeat sync.
 - Blender > Files > Update Blender detects installed versions, accepts a browsed blender.exe and reconnects installed button sources to the selected host. The optional Windows Package Manager installation detects the installed release before syncing. Open or restart the selected Blender to load the updated bridge.
