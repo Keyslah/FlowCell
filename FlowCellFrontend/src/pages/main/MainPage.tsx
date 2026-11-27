@@ -3607,6 +3607,14 @@ export default function MainPage() {
     );
   };
 
+  const folderRailLists = ["program-rail", "panel-rail"].map((railId) => ({
+    rail: rails.find((rail) => rail.id === railId)!,
+    buttons: independentlyPositionedButtons.filter((button) => button.railId === railId &&
+      (button.actionId === "select-program-folder" || button.actionId === "select-panel-folder"))
+  }));
+  const scrollingFolderIds = new Set(folderRailLists.filter(({ buttons }) => buttons.length > 10)
+    .flatMap(({ buttons }) => buttons.map((button) => button.id)));
+
   return (
     <><main
       className={[
@@ -3702,7 +3710,22 @@ export default function MainPage() {
               ))}
             </div>
           ) : null}
-          {buttonDocument ? independentlyPositionedButtons.map(renderIndependentButton) : null}
+          {buttonDocument ? independentlyPositionedButtons.map((button) =>
+            scrollingFolderIds.has(button.id) ? null : renderIndependentButton(button)) : null}
+          {buttonDocument ? folderRailLists.filter(({ buttons }) => buttons.length > 10).map(({ rail, buttons }) => {
+            const top = 117.758993;
+            const step = Math.max(49.726618, ...buttons.map((button) => button.height + 12.431654));
+            const firstY = 125.758993;
+            return <section key={rail.id} className="main-page__folder-rail-scroll"
+              aria-label={rail.name + " folders"} tabIndex={0}
+              style={{ left: rail.x, top, width: rail.width, height: 640 - top }}>
+              <div style={{ position: "relative", height: firstY - top + buttons.length * step }}>
+                <div style={{ position: "absolute", left: -rail.x, top: -top }}>
+                  {buttons.map((button, index) => renderIndependentButton({ ...button, y: firstY + index * step }))}
+                </div>
+              </div>
+            </section>;
+          }) : null}
           {buttonDocument && panelButtons.length > 0 ? (
             <section
               key={canonicalProgramPanelKey(selectedProgramName ?? "", selectedPanelName ?? "")}

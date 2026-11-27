@@ -1,3 +1,8 @@
+2026-11-27 FlowCell v0.1.17 local Windows and rail fixes:
+- Program rail reconciliation preserves authored placements and allocates a free slot for new programs, preventing the Illustrator Pop collision with existing Windows and Blender positions.
+- Program and Panel rails expose all folders in independently scrollable lists when they exceed the available rail space; Add Program and Add Panel remain accessible.
+- Windows Shell recycling converts safe extended-length paths to Shell-compatible paths and rejects ambiguous verbatim names rather than risking the wrong item.
+
 2026-11-27 FlowCell v0.1.17 installation and release validation:
 - Published Windows.FlowCell.installer.zip, FlowCell-Blender.zip, FlowCell-Illustrator.zip and SHA256SUMS.txt at https://github.com/Keyslah/FlowCell/releases/tag/v0.1.17. All downloaded assets matched their checksums. Prebuilt installer smoke workflow 45953088015 passed install, Start Menu startup, upgrade, uninstall and user-data preservation on disposable Windows.
 - Rebuilt through Start-FlowCellFrontend.ps1 -ForceRestart; development Button-state bootstrap completed. Built the NSIS installer from 9bd3ef5e9e96550057ad30f04ea0300e0a504d22, installed 0.1.16 -> 0.1.17, and verified installed Start Menu startup before creating the release ZIPs. The installed backend registered 3 of 3 script bindings with 0 load or registration errors.

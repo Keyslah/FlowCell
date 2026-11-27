@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   buildButtonsSurfaceButtons,
   buildPanelRailButtons,
+  buildProgramRailButtons,
   buttonsSurfaceContentOrigin,
   PANEL_BUTTON_GAP,
   panelButtonViewport,
@@ -1403,4 +1404,15 @@ test("Main native close retires every secondary FlowCell window before destroyin
       closeHook.indexOf("await mainWindow.destroy()"),
     "Main must finish the secondary-window close pass before it destroys itself"
   );
+});
+
+
+test("both folder rails expose every item in long lists", () => {
+  const names = Array.from({ length: 15 }, (_, index) => `Folder ${index + 1}`);
+  for (const build of [buildProgramRailButtons, buildPanelRailButtons]) {
+    const buttons = build(names, names[14]);
+    assert.deepEqual(buttons.filter(button => button.folderName).map(button => button.folderName), names);
+    assert.equal(buttons.find(button => button.folderName === names[14]).isSelected, true);
+    assert.equal(buttons.filter(button => !button.folderName).length, 1);
+  }
 });

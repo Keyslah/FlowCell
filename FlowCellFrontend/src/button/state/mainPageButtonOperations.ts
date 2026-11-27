@@ -270,11 +270,45 @@ export function ensureFlowCellMainPageButtons(
     }
   }
 
-  const definitions = [
-    ...programNames.map(programDefinition),
-    ...fixedDefinitions
-  ];
   const programSurface = document.surfaces[surfaceId("Program Rail")];
+  const programDefinitions = programNames.map(programDefinition);
+  const existingPrograms = programDefinitions.map((entry) => {
+    const button = findProgramButton(document, entry.button.folderName!);
+    const placement = button && placementForButtonOnSurface(document, button.id, programSurface.id);
+    return { button, placement };
+  });
+  const programPlacementIds = new Set(existingPrograms.flatMap(({ placement }) => placement ? [placement.id] : []));
+  const reserved: Array<{ x: number; y: number; width: number; height: number }> = Object.values(document.placements).filter((placement) =>
+    placement.surfaceId === programSurface.id && !programPlacementIds.has(placement.id));
+  if (!Object.values(document.placements).some((placement) => placement.surfaceId === programSurface.id && placement.buttonId === buttonId("program-add"))) {
+    reserved.push(programAdd);
+  }
+  const overlaps = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) =>
+    a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+  const preserveExisting = existingPrograms.some(({ button, placement }) => {
+    const previous = button && metadataRect(button.metadata.mainPageDefaultRect);
+    return placement && (!previous || !rectMatches(placement, previous));
+  }) || programDefinitions.some((entry) => reserved.some((rect) => overlaps(entry.button, rect)));
+  if (preserveExisting) {
+    const occupied = [...reserved, ...existingPrograms.flatMap(({ placement }) => placement ? [placement] : [])];
+    programDefinitions.forEach((entry, index) => {
+      const { button, placement } = existingPrograms[index];
+      if (placement) {
+        // Keep the prior default metadata so an authored rectangle remains authored.
+        const previous = button && metadataRect(button.metadata.mainPageDefaultRect);
+        if (previous) Object.assign(entry.button, previous);
+        return;
+      }
+      let slot = index;
+      let candidate = programDefinition(programNames[index], slot);
+      while (occupied.some((rect) => overlaps(candidate.button, rect))) {
+        candidate = programDefinition(programNames[index], ++slot);
+      }
+      Object.assign(entry.button, definitionRect(candidate));
+      occupied.push(candidate.button);
+    });
+  }
+  const definitions = [...programDefinitions, ...fixedDefinitions];
   const requiredProgramSurfaceWidth = Math.max(
     page.width,
     ...definitions
