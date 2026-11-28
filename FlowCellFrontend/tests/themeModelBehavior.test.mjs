@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import {
   applyThemeFile,
   bakeThemeGradientForDeployedLayout,
@@ -1817,7 +1818,7 @@ test("FlowCell page registry round-trips Main background and individual rail tok
 });
 
 test("Main presets draw rendered rails and leave Buttons and Default unchanged", () => {
-  assert.deepEqual(MAIN_THEME_PRESETS.map((preset) => preset.label), ["Chipped Concrete", "Concrete Moss"]);
+  assert.deepEqual(MAIN_THEME_PRESETS.map((preset) => preset.label), ["Chipped Concrete", "Concrete Moss", "Plastered Wall 03"]);
   assert.equal(mainThemePresetAppearance("missing"), null);
   assert.equal(mainThemePresetAppearance("concrete"), null);
   for (const preset of MAIN_THEME_PRESETS) {
@@ -1893,6 +1894,13 @@ test("Main presets draw rendered rails and leave Buttons and Default unchanged",
   const mossWithPath = structuredClone(moss);
   mossWithPath.assets["background-image"].path = "C:\\Themes\\moss.jpg";
   assert.equal(isThemePageAppearance(mossWithPath), false);
+});
+
+test("the supplied plaster theme is valid and leaves saved Buttons alone", () => {
+  const theme = JSON.parse(readFileSync(new URL("../public/themes/main/Plastered Wall 03.flowtheme.json", import.meta.url), "utf8"));
+  assert.equal(isFlowCellThemeFile(theme), true);
+  assert.equal(renderedMainTheme(theme.page)?.label, "Plastered Wall 03");
+  assert.deepEqual(theme.buttons, []);
 });
 
 test("legacy Main Theme geometry collisions reject without reflow or partial appearance", () => {
@@ -2302,4 +2310,105 @@ test("Concrete Moss twins: Main draws each Chipped Concrete key as the same key 
   assert.match(variant.structure, /base64,UklGRg==/);
   const plain = { ...bundled, name: "Green Basic" };
   assert.equal(concreteMossKeyTwin(plain, keys), plain);
+});
+
+test("Plastered Wall 03 draws matching keys without changing the saved skin or its label", async () => {
+  const { plasteredWall03KeyTwin } = await import("./.compiled-button-system/button/skins/plasteredWall03KeyTwin.js");
+  const { getChippedConcreteButtonSkin } = await import("./.compiled-button-system/button/skins/chippedConcreteButtonSkin.js");
+  const { compileButtonSkin } = await import("./.compiled-button-system/button/skins/skinCompiler.js");
+  const saved = getChippedConcreteButtonSkin("Refresh", 100);
+  const before = structuredClone(saved);
+  const keys = { k100: { sprite: "UklGRg==", picture: [-12.5, -13, 143, 83], frames: 12, profile: "6 9 0,0 100,5.5" } };
+  const twin = plasteredWall03KeyTwin(saved, keys);
+  assert.notEqual(twin, saved);
+  assert.equal(plasteredWall03KeyTwin(saved, keys), twin);
+  assert.match(twin.structure, /data:image\/webp;base64,UklGRg==/);
+  assert.equal(twin.structure.match(/<span data-anim="cl"[^>]*>/)[0], saved.structure.match(/<span data-anim="cl"[^>]*>/)[0]);
+  assert.deepEqual(saved, before);
+  assert.equal(compileButtonSkin(twin).ok, true);
+  const unrelated = { ...saved, name: "Green Basic" };
+  assert.equal(plasteredWall03KeyTwin(unrelated, keys), unrelated);
+  const variant = { ...saved, name: "Chipped Concrete Key 100 b" };
+  const variantKeys = { ...keys, k100b: { ...keys.k100, sprite: "UklGRgB=" } };
+  assert.match(plasteredWall03KeyTwin(variant, variantKeys).structure, /base64,UklGRgB=/);
+  assert.match(plasteredWall03KeyTwin(variant, keys).structure, /base64,UklGRg==/);
+});
+
+test("Plastered Wall 03 gives the saved eight-frame Concrete family modern hover and press travel", async () => {
+  const { plasteredWall03KeyTwin } = await import("./.compiled-button-system/button/skins/plasteredWall03KeyTwin.js");
+  const { getChippedConcreteButtonSkin } = await import("./.compiled-button-system/button/skins/chippedConcreteButtonSkin.js");
+  const { compileButtonSkin } = await import("./.compiled-button-system/button/skins/skinCompiler.js");
+  const { readChippedConcreteKeyTravel, mountChippedConcreteKeyTravel } = await import("./.compiled-button-system/button/skins/chippedConcreteKeyTravel.js");
+  const modern = getChippedConcreteButtonSkin("Refresh", 156);
+  const profile = modern.base.match(/--cc-travel-profile:\s*([^;]+);/)[1];
+  // Representative structure and state sections from the development profile's saved default family.
+  const legacy = {
+    ...modern, id: "skin-chipped-concrete-family-default", name: "Chipped Concrete",
+    structure: `<div data-core style="position:relative;display:block;box-sizing:border-box;width:156px;height:37.295px;font-family:'Segoe UI',sans-serif;font-weight:700;font-size:15px;line-height:1.2"><span data-anim="cc" style="position:absolute;left:-11.839px;top:-12.849px;width:197.678px;height:82.531px;pointer-events:none;background-image:url('data:image/webp;base64,UklGRg==');background-repeat:no-repeat;background-size:800% 100%;background-position:var(--cc-frame,0%) 0;transition:background-position var(--cc-ease,0ms) steps(7, end)"></span><span data-anim="cl" style="position:absolute;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:0 7px;color:rgba(46,38,31,0.86);text-shadow:0 -1px 0 rgba(24,17,10,0.3);white-space:nowrap;pointer-events:none;transform:translateY(var(--cc-label-y,0px));transition:transform var(--cc-ease,0ms) cubic-bezier(0.25,0.46,0.45,0.94)">{{label}}</span></div>`,
+    base: "--cc-frame: 0%;\n--cc-label-y: 0px;\n--cc-ease: 480ms;\n--user-base: 7;\n--CC-frame: 37%;",
+    hover: "--user-hover: 1;",
+    pressed: "--cc-frame: 100%;\n--cc-label-y: 4.925px;\n--cc-ease: 0ms;\n--anim-cc: cc-press 100ms step-end 1 backwards;\n--anim-cl: cl-press 100ms step-end 1 backwards;\n--user-pressed: 2;",
+    held: "--cc-frame: 100%;\n--cc-label-y: 4.925px;\n--cc-ease: 0ms;",
+    release: "--cc-frame: 0%;\n--cc-label-y: 0px;\n--cc-ease: 0ms;\n--anim-cc: cc-release 480ms step-end 1 backwards;\n--anim-cl: cl-release 480ms step-end 1 backwards;",
+    keyframes: "@keyframes cc-press{0%{background-position:0% 0}100%{background-position:100% 0}}\n@keyframes cl-press{0%{transform:translateY(0px)}100%{transform:translateY(4.925px)}}",
+    compileCache: null
+  };
+  const original = structuredClone(legacy);
+  const keys = { k156: { sprite: "UklGRgB=", picture: [-11.839, -12.849, 197.678, 82.531], frames: 12, profile } };
+  const twin = plasteredWall03KeyTwin(legacy, keys);
+  assert.notEqual(twin, legacy);
+  assert.deepEqual(legacy, original, "draw-time conversion must not mutate the saved skin");
+  assert.match(twin.structure, /base64,UklGRgB=/);
+  assert.match(twin.structure, /background-size:1200% 100%/);
+  assert.match(twin.structure, /background-position:var\(--cc-motion-frame,0%\)/);
+  assert.match(twin.structure, /translateY\(var\(--cc-motion-label-y,0px\)\)/);
+  assert.doesNotMatch(twin.structure, /transition:(?:background-position|transform)/);
+  assert.match(twin.base, /--user-base:\s*7/);
+  assert.match(twin.base, /--CC-frame:\s*37%/);
+  assert.doesNotMatch(twin.base, /--cc-frame\s*:/);
+  assert.match(twin.hover, /--user-hover:\s*1/);
+  assert.match(twin.pressed, /--user-pressed:\s*2/);
+  assert.doesNotMatch(twin.pressed + twin.release, /--anim-(?:cc|cl)/);
+  assert.equal(compileButtonSkin(twin).ok, true);
+  const travelProfile = readChippedConcreteKeyTravel(twin.base);
+  assert.ok(travelProfile);
+  assert.equal(travelProfile.frames.length, 12);
+  const moves = [];
+  const style = new Map();
+  const core = {
+    style: { setProperty: (key, value) => style.set(key, value), removeProperty: (key) => style.delete(key) },
+    animate(stops, duration) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      moves.push({ stops, duration, finish: resolve });
+      return { finished: promise, cancel: reject };
+    }
+  };
+  const travel = mountChippedConcreteKeyTravel(core, travelProfile);
+  const idle = { hovered: false, pressed: false, released: false, selected: false, disabled: false };
+  travel.update(idle);
+  travel.update({ ...idle, hovered: true });
+  assert.equal(moves.at(-1).stops.at(-1)["--cc-motion-frame"], `${travelProfile.hover / 11 * 100}%`);
+  assert.equal(moves.at(-1).duration, 240);
+  moves.at(-1).finish();
+  await Promise.resolve();
+  travel.update({ ...idle, hovered: true, pressed: true });
+  assert.equal(moves.at(-1).stops.at(-1)["--cc-motion-frame"], "100%");
+  assert.equal(moves.at(-1).duration, 240);
+  travel.dispose();
+
+  const custom = { ...legacy, id: "custom", name: "My Custom Skin" };
+  assert.equal(plasteredWall03KeyTwin(custom, keys), custom);
+  const namedLegacy = { ...legacy, id: "skin-chipped-concrete-key-k156b", name: "Chipped Concrete Key 156 b" };
+  const variantKeys = { ...keys, k156b: { ...keys.k156, sprite: "UklGRgC=" } };
+  assert.match(plasteredWall03KeyTwin(namedLegacy, variantKeys).structure, /base64,UklGRgC=/);
+  const invalidKeys = { k156: { ...keys.k156, profile: "invalid" } };
+  assert.equal(plasteredWall03KeyTwin(legacy, invalidKeys), legacy, "invalid profiles leave the original skin intact");
+  const customDefaultName = { ...legacy, id: "custom", name: "Chipped Concrete" };
+  assert.equal(plasteredWall03KeyTwin(customDefaultName, keys), customDefaultName);
+  const namedCustom = { ...namedLegacy, structure: namedLegacy.structure.replace("background-size:800%", "background-size:400%") };
+  assert.equal(plasteredWall03KeyTwin(namedCustom, variantKeys), namedCustom);
+  const modernTwin = plasteredWall03KeyTwin(modern, keys);
+  assert.notEqual(modernTwin, modern);
+  assert.match(modernTwin.structure, /base64,UklGRgB=/);
+  assert.equal(modernTwin.hover, modern.hover);
 });

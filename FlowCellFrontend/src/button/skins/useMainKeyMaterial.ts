@@ -6,10 +6,13 @@ import {
   concreteMossKeyTwin,
   type ConcreteMossKeySet
 } from "./concreteMossKeyTwin";
+import { PLASTERED_WALL_03_KEY_MATERIAL, plasteredWall03KeyTwin } from "./plasteredWall03KeyTwin";
 
-// The rendered Concrete Moss keys load only while the Main page's theme is Concrete Moss.
+// Rendered keys load only while their Main page theme is active.
 let keys: ConcreteMossKeySet | null = null;
 let loading = false;
+let plasterKeys: ConcreteMossKeySet | null = null;
+let plasterLoading = false;
 let observer: MutationObserver | null = null;
 const listeners = new Set<() => void>();
 const renderers = new WeakMap<ConcreteMossKeySet, (skin: ButtonSkin) => ButtonSkin>();
@@ -23,15 +26,20 @@ function notify(): void {
 }
 
 function ensureKeys(): void {
-  if (keys || loading || rootMaterial() !== CONCRETE_MOSS_KEY_MATERIAL) return;
-  loading = true;
-  void import("./concreteMossKeys")
-    .then((module) => {
-      keys = module.CONCRETE_MOSS_KEYS;
-      notify();
-    })
-    .catch(() => {})
-    .finally(() => { loading = false; });
+  const material = rootMaterial();
+  if (material === CONCRETE_MOSS_KEY_MATERIAL && !keys && !loading) {
+    loading = true;
+    void import("./concreteMossKeys")
+      .then((module) => { keys = module.CONCRETE_MOSS_KEYS; notify(); })
+      .catch(() => {})
+      .finally(() => { loading = false; });
+  } else if (material === PLASTERED_WALL_03_KEY_MATERIAL && !plasterKeys && !plasterLoading) {
+    plasterLoading = true;
+    void import("./plasteredWall03Keys")
+      .then((module) => { plasterKeys = module.PLASTERED_WALL_03_KEYS; notify(); })
+      .catch(() => {})
+      .finally(() => { plasterLoading = false; });
+  }
 }
 
 function subscribe(listener: () => void): () => void {
@@ -54,19 +62,22 @@ function subscribe(listener: () => void): () => void {
 }
 
 function currentKeys(): ConcreteMossKeySet | null {
-  return rootMaterial() === CONCRETE_MOSS_KEY_MATERIAL ? keys : null;
+  const material = rootMaterial();
+  return material === CONCRETE_MOSS_KEY_MATERIAL ? keys
+    : material === PLASTERED_WALL_03_KEY_MATERIAL ? plasterKeys : null;
 }
 
 /**
- * Main page only: while its theme is Concrete Moss, a draw-time skin swap that shows each
- * Chipped Concrete key as its Concrete Moss twin; otherwise undefined (Buttons draw as saved).
+ * Main page only: draw Chipped Concrete keys in the selected rendered material, or as saved.
  */
 export function useMainKeyMaterial(): ((skin: ButtonSkin) => ButtonSkin) | undefined {
   const loaded = useSyncExternalStore(subscribe, currentKeys, () => null);
   if (!loaded) return undefined;
   let render = renderers.get(loaded);
   if (!render) {
-    render = (skin: ButtonSkin) => concreteMossKeyTwin(skin, loaded);
+    render = loaded === plasterKeys
+      ? (skin: ButtonSkin) => plasteredWall03KeyTwin(skin, loaded)
+      : (skin: ButtonSkin) => concreteMossKeyTwin(skin, loaded);
     renderers.set(loaded, render);
   }
   return render;

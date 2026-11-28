@@ -1444,6 +1444,7 @@ export default function ThemeEditorPage({
                             {current.mode === "concrete" && <option value="concrete">Concrete</option>}
                             <option value="chipped-concrete">Chipped Concrete</option>
                             <option value="concrete-moss">Concrete Moss</option>
+                            <option value="plastered-wall-03">Plastered Wall 03</option>
                             <option value="none">None</option>
                             <option value="custom">Custom image</option>
                           </select>

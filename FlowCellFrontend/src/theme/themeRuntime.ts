@@ -13,7 +13,13 @@ import concreteMossRailButtons from "../assets/backgrounds/concrete-moss-rail-bu
 import concreteMossRailInfo from "../assets/backgrounds/concrete-moss-rail-info.webp";
 import concreteMossRailPanel from "../assets/backgrounds/concrete-moss-rail-panel.webp";
 import concreteMossRailProgram from "../assets/backgrounds/concrete-moss-rail-program.webp";
+import plasteredWall03Base from "../assets/backgrounds/plastered-wall-03-base.webp";
+import plasteredWall03RailButtons from "../assets/backgrounds/plastered-wall-03-rail-buttons.webp";
+import plasteredWall03RailInfo from "../assets/backgrounds/plastered-wall-03-rail-info.webp";
+import plasteredWall03RailPanel from "../assets/backgrounds/plastered-wall-03-rail-panel.webp";
+import plasteredWall03RailProgram from "../assets/backgrounds/plastered-wall-03-rail-program.webp";
 import { CONCRETE_MOSS_KEY_MATERIAL, MAIN_KEY_MATERIAL_ATTRIBUTE } from "../button/skins/concreteMossKeyTwin.js";
+import { PLASTERED_WALL_03_KEY_MATERIAL } from "../button/skins/plasteredWall03KeyTwin.js";
 import { MAIN_PAGE_BASE_OFFSET, RAIL_SLAB_BLEED_PX, rails } from "../pages/main/mainLayout.js";
 import {
   defaultMainThemeAppearance,
@@ -274,6 +280,14 @@ const CONCRETE_MOSS_RAIL_SLABS: RailSlabSet = {
   "info-rail": { url: concreteMossRailInfo, size: [517, 1316], face: [31.074, 32.001, 429.647, 1208.476] }
 };
 
+// Same rail geometry and framing as the other rendered slab looks.
+const PLASTERED_WALL_03_RAIL_SLABS: RailSlabSet = {
+  "program-rail": { url: plasteredWall03RailProgram, size: [445, 1316], face: [31.095, 32.002, 357.935, 1209.251] },
+  "panel-rail": { url: plasteredWall03RailPanel, size: [445, 1316], face: [31.095, 32.002, 357.935, 1209.251] },
+  "buttons-rail": { url: plasteredWall03RailButtons, size: [1382, 1316], face: [30.994, 32.013, 1294.733, 1205.483] },
+  "info-rail": { url: plasteredWall03RailInfo, size: [517, 1316], face: [31.074, 32.001, 429.647, 1208.476] }
+};
+
 function railSlabEntries(base: string, slabs: RailSlabSet): Array<readonly [string, string]> {
   const entries: Array<readonly [string, string]> = [
     ["--flowcell-main-rail-backdrop-filter", "none"],
@@ -301,7 +315,8 @@ function railSlabEntries(base: string, slabs: RailSlabSet): Array<readonly [stri
 
 const MAIN_SLAB_LOOKS = {
   "chipped-concrete": railSlabEntries(chippedConcreteBase, CHIPPED_CONCRETE_RAIL_SLABS),
-  "concrete-moss": railSlabEntries(concreteMossBase, CONCRETE_MOSS_RAIL_SLABS)
+  "concrete-moss": railSlabEntries(concreteMossBase, CONCRETE_MOSS_RAIL_SLABS),
+  "plastered-wall-03": railSlabEntries(plasteredWall03Base, PLASTERED_WALL_03_RAIL_SLABS)
 } as const;
 
 /** The rendered-slab look the Main page shows, if any. */
@@ -316,7 +331,7 @@ function mainRailSlabCssEntries(
   if (appearance.pageId !== "main") return [];
   const look = mainSlabLook(appearance);
   const values = look ? new Map(MAIN_SLAB_LOOKS[look]) : null;
-  // Both looks set the same properties, so listing Chipped Concrete's clears every one when neither applies.
+  // All looks set the same properties, so Chipped Concrete's list clears them when no look applies.
   return MAIN_SLAB_LOOKS["chipped-concrete"].map(([property]) => [property, values?.get(property) ?? null] as const);
 }
 
@@ -336,6 +351,8 @@ function buildThemePageCssUpdate(appearance: ThemePageAppearance): ThemePageCssU
               ? `url("${chippedConcreteBase}")`
               : mode === "concrete-moss"
                 ? `url("${concreteMossBase}")`
+                : mode === "plastered-wall-03"
+                  ? `url("${plasteredWall03Base}")`
                 : mode === "custom" && asset.path
                   ? cssUrl(asset.path)
                   : null;
@@ -345,7 +362,8 @@ function buildThemePageCssUpdate(appearance: ThemePageAppearance): ThemePageCssU
     ],
     mainWindowShadow: appearance.pageId === "main" ? mainSlabLook(appearance) === null : undefined,
     mainKeyMaterial: appearance.pageId === "main"
-      ? mainSlabLook(appearance) === "concrete-moss" ? CONCRETE_MOSS_KEY_MATERIAL : null
+      ? mainSlabLook(appearance) === "concrete-moss" ? CONCRETE_MOSS_KEY_MATERIAL
+        : mainSlabLook(appearance) === "plastered-wall-03" ? PLASTERED_WALL_03_KEY_MATERIAL : null
       : undefined
   };
 }

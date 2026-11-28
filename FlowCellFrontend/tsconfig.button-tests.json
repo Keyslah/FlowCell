@@ -74,6 +74,7 @@
     "src/button/skins/buttonVisualSampling.ts",
     "src/button/skins/chippedConcreteKeyTravel.ts",
     "src/button/skins/concreteMossKeyTwin.ts",
+    "src/button/skins/plasteredWall03KeyTwin.ts",
     "src/button/skins/buttonTextOffset.ts",
     "src/button/skins/buttonSkinColors.ts",
     "src/button/skins/buttonSkinFormat.ts",

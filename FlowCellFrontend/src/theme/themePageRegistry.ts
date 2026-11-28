@@ -25,11 +25,10 @@ export interface ThemePageAssetDefinition {
 
 export interface ThemePageAssetValue {
   /**
-   * "concrete", "chipped-concrete" and "concrete-moss" select bundled textures; only "custom" carries a path.
-   * Chipped Concrete and Concrete Moss also turn the Main rails into textured slabs, and Concrete Moss draws
-   * the Main page's Chipped Concrete keys as their Concrete Moss twins.
+   * Bundled modes select built-in textures; only "custom" carries a path.
+   * Rendered Main looks also use slab artwork and may draw Chipped Concrete keys in a matching material.
    */
-  mode: "default" | "none" | "custom" | "concrete" | "chipped-concrete" | "concrete-moss";
+  mode: "default" | "none" | "custom" | "concrete" | "chipped-concrete" | "concrete-moss" | "plastered-wall-03";
   path: string | null;
 }
 
@@ -457,6 +456,15 @@ export const MAIN_THEME_PRESETS: readonly MainThemePreset[] = [
     backgroundImageMode: "concrete-moss",
     railBackground: "transparent",
     railBorder: "transparent"
+  },
+  {
+    id: "plastered-wall-03",
+    label: "Plastered Wall 03",
+    renderKind: "rendered",
+    backgroundColor: "#887F73",
+    backgroundImageMode: "plastered-wall-03",
+    railBackground: "transparent",
+    railBorder: "transparent"
   }
 ];
 
@@ -505,7 +513,8 @@ export function isThemePageAppearance(value: unknown): value is ThemePageAppeara
       asset.mode !== "custom" &&
       asset.mode !== "concrete" &&
       asset.mode !== "chipped-concrete" &&
-      asset.mode !== "concrete-moss"
+      asset.mode !== "concrete-moss" &&
+      asset.mode !== "plastered-wall-03"
     ) return false;
     if (asset.mode === "custom") return typeof asset.path === "string" && Boolean(asset.path.trim());
     return asset.path === null;

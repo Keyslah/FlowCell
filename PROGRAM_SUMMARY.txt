@@ -1,3 +1,19 @@
+2026-11-27 Plastered Wall 03 color match:
+- Re-rendered the Main background and all 47 Button variants using the rail plaster grain scale and calibrated face tones. Mean face brightness on the 0-255 sRGB luma scale: buttons 139.515 -> 157.189, exposed background strip 122.783 -> 155.402, and reference rails 156.635.
+- Verified 564 rendered frames, sprite dimensions and hover/press motion metadata. All 4 reference rail WebPs retained their SHA-256 hashes. Blender render specifications and measurements: flowcellbackend/local/diagnostics/plaster-rail-match-20261127/.
+
+2026-11-27 Plastered Wall 03 legacy button fix:
+- The development profile contained 8-frame Chipped Concrete keys that the new look originally did not recognize. Plastered Wall 03 now converts those keys at draw time to the existing 12-frame plaster artwork and hover/press travel controller, without modifying saved skins, placements, or other themes.
+- Validation: 223 of 223 selected placements across 28 development Main surfaces converted and compiled with valid matching sprite and motion profiles; 1048 frontend tests and the focused custom-property test passed. The compiled development release rebuilt and restarted successfully; Button-state SHA-256 remained unchanged. The development UI still requires a visual hover and click check.
+
+2026-11-27 Development taskbar shortcut:
+- Added a FlowCell Development Start Menu shortcut with a separate shortcut identity and the FlowCell icon. It calls flowcellbackend/run_hidden.vbs, which runs the existing development launcher with its local paths and automatic build-freshness checks. The shortcut target and arguments were inspected; launch and taskbar pinning have not been verified.
+
+2026-11-27 Plastered Wall 03 Main theme:
+- Added the Plastered Wall 03 rendered Main look using Poly Haven's CC0 plaster material with the existing Chipped Concrete Blender geometry, edge wear, camera, lighting and 12-frame Button motion. Its page and rail artwork and Main-only Button pictures are separate from the existing themes; saved Button skins, assignments and placements remain unchanged.
+- The supplied theme retains the Chipped Concrete page settings and applies no Button assignments. Other Main themes and non-Main Button surfaces keep their existing appearance.
+- Verification: all 47 Button variants and 564 Blender-rendered frames passed geometry and motion checks; 1047 frontend tests and 1 focused native storage test passed. The compiled development release rebuilt and restarted, and Button-state bootstrap completed. The built theme file matches its source SHA-256. Visual theme selection was not checked.
+
 2026-11-27 FlowCell v0.1.17 installation and release validation:
 - Published Windows.FlowCell.installer.zip, FlowCell-Blender.zip, FlowCell-Illustrator.zip and SHA256SUMS.txt at https://github.com/Keyslah/FlowCell/releases/tag/v0.1.17. All downloaded assets matched their checksums. Prebuilt installer smoke workflow 45953088015 passed install, Start Menu startup, upgrade, uninstall and user-data preservation on disposable Windows.
 - Rebuilt through Start-FlowCellFrontend.ps1 -ForceRestart; development Button-state bootstrap completed. Built the NSIS installer from 9bd3ef5e9e96550057ad30f04ea0300e0a504d22, installed 0.1.16 -> 0.1.17, and verified installed Start Menu startup before creating the release ZIPs. The installed backend registered 3 of 3 script bindings with 0 load or registration errors.

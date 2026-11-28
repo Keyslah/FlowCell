@@ -13,6 +13,51 @@ const repositoryRoot = path.resolve(root, "..");
 const read = (...parts) => readFileSync(path.join(root, ...parts), "utf8");
 const readRepository = (...parts) => readFileSync(path.join(repositoryRoot, ...parts), "utf8");
 
+test("switching Main looks during key loading uses the current material", async () => {
+  const source = read("src", "button", "skins", "useMainKeyMaterial.ts");
+  const compiled = ts.transpileModule(source, { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS
+  } }).outputText;
+  const mossKeys = { material: "moss" };
+  const plasterKeys = { material: "plaster" };
+  let material = "concrete-moss";
+  let changed;
+  let subscribed = false;
+  const document = { documentElement: { getAttribute: () => material } };
+  class Observer { constructor(callback) { changed = callback; } observe() {} disconnect() {} }
+  const modules = {
+    react: { useSyncExternalStore: (subscribe, snapshot) => {
+      if (!subscribed) { subscribe(() => {}); subscribed = true; }
+      return snapshot();
+    } },
+    "./concreteMossKeyTwin": {
+      CONCRETE_MOSS_KEY_MATERIAL: "concrete-moss", MAIN_KEY_MATERIAL_ATTRIBUTE: "data-flowcell-main-key-material",
+      concreteMossKeyTwin: () => "moss"
+    },
+    "./plasteredWall03KeyTwin": {
+      PLASTERED_WALL_03_KEY_MATERIAL: "plastered-wall-03", plasteredWall03KeyTwin: () => "plaster"
+    },
+    "./concreteMossKeys": { CONCRETE_MOSS_KEYS: mossKeys },
+    "./plasteredWall03Keys": { PLASTERED_WALL_03_KEYS: plasterKeys }
+  };
+  const exports = {};
+  new Function("exports", "require", "document", "MutationObserver", compiled)(exports, (name) => {
+    assert.ok(name in modules, `unexpected import: ${name}`);
+    return modules[name];
+  }, document, Observer);
+  assert.equal(exports.useMainKeyMaterial(), undefined);
+  material = "plastered-wall-03";
+  changed();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(exports.useMainKeyMaterial()({}), "plaster");
+  material = "concrete-moss";
+  changed();
+  assert.equal(exports.useMainKeyMaterial()({}), "moss");
+  material = "chipped-concrete";
+  changed();
+  assert.equal(exports.useMainKeyMaterial(), undefined);
+});
+
 function parsedColorFallbacks(source) {
   const fallbacks = new Map();
   const pattern = /var\(\s*(--flowcell-[a-z0-9-]+)\s*,\s*(rgba?\([^)]*\)|#[0-9a-f]{3,8}|[a-z]+)\s*\)/gi;
@@ -871,7 +916,8 @@ test("Concrete Moss is its own Main look: moss slabs, and Main alone draws its k
   const base = readFileSync(path.join(root, "src", "assets", "backgrounds", "concrete-moss-base.webp"));
   assert.equal(base.subarray(8, 12).toString("latin1"), "WEBP");
   // Only the Main look sets the key material, and it is cleared for every other look.
-  assert.match(runtime, /mainKeyMaterial: appearance\.pageId === "main"\s*\? mainSlabLook\(appearance\) === "concrete-moss" \? CONCRETE_MOSS_KEY_MATERIAL : null\s*: undefined/);
+  assert.match(runtime, /mainKeyMaterial: appearance\.pageId === "main"\s*\? mainSlabLook\(appearance\) === "concrete-moss" \? CONCRETE_MOSS_KEY_MATERIAL/);
+  assert.match(runtime, /mainSlabLook\(appearance\) === "plastered-wall-03" \? PLASTERED_WALL_03_KEY_MATERIAL : null/);
   assert.match(runtime, /if \(update\.mainKeyMaterial === null\) root\.removeAttribute\(MAIN_KEY_MATERIAL_ATTRIBUTE\);/);
   // The swap is draw-only: sizing and family centering still come from the saved key.
   assert.match(host, /const drawnSkin = useMemo\(\(\) => renderSkin \? renderSkin\(skin\) : skin, \[renderSkin, skin\]\);/);

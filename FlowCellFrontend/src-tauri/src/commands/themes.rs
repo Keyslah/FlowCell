@@ -585,6 +585,19 @@ mod tests {
     }
 
     #[test]
+    fn bundled_main_looks_keep_their_mode_when_the_theme_is_stored() {
+        for mode in ["chipped-concrete", "concrete-moss", "plastered-wall-03"] {
+            let mut theme = json!({"kind":"FlowCellTheme","version":2,
+                "target":{"kind":"flowcell","page":"main"},
+                "page":{"assets":{"background-image":{"mode":mode,"path":null}}}});
+            let original = theme.clone();
+            assert!(validate_theme_target(&theme, None).is_ok());
+            store_page_theme_assets(&mut theme, Path::new("themes/Look.flowtheme.json")).unwrap();
+            assert_eq!(theme, original);
+        }
+    }
+
+    #[test]
     fn migration_routes_themes_preserves_layouts_and_same_name_conflicts() {
         let root = fixture("migration");
         let layouts = root.join("layouts/Main Page");
