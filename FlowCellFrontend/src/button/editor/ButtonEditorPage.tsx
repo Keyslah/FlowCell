@@ -652,6 +652,7 @@ function ButtonEditorContent({
   storeRef.current = store;
   draftDocumentRef.current = store.draft;
   const [initialSelection] = useState(() => resolveInitialEditorSelection(initialDocument, initialContext));
+  const [textContext, setTextContext] = useState(initialContext);
   const sessionIdRef = useRef(initialContext?.draftSessionId ?? createStableButtonId("editor-session"));
   const stagedInstallsRef = useRef(new Map<string, InstallButtonSourceResult>());
   const initializedSettingsDefaultsRef = useRef(new Set<string>());
@@ -934,6 +935,7 @@ function ButtonEditorContent({
   }, [store]);
 
   const applyEditorContext = useCallback((context: ButtonEditorWindowContext) => {
+    setTextContext(context);
     setLockedImportDestination(
       context.lockImportDestination && context.programName && context.panelName
         ? { programName: context.programName, panelName: context.panelName }
@@ -3762,6 +3764,7 @@ function ButtonEditorContent({
           />
         )}
         <ButtonSkinEditor
+          textRequest={textContext?.buttonId && textContext.buttonId === selectedButton?.id ? textContext : undefined}
           skin={selectedSkin}
           skinContextKey={selectedPlacement?.id ?? ""}
           themeOverride={selectedPlacement ? resolveProgramPopoutThemeOverride(store.draft, selectedPlacement.id) : undefined}

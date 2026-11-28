@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "windows.save-clipboard-text",
   "label": "Save Clipboard Text",
-  "tooltip": "Save clipboard text to this Button's own selected folder. Install again for another folder; hold Shift while running to change this one.",
+  "tooltip": "Save the text on your clipboard as a new, timestamped .txt file in the folder you chose for this button.",
   "program": "Windows",
   "source": "save_clipboard_text.ps1",
   "inputSetup": { "source": "save_clipboard_text.ps1", "arguments": ["-ConfigureOnly"], "firstRun": false }

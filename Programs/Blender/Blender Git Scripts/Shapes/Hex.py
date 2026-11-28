@@ -1,4 +1,4 @@
-# Description: Create a hexagon by default (6 sides). Shift-click prompts for the number of sides (minimum 3).
+# Description: Low-poly hexagonal prism
 
 import math
 
@@ -6,7 +6,7 @@ import bpy
 from bpy.props import IntProperty
 
 
-DESCRIPTION = "Create a hexagon by default (6 sides). Shift-click prompts for the number of sides (minimum 3)."
+DESCRIPTION = "Low-poly hexagonal prism"
 MAX_SIDES = 10000
 
 

@@ -1,4 +1,4 @@
-# Description: Low poly cylinder.
+# Description: Low-poly cylinder
 
 import math
 

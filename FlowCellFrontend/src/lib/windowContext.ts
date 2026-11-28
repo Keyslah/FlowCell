@@ -12,6 +12,7 @@ export interface ButtonEditorWindowContext {
   panelName?: string;
   lockImportDestination?: boolean;
   buttonId?: string;
+  textField?: "label" | "tooltip";
   surfaceId?: string;
   draftSessionId?: string;
 }
@@ -185,6 +186,7 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
       programName: optionalString(parsed.programName),
       panelName: optionalString(parsed.panelName),
       lockImportDestination: parsed.lockImportDestination === true,
+      textField: parsed.textField === "label" || parsed.textField === "tooltip" ? parsed.textField : undefined,
       buttonId: optionalString(parsed.buttonId),
       surfaceId: optionalString(parsed.surfaceId),
       draftSessionId: optionalString(parsed.draftSessionId)

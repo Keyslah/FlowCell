@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "windows.flowcell-backup",
   "label": "FlowCell Back Up",
-  "tooltip": "Create a FlowCell backup with the program support files required to restore the workspace.",
+  "tooltip": "With your FlowCell project's folder path on the clipboard, click to save a dated copy along with the Blender bridge and its action scripts. If you haven't chosen a backup location yet, FlowCell asks where to save it.",
   "program": "Windows",
   "source": "file_flow_cell_back_up.ps1",
   "inputSetup": { "source": "file_flow_cell_back_up.ps1", "arguments": ["-ConfigureOnly"], "firstRun": false }

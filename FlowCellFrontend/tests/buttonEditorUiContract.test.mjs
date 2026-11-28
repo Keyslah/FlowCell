@@ -860,7 +860,7 @@ test("Skin Editor exposes one placement-owned cycle with triggers, visuals, and 
   assert.match(editor, /onApplyAllButtonText=\{\(\) => void applyAllButtonText\(\)\}/);
 });
 
-test("Button Text uses real cycle states and falls back to the base label when no cycle exists", () => {
+test("Button Text keeps the base label available for Rename when cycle states are present", () => {
   const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
   const textSection = skinEditor.match(
     /<summary title="Edit Button labels and the shared Button Tooltip[\s\S]*?<\/details>/
@@ -873,7 +873,7 @@ test("Button Text uses real cycle states and falls back to the base label when n
   assert.match(textSection[0], /activationCycle \? \(/);
   assert.match(textSection[0], /configuredStates\.map/);
   assert.match(textSection[0], /<span>State label<\/span>/);
-  assert.match(textSection[0], /\) : \([\s\S]{0,240}<span>Button label<\/span>/);
+  assert.match(textSection[0], /\) : null\}[\s\S]{0,160}<span>Button label<\/span>\s*<input ref=\{buttonLabelRef\}/);
   assert.doesNotMatch(textSection[0], /materializeActivationBehavior|preview-only|Label condition/);
 });
 
@@ -906,7 +906,7 @@ test("Button Text previews draft cycle labels but waits for Save Settings before
     textSection[0],
     /className="button-text-apply-all"[\s\S]{0,480}disabled=\{busy \|\| stateTextBlocked\}/
   );
-  assert.match(textSection[0], /<span>Button label<\/span>\s*<input value=\{buttonLabel\} disabled=\{busy\}/);
+  assert.match(textSection[0], /<span>Button label<\/span>\s*<input ref=\{buttonLabelRef\} value=\{buttonLabel\} disabled=\{busy\}/);
   assert.match(textSection[0], /<span>Button Tooltip<\/span>[\s\S]{0,320}<textarea[\s\S]{0,320}value=\{buttonTooltip\}/);
 });
 

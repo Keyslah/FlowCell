@@ -2,14 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { showOpenFileDialog } from "../../lib/tauri";
+import { installLatestBlender, type BlenderInventory } from "../../lib/blenderInstallation";
 import "./programSetup.css";
 
-interface Installation { path: string; version: string }
-interface Inventory { registered: string; candidates: Installation[] }
 type SyncResult = { version: string; count: number } | { version: string; needsPreferenceChoice: true };
 
 export default function UpdateBlenderWindowPage() {
-  const [inventory, setInventory] = useState<Inventory>({ registered: "", candidates: [] });
+  const [inventory, setInventory] = useState<BlenderInventory>({ registered: "", candidates: [] });
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(true);
   const [confirmInstall, setConfirmInstall] = useState(false);
@@ -18,7 +17,7 @@ export default function UpdateBlenderWindowPage() {
   const [error, setError] = useState("");
   const working = useRef(false);
 
-  function applyInventory(next: Inventory) {
+  function applyInventory(next: BlenderInventory) {
     setInventory(next);
     setPath(next.candidates.length === 1 ? next.candidates[0].path : "");
     setMessage(next.candidates.length ? "Choose the installation you want FlowCell to use." : "Browse to blender.exe or install Blender below.");
@@ -26,7 +25,7 @@ export default function UpdateBlenderWindowPage() {
 
   useEffect(() => {
     let active = true;
-    void invoke<Inventory>("detect_blender_installations").then(next => {
+    void invoke<BlenderInventory>("detect_blender_installations").then(next => {
       if (active) applyInventory(next);
     }).catch(reason => { if (active) { setMessage(""); setError(String(reason)); } })
       .finally(() => { if (active) setBusy(false); });
@@ -62,14 +61,11 @@ export default function UpdateBlenderWindowPage() {
   async function install() {
     setConfirmInstall(false);
     setMessage("Windows Package Manager is checking for and installing Blender. Approve the Windows installer prompt if it appears.");
-    const version = await invoke<string>("install_latest_blender");
-    const next = await invoke<Inventory>("detect_blender_installations");
+    const { inventory: next, version, path: installedPath } = await installLatestBlender();
     applyInventory(next);
-    const majorMinor = version.split(".").slice(0, 2).join(".");
-    const matches = next.candidates.filter(candidate => candidate.version === majorMinor);
-    if (version && matches.length === 1) {
-      setPath(matches[0].path);
-      await sync(matches[0].path, version);
+    if (installedPath) {
+      setPath(installedPath);
+      await sync(installedPath, version);
     } else {
       setMessage("Blender installation finished. Select the installed executable and choose Sync FlowCell.");
     }
@@ -89,7 +85,7 @@ export default function UpdateBlenderWindowPage() {
     <div className="blender-update__actions">
       <button disabled={busy || !!firstRun} onClick={() => void run(async () => {
         setMessage("Looking for Blender installations…");
-        applyInventory(await invoke<Inventory>("detect_blender_installations"));
+        applyInventory(await invoke<BlenderInventory>("detect_blender_installations"));
       })}>Detect again</button>
       <button disabled={busy || !!firstRun} onClick={() => void run(async () => {
         const [chosen] = await showOpenFileDialog({ title: "Choose blender.exe", filter: "Applications (*.exe)|*.exe", multiselect: false });

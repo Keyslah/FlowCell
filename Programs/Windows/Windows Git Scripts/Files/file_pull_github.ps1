@@ -1,4 +1,4 @@
-# Description: Pull the active Explorer Git repository from GitHub with fast-forward only.
+# Description: With your project's folder path on the clipboard, click to download new commits into the current branch. It stops if you have uncommitted changes or a merge is needed.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 

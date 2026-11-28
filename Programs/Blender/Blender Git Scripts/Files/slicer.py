@@ -1,4 +1,4 @@
-# Description: Slicer
+# Description: Export the selected meshes as STL files and open them in your slicer. The first time, choose which slicer to use.
 from __future__ import annotations
 
 import ctypes

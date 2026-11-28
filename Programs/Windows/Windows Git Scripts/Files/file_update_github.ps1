@@ -1,4 +1,4 @@
-# Description: Commit and push the active Explorer Git repository or clipboard repository after prompting for a commit message.
+# Description: With your project's folder path on the clipboard, click to push the current branch to GitHub. If you have file changes, enter a commit message to include all additions, edits, and deletions.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 

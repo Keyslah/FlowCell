@@ -657,6 +657,7 @@ export async function openButtonEditorWindow(args: {
   panelName?: string;
   lockImportDestination?: boolean;
   buttonId?: string;
+  textField?: ButtonEditorWindowContext["textField"];
   surfaceId?: string;
   draftSessionId?: string;
   bounds?: FlowCellBounds | null;
@@ -682,6 +683,7 @@ export async function openButtonEditorWindow(args: {
       panelName: args.panelName,
       lockImportDestination: args.lockImportDestination,
       buttonId: args.buttonId,
+      textField: args.textField,
       surfaceId: args.surfaceId,
       draftSessionId: args.draftSessionId
     };

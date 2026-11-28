@@ -1,4 +1,4 @@
-# Description: Quick Boolean with I/U/D operation buttons, one cycling solver button, SI/HT/HC/S toggles, and Run.
+# Description: Select the cutter meshes, then select the mesh you want to change last. Choose Difference to cut, Union to combine, or Intersect to keep the overlap. Click Run.
 
 
 

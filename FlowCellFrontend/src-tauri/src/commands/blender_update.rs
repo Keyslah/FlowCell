@@ -66,14 +66,18 @@ fn registration(doc: &IniDocument) -> Result<(String, String), String> {
 pub(crate) async fn detect_blender_installations() -> Result<Value, String> {
     program_sources::run_source_blocking("detect Blender", || {
         let (_, doc, _) = read_bindings_file_state()?;
-        let (_, registered) = registration(&doc)?;
+        let registered = find_registered_program(&doc, "Blender")
+            .and_then(|program| doc.get(&format!("ProgramTab_{}", program.id)))
+            .and_then(|section| section.get("ExePath"))
+            .cloned()
+            .unwrap_or_default();
         let manifest = program_sources::manifest::load_program_manifest("Blender")?;
         let mut paths: Vec<_> = super::program_executables::discover_program_executables(&manifest)
             .candidates
             .into_iter()
             .map(|candidate| candidate.path)
             .collect();
-        if !paths.iter().any(|p| p.eq_ignore_ascii_case(&registered)) {
+        if !registered.is_empty() && !paths.iter().any(|p| p.eq_ignore_ascii_case(&registered)) {
             paths.push(registered.clone());
         }
         let candidates = run_worker(json!({"operation":"detect","paths":paths}), 30)?;
@@ -88,8 +92,6 @@ pub(crate) async fn install_latest_blender() -> Result<Value, String> {
         let _guard = UPDATE_LOCK
             .try_lock()
             .map_err(|_| "Another Blender update is in progress.")?;
-        let (_, doc, _) = read_bindings_file_state()?;
-        registration(&doc)?;
         run_worker(json!({"operation":"install"}), 1800)
     })
     .await

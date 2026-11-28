@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "windows.github-backup",
   "label": "GitHub Back Up",
-  "tooltip": "Back up the repository or folder copied to the clipboard. Edit Inputs changes the backup destination without starting a backup.",
+  "tooltip": "With your project's folder path on the clipboard, click to save a dated copy, including uncommitted files. The first time, choose where to save it. Future backups go there automatically.",
   "program": "Windows",
   "source": "file_github_back_up.ps1",
   "inputSetup": { "source": "file_github_back_up.ps1", "arguments": ["-ConfigureOnly"], "firstRun": false }

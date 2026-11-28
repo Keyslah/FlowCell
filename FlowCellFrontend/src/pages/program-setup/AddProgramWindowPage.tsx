@@ -13,6 +13,7 @@ import {
   type ProgramSetupResult
 } from "../../lib/programRails";
 import { showOpenFileDialog } from "../../lib/tauri";
+import { installLatestBlender } from "../../lib/blenderInstallation";
 import { applyManagedProgramPlan } from "./applyManagedProgramPlan";
 import "./programSetup.css";
 
@@ -215,6 +216,28 @@ export default function AddProgramWindowPage() {
       setStatus(`Application detection failed: ${errorMessage(error)}`);
     } finally {
       packageActionPending.current = false;
+      setBusy(false);
+    }
+  };
+
+  const downloadBlender = async () => {
+    if (busyRef.current || selectedProgram?.programId !== "blender") return;
+    if (!window.confirm("Download and install the latest Blender with Windows Package Manager? Save your work and close Blender first. Continuing accepts the package and source agreements.")) return;
+    setBusy(true);
+    setProgress(null);
+    setStatus("Installing Blender. Approve the Windows installer prompt if it appears.");
+    try {
+      const { inventory: detected, version, path } = await installLatestBlender();
+      setInventory(current => ({ ...current, packages: current.packages.map(program =>
+        program.programId === "blender" ? { ...program, suggestedExecutable: path,
+          executableCandidates: detected.candidates.map(candidate => ({ path: candidate.path, source: "Detected Blender" }))
+        } : program) }));
+      setExecutablePath(path);
+      setStatus(path ? `Blender ${version} is ready. Choose Install to finish adding it to FlowCell.`
+        : "Blender installation finished. Choose its detected path or browse to blender.exe to continue.");
+    } catch (error) {
+      setStatus(`Blender setup: ${errorMessage(error)}`);
+    } finally {
       setBusy(false);
     }
   };
@@ -520,6 +543,7 @@ export default function AddProgramWindowPage() {
                 })}>Browse</button>
                 <button type="button" disabled={busy} onClick={() => void refreshDetection()}>Find installed</button>
               </div>
+              {selectedProgram.programId === "blender" && <button type="button" disabled={busy} onClick={() => void downloadBlender()}>Download latest Blender…</button>}
             </div>
           </section>
 

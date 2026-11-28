@@ -1,3 +1,7 @@
+Rename Button and Update Description open Button Text and highlight the requested field. Windows, Blender, and Illustrator buttons have revised descriptions, including short low-poly shape names.
+
+Add Program offers Download latest Blender after selecting the Blender package. It installs Blender through Windows Package Manager, selects a uniquely matching installation and preserves the user's setup choices. Multiple matches can be selected manually before registration.
+
 2026-11-27 FlowCell v0.1.18 release:
 - Windows installer and Blender/Illustrator program ZIPs include the Blender update and first-run preference workflow, scrollable rails, program placement fix, and Windows recycling fix. Illustrator retains its catalog-only distribution.
 

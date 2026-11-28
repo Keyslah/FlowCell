@@ -2446,7 +2446,7 @@ export default function MainPage() {
     await deletePanelScriptFileNames([scriptFileName]);
   };
 
-  const handleUpdateDescriptionContextMenuButton = async () => {
+  const editContextMenuButtonText = async (textField: "label" | "tooltip") => {
     if (!contextMenuButton || !isPanelScriptButtonAction(contextMenuButton.actionId)) {
       closeContextMenu();
       return;
@@ -2454,7 +2454,7 @@ export default function MainPage() {
 
     if (!selectedProgramName || !selectedPanelName) {
       closeContextMenu();
-      window.alert("Select a program and panel before updating a button description.");
+      window.alert("Select a program and panel before editing button text.");
       return;
     }
 
@@ -2471,26 +2471,8 @@ export default function MainPage() {
     await openButtonEditorWindow({
       programName: selectedProgramName,
       panelName: selectedPanelName,
-      buttonId: owner?.id
-    });
-  };
-
-  const handleRenameContextMenuButton = async () => {
-    if (!contextMenuButton || !isPanelScriptButtonAction(contextMenuButton.actionId)) {
-      closeContextMenu();
-      return;
-    }
-
-    const scriptFileName = contextMenuButton.scriptFileName;
-    closeContextMenu();
-    if (!selectedProgramName || !selectedPanelName || !scriptFileName) return;
-    const owner = canonicalButtonsBySource.get(
-      canonicalButtonSourceKey(selectedProgramName, selectedPanelName, scriptFileName)
-    );
-    await openButtonEditorWindow({
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      buttonId: owner?.id
+      buttonId: owner?.id,
+      textField
     });
   };
 
@@ -3821,15 +3803,13 @@ export default function MainPage() {
                       id={`button-context-description:${contextMenuButton.id}`}
                       label="Update Description"
                       className="button-context-menu__item"
-                      onActivate={() => {
-                        void handleUpdateDescriptionContextMenuButton();
-                      }}
+                      onActivate={() => editContextMenuButtonText("tooltip")}
                     />
                     <CanonicalActionButton
                       id={`button-context-rename:${contextMenuButton.id}`}
                       label="Rename Button"
                       className="button-context-menu__item"
-                      onActivate={handleRenameContextMenuButton}
+                      onActivate={() => editContextMenuButtonText("label")}
                     />
                     <CanonicalActionButton
                       id={`button-context-binds:${contextMenuButton.id}`}
