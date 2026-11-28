@@ -1,4 +1,4 @@
-# Description: rotate objects with, transform, and distribute(evenly spaced copies around pivot)
+# Description: Rotate the selection around an axis or make evenly spaced copies around a pivot.
 
 
 

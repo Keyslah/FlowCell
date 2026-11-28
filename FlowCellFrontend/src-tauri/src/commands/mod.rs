@@ -1,4 +1,5 @@
 pub(crate) mod bindings;
+pub(crate) mod blender_update;
 pub(crate) mod button_hotkeys;
 pub(crate) mod execution;
 pub(crate) mod filesystem;

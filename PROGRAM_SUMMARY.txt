@@ -14,6 +14,23 @@
 - The supplied theme retains the Chipped Concrete page settings and applies no Button assignments. Other Main themes and non-Main Button surfaces keep their existing appearance.
 - Verification: all 47 Button variants and 564 Blender-rendered frames passed geometry and motion checks; 1047 frontend tests and 1 focused native storage test passed. The compiled development release rebuilt and restarted, and Button-state bootstrap completed. The built theme file matches its source SHA-256. Visual theme selection was not checked.
 
+Rename Button and Update Description open Button Text and highlight the requested field. Windows, Blender, and Illustrator buttons have revised descriptions, including short low-poly shape names.
+
+Add Program offers Download latest Blender after selecting the Blender package. It installs Blender through Windows Package Manager, selects a uniquely matching installation and preserves the user's setup choices. Multiple matches can be selected manually before registration.
+
+2026-11-27 FlowCell v0.1.18 release:
+- Windows installer and Blender/Illustrator program ZIPs include the Blender update and first-run preference workflow, scrollable rails, program placement fix, and Windows recycling fix. Illustrator retains its catalog-only distribution.
+
+2026-11-27 Blender update window:
+- When Blender offers to import a previous profile, Update Blender asks whether to import settings or use defaults. Blender completes first-run preference setup before FlowCell publishes the current scripts and button paths. Existing preferences are retained on repeat sync.
+- Blender > Files > Update Blender detects installed versions, accepts a browsed blender.exe and reconnects installed button sources to the selected host. The optional Windows Package Manager installation detects the installed release before syncing. Open or restart the selected Blender to load the updated bridge.
+- Windows verification used isolated Blender 5.1.2 and 5.3.0 profiles with 51 installed actions and a real Cone execution in each. Repeat repair, wrong-version rejection, rollback on a locked registry, and update-window selection and confirmation were exercised.
+
+2026-11-27 FlowCell v0.1.17 local Windows and rail fixes:
+- Program rail reconciliation preserves authored placements and allocates a free slot for new programs, preventing the Illustrator Pop collision with existing Windows and Blender positions.
+- Program and Panel rails expose all folders in independently scrollable lists when they exceed the available rail space; Add Program and Add Panel remain accessible.
+- Windows Shell recycling converts safe extended-length paths to Shell-compatible paths and rejects ambiguous verbatim names rather than risking the wrong item.
+
 2026-11-27 FlowCell v0.1.17 installation and release validation:
 - Published Windows.FlowCell.installer.zip, FlowCell-Blender.zip, FlowCell-Illustrator.zip and SHA256SUMS.txt at https://github.com/Keyslah/FlowCell/releases/tag/v0.1.17. All downloaded assets matched their checksums. Prebuilt installer smoke workflow 45953088015 passed install, Start Menu startup, upgrade, uninstall and user-data preservation on disposable Windows.
 - Rebuilt through Start-FlowCellFrontend.ps1 -ForceRestart; development Button-state bootstrap completed. Built the NSIS installer from 9bd3ef5e9e96550057ad30f04ea0300e0a504d22, installed 0.1.16 -> 0.1.17, and verified installed Start Menu startup before creating the release ZIPs. The installed backend registered 3 of 3 script bindings with 0 load or registration errors.

@@ -256,6 +256,7 @@ function Get-FlowCellFrontendSourceRoots {
         (Join-Path $frontendRoot 'src'),
         (Join-Path $frontendRoot 'src-tauri\src'),
         (Join-Path $frontendRoot 'src-tauri\capabilities'),
+        (Join-Path $repoRoot 'Programs\Blender\SupportScripts\flowcell_startup_bootstrap.py'),
         (Join-Path $frontendRoot 'src-tauri\icons'),
         (Join-Path $frontendRoot 'src-tauri\Cargo.toml'),
         (Join-Path $frontendRoot 'src-tauri\Cargo.lock'),

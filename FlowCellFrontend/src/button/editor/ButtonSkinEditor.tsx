@@ -58,6 +58,7 @@ import { type ButtonSkinFileResult } from "./buttonSkinFiles";
 import { ButtonGradientCurveEditor } from "./ButtonGradientCurveEditor";
 
 export interface ButtonSkinEditorProps {
+  textRequest?: { textField?: "label" | "tooltip" };
   skin: ButtonSkin | null;
   skinContextKey: string;
   themeOverride?: ButtonThemeOverride;
@@ -365,6 +366,7 @@ function resizeButtonTooltipEditor(editor: HTMLTextAreaElement | null): void {
 }
 
 export function ButtonSkinEditor({
+  textRequest,
   skin,
   skinContextKey,
   busy,
@@ -421,6 +423,34 @@ export function ButtonSkinEditor({
   const [workingPreviewUsesNaturalSize, setWorkingPreviewUsesNaturalSize] = useState(false);
   const loadedSkinAssignmentRef = useRef<{ skinContextKey: string; skinId: string } | null>(null);
   const buttonTooltipEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const buttonLabelRef = useRef<HTMLInputElement | null>(null);
+  const textSectionRef = useRef<HTMLDetailsElement | null>(null);
+  const handledTextRequest = useRef<ButtonSkinEditorProps["textRequest"]>(undefined);
+  const textReady = Boolean(workingSkin && skin && placement && !busy);
+
+  useEffect(() => {
+    if (!textReady || !textRequest?.textField || handledTextRequest.current === textRequest) return;
+    const field = textRequest.textField === "label" ? buttonLabelRef.current : buttonTooltipEditorRef.current;
+    if (!field || !textSectionRef.current) return;
+    textSectionRef.current.open = true;
+    let timer: number;
+    let flash: Animation | undefined;
+    const frame = requestAnimationFrame(() => {
+      handledTextRequest.current = textRequest;
+      resizeButtonTooltipEditor(buttonTooltipEditorRef.current);
+      field.scrollIntoView({ block: "nearest", inline: "nearest" });
+      field.focus({ preventScroll: true });
+      if (textRequest.textField === "label") field.select();
+      timer = window.setTimeout(() => {
+        if (document.activeElement !== field) return;
+        flash = field.animate([
+          { outline: "3px solid #ffda70", outlineOffset: "1px" },
+          { outline: "3px solid transparent", outlineOffset: "1px" }
+        ], { duration: 850, easing: "ease-out" });
+      }, 950);
+    });
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); flash?.cancel(); };
+  }, [textReady, textRequest]);
   const compileResult = useMemo(
     () => workingSkin ? compileButtonSkin(workingSkin) : null,
     [workingSkin]
@@ -790,6 +820,7 @@ export function ButtonSkinEditor({
     <aside className="button-skin-editor">
       <h2>Skin Editor</h2>
       <details
+        ref={textSectionRef}
         className="button-skin-section"
         onToggle={(event) => {
           if (!event.currentTarget.open) return;
@@ -840,12 +871,11 @@ export function ButtonSkinEditor({
                 onChange={(event) => updateSelectedStateLabel(event.currentTarget.value)}
               />
             </label>
-          ) : (
-            <label title="Set the Button's default label.">
-              <span>Button label</span>
-              <input value={buttonLabel} disabled={busy} onChange={(event) => onButtonLabelChange(event.currentTarget.value)} />
-            </label>
-          )}
+          ) : null}
+          <label title="Set the Button's default label.">
+            <span>Button label</span>
+            <input ref={buttonLabelRef} value={buttonLabel} disabled={busy} onChange={(event) => onButtonLabelChange(event.currentTarget.value)} />
+          </label>
           <label title="Set the shared tooltip shown when this Button is hovered on any placement. This editor expands so the complete tooltip stays visible and selectable.">
             <span>Button Tooltip</span>
             <textarea

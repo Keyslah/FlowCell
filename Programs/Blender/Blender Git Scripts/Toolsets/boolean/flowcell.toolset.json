@@ -3,7 +3,7 @@
   "id": "blender.boolean",
   "version": "1.1.6",
   "label": "boolean",
-  "tooltip": "Quick Boolean with I/U/D operation buttons, solver fanout, SI/HT/HC/S toggles, and Run.",
+  "tooltip": "Select the cutter meshes, then select the mesh you want to change last. Choose Difference to cut, Union to combine, or Intersect to keep the overlap. Click Run.",
   "kind": "toolset",
   "program": "Blender",
   "source": "boolean.py",

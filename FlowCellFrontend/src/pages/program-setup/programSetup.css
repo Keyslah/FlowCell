@@ -435,3 +435,12 @@
     flex-basis: 100%;
   }
 }
+
+.blender-update__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.blender-update__path { overflow-wrap: anywhere; }

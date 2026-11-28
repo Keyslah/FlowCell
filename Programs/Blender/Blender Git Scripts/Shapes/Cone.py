@@ -1,4 +1,4 @@
-# Description: Low poly cone.
+# Description: Low-poly cone
 
 import math
 

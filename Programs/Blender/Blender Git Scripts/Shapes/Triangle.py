@@ -1,4 +1,4 @@
-# Description: Low poly triangular prism.
+# Description: Low-poly triangular prism
 
 import math
 

@@ -36,6 +36,7 @@ try {
     $profileLookup = "[Environment]::GetFolderPath('ApplicationData')"
     Assert-True ($source.Contains($profileLookup)) 'Installer profile lookup changed; update the fixture explicitly.'
     [IO.File]::WriteAllText($fixtureInstaller, $source.Replace($profileLookup, '$env:FLOWCELL_TEST_APPDATA'))
+    Copy-Item (Join-Path (Split-Path $installerSource) "flowcell_startup_bootstrap.py") (Split-Path $fixtureInstaller)
     $payload = Join-Path $fixtureRoot 'Programs\Blender\Blender Addons - Copy contents Into Blender'
     New-Item -ItemType Directory -Path (Join-Path $payload 'blender_bridge_flowcell') -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $payload 'flowcell_actions.py'), '# fixture')

@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 import { createButtonStateDocument } from "./.compiled-button-system/button/state/buttonDefaults.js";
+import { validateButtonStateDocument } from "./.compiled-button-system/button/state/buttonStateValidation.js";
 import { ensureFlowCellMainPageButtons } from "./.compiled-button-system/button/state/mainPageButtonOperations.js";
 import {
   buildButtonsSurfaceButtons,
@@ -143,4 +144,26 @@ test("fallback Main controls use the same single-line and header sizing policies
     assert.equal(props.placement.height, control.height, control.label);
     assert.deepEqual(control, before);
   }
+});
+
+
+test("discovering Illustrator keeps existing sized program positions valid and repeatable", () => {
+  const document = createButtonStateDocument();
+  ensureFlowCellMainPageButtons(document, ["Windows", "Blender"]);
+  const byName = (name) => {
+    const button = Object.values(document.buttons).find(entry => entry.metadata.mainPageProgramName === name);
+    return Object.values(document.placements).find(entry => entry.buttonId === button.id);
+  };
+  byName("Windows").width = 96;
+  byName("Blender").width = 84;
+  const windowsBefore = structuredClone(byName("Windows"));
+  const blenderBefore = structuredClone(byName("Blender"));
+  assert.equal(ensureFlowCellMainPageButtons(document, ["Illustrator", "Windows", "Blender"]), true);
+  assert.deepEqual(byName("Windows"), windowsBefore);
+  assert.deepEqual(byName("Blender"), blenderBefore);
+  const validation = validateButtonStateDocument(document);
+  assert.equal(validation.valid, true, validation.issues.join("\n"));
+  const after = structuredClone(document);
+  assert.equal(ensureFlowCellMainPageButtons(document, ["Illustrator", "Windows", "Blender"]), false);
+  assert.deepEqual(document, after);
 });

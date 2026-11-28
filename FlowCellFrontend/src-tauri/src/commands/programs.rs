@@ -3438,7 +3438,7 @@ fn require_initialized_setup_for_sources(result: &ProgramSetupResult) -> Result<
     Ok(())
 }
 
-fn program_setup_status_root() -> Result<PathBuf, String> {
+pub(super) fn program_setup_status_root() -> Result<PathBuf, String> {
     Ok(crate::resolve_flowcell_local_root()?.join("program-setup-status"))
 }
 
@@ -3448,7 +3448,7 @@ fn program_setup_status_path(root: &Path, program_name: &str) -> Result<PathBuf,
     Ok(root.join(format!("{key}.json")))
 }
 
-fn save_program_setup_result_at(root: &Path, result: &ProgramSetupResult) -> Result<(), String> {
+pub(super) fn save_program_setup_result_at(root: &Path, result: &ProgramSetupResult) -> Result<(), String> {
     save_program_setup_status_at(root, result, None)
 }
 

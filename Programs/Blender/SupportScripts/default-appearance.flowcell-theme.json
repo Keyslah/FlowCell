@@ -9688,7 +9688,7 @@
       "placement-19": {
         "button": {
           "label": "Cone",
-          "tooltip": "Low poly cone.",
+          "tooltip": "Low-poly cone",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -9717,7 +9717,7 @@
       "placement-20": {
         "button": {
           "label": "Cube",
-          "tooltip": "Low poly cube.",
+          "tooltip": "Low-poly cube",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -9775,7 +9775,7 @@
       "placement-22": {
         "button": {
           "label": "Cylinder",
-          "tooltip": "Low poly cylinder.",
+          "tooltip": "Low-poly cylinder",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -9804,7 +9804,7 @@
       "placement-23": {
         "button": {
           "label": "Sphere",
-          "tooltip": "Low poly sphere.",
+          "tooltip": "Low-poly sphere",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -9862,7 +9862,7 @@
       "placement-25": {
         "button": {
           "label": "Triangle",
-          "tooltip": "Low poly triangular prism.",
+          "tooltip": "Low-poly triangular prism",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -10236,7 +10236,7 @@
       "placement-36": {
         "button": {
           "label": "slicer",
-          "tooltip": "Slicer",
+          "tooltip": "Export the selected meshes as STL files and open them in your slicer. The first time, choose which slicer to use.",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -11454,7 +11454,7 @@
       "placement-79": {
         "button": {
           "label": "slicer",
-          "tooltip": "Slicer",
+          "tooltip": "Export the selected meshes as STL files and open them in your slicer. The first time, choose which slicer to use.",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -11715,7 +11715,7 @@
       "placement-88": {
         "button": {
           "label": "Cone",
-          "tooltip": "Low poly cone.",
+          "tooltip": "Low-poly cone",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -11744,7 +11744,7 @@
       "placement-89": {
         "button": {
           "label": "Cube",
-          "tooltip": "Low poly cube.",
+          "tooltip": "Low-poly cube",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -11773,7 +11773,7 @@
       "placement-90": {
         "button": {
           "label": "Cylinder",
-          "tooltip": "Low poly cylinder.",
+          "tooltip": "Low-poly cylinder",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -11802,7 +11802,7 @@
       "placement-91": {
         "button": {
           "label": "Sphere",
-          "tooltip": "Low poly sphere.",
+          "tooltip": "Low-poly sphere",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -11831,7 +11831,7 @@
       "placement-92": {
         "button": {
           "label": "Triangle",
-          "tooltip": "Low poly triangular prism.",
+          "tooltip": "Low-poly triangular prism",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -11860,7 +11860,7 @@
       "placement-93": {
         "button": {
           "label": "Hex",
-          "tooltip": "Create a hexagon by default (6 sides). Shift-click prompts for the number of sides (minimum 3).",
+          "tooltip": "Low-poly hexagonal prism",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -12063,7 +12063,7 @@
       "placement-100": {
         "button": {
           "label": "boolean",
-          "tooltip": "Quick Boolean with I/U/D operation buttons, solver fanout, SI/HT/HC/S toggles, and Run.",
+          "tooltip": "Select the cutter meshes, then select the mesh you want to change last. Choose Difference to cut, Union to combine, or Intersect to keep the overlap. Click Run.",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -12150,7 +12150,7 @@
       "placement-103": {
         "button": {
           "label": "rotate",
-          "tooltip": "rotate objects with, transform, and distribute(evenly spaced copies around pivot)",
+          "tooltip": "Rotate the selection around an axis or make evenly spaced copies around a pivot.",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -12887,7 +12887,7 @@
       "placement-126": {
         "button": {
           "label": "slicer",
-          "tooltip": "Slicer",
+          "tooltip": "Export the selected meshes as STL files and open them in your slicer. The first time, choose which slicer to use.",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -14152,7 +14152,7 @@
       "placement-168": {
         "button": {
           "label": "Sphere",
-          "tooltip": "Low poly sphere.",
+          "tooltip": "Low-poly sphere",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -14181,7 +14181,7 @@
       "placement-169": {
         "button": {
           "label": "Cone",
-          "tooltip": "Low poly cone.",
+          "tooltip": "Low-poly cone",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -14210,7 +14210,7 @@
       "placement-170": {
         "button": {
           "label": "Cube",
-          "tooltip": "Low poly cube.",
+          "tooltip": "Low-poly cube",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -14239,7 +14239,7 @@
       "placement-171": {
         "button": {
           "label": "Cylinder",
-          "tooltip": "Low poly cylinder.",
+          "tooltip": "Low-poly cylinder",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -14268,7 +14268,7 @@
       "placement-172": {
         "button": {
           "label": "Triangle",
-          "tooltip": "Low poly triangular prism.",
+          "tooltip": "Low-poly triangular prism",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null
@@ -14326,7 +14326,7 @@
       "placement-174": {
         "button": {
           "label": "Hex",
-          "tooltip": "Create a hexagon by default (6 sides). Shift-click prompts for the number of sides (minimum 3).",
+          "tooltip": "Low-poly hexagonal prism",
           "defaultTextFitMode": "shrink",
           "activationAnimation": null,
           "activationBehavior": null

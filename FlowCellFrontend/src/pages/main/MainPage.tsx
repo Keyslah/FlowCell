@@ -60,6 +60,7 @@ import {
   closeInstalledPageWindow,
   openAddPanelWindow,
   openAddProgramWindow,
+  openUpdateBlenderWindow,
   openBindsWindow,
   openInstalledPageWindow,
   openMacroLabWindow,
@@ -1623,6 +1624,7 @@ export default function MainPage() {
     [allButtons]
   );
   const panelButtons = allButtons.filter((button) => button.scriptFileName);
+  const showBlenderUpdate = selectedProgramName?.toLowerCase() === "blender" && selectedPanelName?.toLowerCase() === "files";
   const panelViewport = panelButtonViewport(resolvedButtonsById.get("buttons-add-script")?.x);
   const contextMenuButton = contextMenu ? (resolvedButtonsById.get(contextMenu.buttonId) ?? null) : null;
   const isScriptContextMenu =
@@ -2444,7 +2446,7 @@ export default function MainPage() {
     await deletePanelScriptFileNames([scriptFileName]);
   };
 
-  const handleUpdateDescriptionContextMenuButton = async () => {
+  const editContextMenuButtonText = async (textField: "label" | "tooltip") => {
     if (!contextMenuButton || !isPanelScriptButtonAction(contextMenuButton.actionId)) {
       closeContextMenu();
       return;
@@ -2452,7 +2454,7 @@ export default function MainPage() {
 
     if (!selectedProgramName || !selectedPanelName) {
       closeContextMenu();
-      window.alert("Select a program and panel before updating a button description.");
+      window.alert("Select a program and panel before editing button text.");
       return;
     }
 
@@ -2469,26 +2471,8 @@ export default function MainPage() {
     await openButtonEditorWindow({
       programName: selectedProgramName,
       panelName: selectedPanelName,
-      buttonId: owner?.id
-    });
-  };
-
-  const handleRenameContextMenuButton = async () => {
-    if (!contextMenuButton || !isPanelScriptButtonAction(contextMenuButton.actionId)) {
-      closeContextMenu();
-      return;
-    }
-
-    const scriptFileName = contextMenuButton.scriptFileName;
-    closeContextMenu();
-    if (!selectedProgramName || !selectedPanelName || !scriptFileName) return;
-    const owner = canonicalButtonsBySource.get(
-      canonicalButtonSourceKey(selectedProgramName, selectedPanelName, scriptFileName)
-    );
-    await openButtonEditorWindow({
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      buttonId: owner?.id
+      buttonId: owner?.id,
+      textField
     });
   };
 
@@ -3607,6 +3591,14 @@ export default function MainPage() {
     );
   };
 
+  const folderRailLists = ["program-rail", "panel-rail"].map((railId) => ({
+    rail: rails.find((rail) => rail.id === railId)!,
+    buttons: independentlyPositionedButtons.filter((button) => button.railId === railId &&
+      (button.actionId === "select-program-folder" || button.actionId === "select-panel-folder"))
+  }));
+  const scrollingFolderIds = new Set(folderRailLists.filter(({ buttons }) => buttons.length > 10)
+    .flatMap(({ buttons }) => buttons.map((button) => button.id)));
+
   return (
     <><main
       className={[
@@ -3702,8 +3694,23 @@ export default function MainPage() {
               ))}
             </div>
           ) : null}
-          {buttonDocument ? independentlyPositionedButtons.map(renderIndependentButton) : null}
-          {buttonDocument && panelButtons.length > 0 ? (
+          {buttonDocument ? independentlyPositionedButtons.map((button) =>
+            scrollingFolderIds.has(button.id) ? null : renderIndependentButton(button)) : null}
+          {buttonDocument ? folderRailLists.filter(({ buttons }) => buttons.length > 10).map(({ rail, buttons }) => {
+            const top = 117.758993;
+            const step = Math.max(49.726618, ...buttons.map((button) => button.height + 12.431654));
+            const firstY = 125.758993;
+            return <section key={rail.id} className="main-page__folder-rail-scroll"
+              aria-label={rail.name + " folders"} tabIndex={0}
+              style={{ left: rail.x, top, width: rail.width, height: 640 - top }}>
+              <div style={{ position: "relative", height: firstY - top + buttons.length * step }}>
+                <div style={{ position: "absolute", left: -rail.x, top: -top }}>
+                  {buttons.map((button, index) => renderIndependentButton({ ...button, y: firstY + index * step }))}
+                </div>
+              </div>
+            </section>;
+          }) : null}
+          {buttonDocument && (panelButtons.length > 0 || showBlenderUpdate) ? (
             <section
               key={canonicalProgramPanelKey(selectedProgramName ?? "", selectedPanelName ?? "")}
               className="main-page__panel-buttons"
@@ -3719,6 +3726,11 @@ export default function MainPage() {
               } as CSSProperties}
             >
               {panelButtons.map(renderIndependentButton)}
+              {showBlenderUpdate && <CanonicalActionButton id="update-blender" label="Update Blender" width={144}
+                className="main-page__update-blender" onActivate={async () => {
+                  try { await openUpdateBlenderWindow(); }
+                  catch (error) { window.alert(formatErrorMessage(error)); }
+                }} />}
             </section>
           ) : null}
           </div>
@@ -3791,15 +3803,13 @@ export default function MainPage() {
                       id={`button-context-description:${contextMenuButton.id}`}
                       label="Update Description"
                       className="button-context-menu__item"
-                      onActivate={() => {
-                        void handleUpdateDescriptionContextMenuButton();
-                      }}
+                      onActivate={() => editContextMenuButtonText("tooltip")}
                     />
                     <CanonicalActionButton
                       id={`button-context-rename:${contextMenuButton.id}`}
                       label="Rename Button"
                       className="button-context-menu__item"
-                      onActivate={handleRenameContextMenuButton}
+                      onActivate={() => editContextMenuButtonText("label")}
                     />
                     <CanonicalActionButton
                       id={`button-context-binds:${contextMenuButton.id}`}

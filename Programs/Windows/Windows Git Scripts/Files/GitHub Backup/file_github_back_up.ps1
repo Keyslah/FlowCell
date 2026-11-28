@@ -5,7 +5,7 @@ param(
     [string]$BackupFlavor = 'GitHub'
 )
 
-# Description: Trigger a background repo backup snapshot and mirror the clipboard folder into the backup root.
+# Description: With your project's folder path on the clipboard, click to save a dated copy, including uncommitted files. The first time, choose where to save it. Future backups go there automatically.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 

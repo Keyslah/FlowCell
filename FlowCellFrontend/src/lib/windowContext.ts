@@ -12,6 +12,7 @@ export interface ButtonEditorWindowContext {
   panelName?: string;
   lockImportDestination?: boolean;
   buttonId?: string;
+  textField?: "label" | "tooltip";
   surfaceId?: string;
   draftSessionId?: string;
 }
@@ -120,6 +121,7 @@ export type FlowCellWindowContext =
   | ButtonFanWindowContext
   | ButtonAnimationWindowContext
   | BindsWindowContext
+  | { kind: "update-blender" }
   | AddProgramWindowContext
   | AddPanelWindowContext
   | InstalledPageWindowContext
@@ -184,6 +186,7 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
       programName: optionalString(parsed.programName),
       panelName: optionalString(parsed.panelName),
       lockImportDestination: parsed.lockImportDestination === true,
+      textField: parsed.textField === "label" || parsed.textField === "tooltip" ? parsed.textField : undefined,
       buttonId: optionalString(parsed.buttonId),
       surfaceId: optionalString(parsed.surfaceId),
       draftSessionId: optionalString(parsed.draftSessionId)
@@ -256,6 +259,7 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
   if (parsed.kind === "binds") {
     return { kind: "binds", prefill: parseBindsPrefill(parsed.prefill) };
   }
+  if (parsed.kind === "update-blender") return { kind: "update-blender" };
   if (parsed.kind === "add-program") return { kind: "add-program" };
   if (parsed.kind === "add-panel" && typeof parsed.programName === "string" && parsed.programName.trim()) {
     return { kind: "add-panel", programName: parsed.programName };

@@ -1,4 +1,4 @@
-# Description: Low poly sphere.
+# Description: Low-poly sphere
 
 import math
 

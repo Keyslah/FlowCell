@@ -218,6 +218,53 @@ fn wide(path: &Path) -> Vec<u16> {
         .collect()
 }
 
+// SHCreateItemFromParsingName rejects the \\?\ prefix produced by
+// canonicalize on otherwise ordinary local paths. Strip it only when the
+// ordinary Win32 spelling cannot silently refer to a different item.
+fn shell_parsing_path(path: &Path) -> Result<PathBuf, String> {
+    let prefix = match path.components().next() {
+        Some(Component::Prefix(prefix)) => prefix.kind(),
+        _ => return Ok(path.to_path_buf()),
+    };
+    if !matches!(prefix, Prefix::VerbatimDisk(_)) {
+        return Ok(path.to_path_buf());
+    }
+
+    let spelling = path.to_str().ok_or_else(|| {
+        format!("Cannot safely convert {} to a Shell path.", path.display())
+    })?;
+    let ordinary = spelling.strip_prefix(r"\\?\").ok_or_else(|| {
+        format!("Cannot safely convert {} to a Shell path.", path.display())
+    })?;
+    if !path.is_absolute() || ordinary.as_bytes().get(1..3) != Some(b":\\") {
+        return Err(format!("Cannot safely convert {} to a Shell path.", path.display()));
+    }
+    // Normal Win32 parsing strips terminal dots/spaces and interprets DOS
+    // device names. Verbatim paths do not, so these cannot be safely converted.
+    for part in ordinary[3..].split('\\').filter(|part| !part.is_empty()) {
+        let stem = part.split('.').next().unwrap_or("").trim_end_matches(' ').to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+            || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+                && matches!(&stem[3..], "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
+        if part == "." || part == ".." || part.ends_with(' ') || part.ends_with('.') || reserved
+            || part.chars().any(|c| c < ' ' || matches!(c, '<' | '>' | ':' | '"' | '/' | '|' | '?' | '*'))
+        {
+            return Err(format!("Cannot safely convert {} to a Shell path.", path.display()));
+        }
+    }
+    let shell_path = PathBuf::from(ordinary);
+    // Resolve both spellings before queueing any deletion. This also prevents
+    // a Shell normalization mismatch from recycling a different existing item.
+    let original = fs::canonicalize(path)
+        .map_err(|error| format!("Cannot resolve {} before recycling: {error}", path.display()))?;
+    let converted = fs::canonicalize(&shell_path)
+        .map_err(|error| format!("Cannot resolve {} for recycling: {error}", path.display()))?;
+    if original != converted {
+        return Err(format!("Cannot safely convert {} to a Shell path.", path.display()));
+    }
+    Ok(shell_path)
+}
+
 fn recycle_volume(path: &Path) -> Result<PathBuf, String> {
     match path.components().next() {
         Some(Component::Prefix(prefix)) => match prefix.kind() {
@@ -307,7 +354,8 @@ fn recycle_on_sta(paths: &[PathBuf]) -> Result<(), String> {
     let mut items = Vec::new();
     let mut guards = Vec::new();
     for path in paths {
-        let path_wide = wide(path);
+        let shell_path = shell_parsing_path(path)?;
+        let path_wide = wide(&shell_path);
         let item: IShellItem =
             unsafe { SHCreateItemFromParsingName(PCWSTR(path_wide.as_ptr()), None) }.map_err(
                 |error| format!("Cannot resolve {} for recycling: {error}", path.display()),
@@ -503,8 +551,11 @@ mod tests {
         assert!(file.as_os_str().len() > 300);
         assert!(directory.as_os_str().len() > 300);
         let started = Instant::now();
-        recycle_paths(&[file.clone()], false).unwrap();
-        recycle_paths(&[directory.clone()], true).unwrap();
+        let verbatim_file = fs::canonicalize(&file).unwrap();
+        let verbatim_directory = fs::canonicalize(&directory).unwrap();
+        assert!(matches!(verbatim_file.components().next(), Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::VerbatimDisk(_))));
+        recycle_paths(&[verbatim_file], false).unwrap();
+        recycle_paths(&[verbatim_directory], true).unwrap();
         assert!(!file.exists() && !directory.exists());
         let recycled_file =
             recycled_payload(&file).expect("file must have a Recycle Bin identity record");
@@ -542,6 +593,47 @@ mod tests {
         assert!(recycle_paths(&[directory], false)
             .unwrap_err()
             .contains("wrong file type"));
+    }
+
+    #[test]
+    fn native_recycle_accepts_a_canonicalized_short_backup_path() {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("flowcell-recycle-verbatim-{stamp}"));
+        fs::create_dir(&root).unwrap();
+        let backup = root.join(".installed-page-state.json.backup");
+        fs::write(&backup, "retained backup").unwrap();
+        let verbatim = fs::canonicalize(&backup).unwrap();
+        assert!(matches!(verbatim.components().next(), Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::VerbatimDisk(_))));
+        recycle_paths(&[verbatim], false).unwrap();
+        assert!(!backup.exists());
+        assert_eq!(fs::read_to_string(recycled_payload(&backup).unwrap()).unwrap(), "retained backup");
+        fs::remove_dir(&root).unwrap(); // Only this test's empty temporary root.
+    }
+
+    #[test]
+    fn native_recycle_refuses_ambiguous_verbatim_names() {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("flowcell-recycle-ambiguous-{stamp}"));
+        fs::create_dir(&root).unwrap();
+        let ordinary = root.join("important");
+        fs::write(&ordinary, "ordinary").unwrap();
+        let verbatim_root = fs::canonicalize(&root).unwrap();
+        let ambiguous = verbatim_root.join("important.");
+        fs::write(&ambiguous, "verbatim").unwrap();
+        assert!(recycle_paths(&[ambiguous.clone()], false).unwrap_err().contains("safely convert"));
+        assert_eq!(fs::read_to_string(&ordinary).unwrap(), "ordinary");
+        assert_eq!(fs::read_to_string(&ambiguous).unwrap(), "verbatim");
+        // Both files and the directory were created only for this test.
+        fs::remove_file(&ambiguous).unwrap();
+        fs::remove_file(&ordinary).unwrap();
+        fs::remove_dir(&root).unwrap();
+    }
+
+    #[test]
+    fn shell_parsing_rejects_verbatim_device_and_stream_names() {
+        for name in [r"\\?\C:\qa\NUL.txt", r"\\?\C:\qa\COM¹", r"\\?\C:\qa\file:stream", r"\\?\C:\qa\folder\..\file"] {
+            assert!(shell_parsing_path(Path::new(name)).unwrap_err().contains("safely convert"), "{name}");
+        }
     }
 
     #[test]

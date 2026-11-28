@@ -1,4 +1,4 @@
-# Description: Low poly cube.
+# Description: Low-poly cube
 
 import math
 

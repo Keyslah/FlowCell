@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "windows.window-grid",
   "label": "Window Grid",
-  "tooltip": "Open the managed grid of current FlowCell windows.",
+  "tooltip": "Show your open FlowCell windows. Click one to bring it to the front.",
   "program": "Windows",
   "source": "window_grid.ps1",
   "executionTarget": {

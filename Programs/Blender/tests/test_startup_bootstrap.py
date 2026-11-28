@@ -1,14 +1,13 @@
 """Exercise the exact Python emitted by the Blender setup helper."""
 import importlib
 from pathlib import Path
-import re
 import sys
 import types
 import unittest
 from unittest.mock import patch
 
 
-HELPER = Path(__file__).resolve().parent.parent / "SupportScripts" / "Install-FlowCellBlenderAddon.ps1"
+HELPER = Path(__file__).resolve().parent.parent / "SupportScripts" / "flowcell_startup_bootstrap.py"
 
 
 class StartupBootstrapTests(unittest.TestCase):
@@ -32,10 +31,8 @@ class StartupBootstrapTests(unittest.TestCase):
         self.trace_patch.start()
         self.original_path = list(sys.path)
         source = HELPER.read_text(encoding="utf-8-sig")
-        emitted = re.search(r"\$bootstrap = @'\n(.*?)\n'@", source, re.S)
-        self.assertIsNotNone(emitted)
         self.namespace = {"__file__": str(Path("fixture/scripts/startup/flowcell_startup_bootstrap.py").resolve())}
-        exec(compile(emitted[1], "generated_startup.py", "exec"), self.namespace)
+        exec(compile(source, "generated_startup.py", "exec"), self.namespace)
 
     def tearDown(self):
         sys.path[:] = self.original_path
