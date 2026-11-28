@@ -1,3 +1,8 @@
+2026-11-27 Plastered Wall 03 installed and GitHub sync:
+- Merged 4 upstream commits through 17c671f with the new theme. The only merge conflict was PROGRAM_SUMMARY.txt, retaining both sets of entries. The merged frontend passed 1050 of 1050 tests and the development release rebuilt and restarted.
+- Installed FlowCell 0.1.17 -> 0.1.18 using the merged NSIS payload. Installed executable and theme hashes match the payload and source. Installed and development frontends bootstrapped successfully; the installed backend reported 5 bindings and 0 registration errors. Installer exit code was unavailable because its backend remained a descendant of the installer process wait.
+- Backup contains 6188 verified files. Of 6026 checked protected data files, 6025 remained byte-identical and 0 were missing; AutoHotkeyToggleStatus.json changed due to backend startup. Installed Button state remained at revision 1516 with an unchanged SHA-256. Backup: flowcellbackend/local/diagnostics/install-theme-20261127/snapshot/.
+
 2026-11-27 Plastered Wall 03 color match:
 - Re-rendered the Main background and all 47 Button variants using the rail plaster grain scale and calibrated face tones. Mean face brightness on the 0-255 sRGB luma scale: buttons 139.515 -> 157.189, exposed background strip 122.783 -> 155.402, and reference rails 156.635.
 - Verified 564 rendered frames, sprite dimensions and hover/press motion metadata. All 4 reference rail WebPs retained their SHA-256 hashes. Blender render specifications and measurements: flowcellbackend/local/diagnostics/plaster-rail-match-20261127/.
